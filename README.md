@@ -11,6 +11,9 @@ never exercise, which "obvious" cleanup removes a production workaround, or
 which cross-file edge case is easy to miss. The code tells you *what runs*. The
 shadow tells future agents *what has been learned about how it behaves*.
 
+Read the launch blog post: [Shadow-Frog: Coding Agents that Dream and
+Discover](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
+
 <p align="center">
   <img src="shadow_repo.png" alt="Shadow repository structure" width="320" />
 </p>
