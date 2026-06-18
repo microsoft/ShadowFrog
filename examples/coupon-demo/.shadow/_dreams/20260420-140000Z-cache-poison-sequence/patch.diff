@@ -1,0 +1,53 @@
+diff --git a/dream_exp1_cache_poison.py b/dream_exp1_cache_poison.py
+new file mode 100644
+--- /dev/null
++++ b/dream_exp1_cache_poison.py
+@@ -0,0 +1,52 @@
++"""Dream experiment: prove validate-then-calculate poisons COUPON_CACHE.
++
++Runs three scenarios that reset COUPON_CACHE between runs and check the
++cache state after each call sequence. Demonstrates that the case-
++normalization mismatch between validate_coupon and calculate_total
++creates duplicate cache entries for the same logical coupon code.
++"""
++
++import cart
++from cart import COUPON_CACHE, calculate_total
++from inventory import validate_coupon
++
++ITEMS = [{"price": 25.00, "qty": 3}]
++
++
++def reset():
++    COUPON_CACHE.clear()
++
++
++def scenario_1_validate_then_calculate():
++    reset()
++    assert validate_coupon("save20") is True
++    total = calculate_total(ITEMS, coupon_code="save20")
++    assert set(COUPON_CACHE.keys()) == {"SAVE20", "save20"}
++    assert COUPON_CACHE["save20"] is None
++    assert total == 81.00, f"expected 81.00 (no discount), got {total}"
++
++
++def scenario_2_calculate_then_validate():
++    reset()
++    total = calculate_total(ITEMS, coupon_code="save20")
++    assert validate_coupon("save20") is True
++    assert set(COUPON_CACHE.keys()) == {"SAVE20", "save20"}
++    assert total == 81.00
++
++
++def scenario_3_uppercase_only():
++    reset()
++    total = calculate_total(ITEMS, coupon_code="SAVE20")
++    assert set(COUPON_CACHE.keys()) == {"SAVE20"}
++    assert total == 64.80, f"expected 64.80 (discount applied), got {total}"
++
++
++if __name__ == "__main__":
++    scenario_1_validate_then_calculate()
++    scenario_2_calculate_then_validate()
++    scenario_3_uppercase_only()
++    print("All 3 scenarios passed.")

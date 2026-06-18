@@ -1,0 +1,49 @@
+{
+  "dream_id": "20260420-142000Z-adversarial-inputs",
+  "branch": "dream/coupon-demo/20260420-142000Z-adversarial-inputs",
+  "parent_branch": "main",
+  "category": "security audit",
+  "verdict": "useful",
+  "title": "Adversarial input audit across all public functions",
+  "discoveries": [
+    {
+      "op": "add",
+      "anchor": "inventory.py::validate_coupon",
+      "text": "Also crashes on any non-string type: int, list, dict all raise AttributeError on .upper(). Needs isinstance(code, str) guard.",
+      "status": "verified",
+      "source": "exploration",
+      "labels": ["security"],
+      "dream_report": "_dreams/20260420-142000Z-adversarial-inputs/"
+    },
+    {
+      "op": "add",
+      "anchor": "inventory.py::apply_bulk_discount",
+      "text": "Crashes with KeyError if items lack 'qty' key, and TypeError if 'qty' is a string. No input validation.",
+      "status": "verified",
+      "source": "exploration",
+      "labels": ["security"],
+      "dream_report": "_dreams/20260420-142000Z-adversarial-inputs/"
+    },
+    {
+      "op": "add",
+      "anchor": "cart.py::get_coupon",
+      "text": "Accepts any hashable type as key (True, 42, lists-as-errors). Non-string keys permanently cache None entries that can never resolve to valid coupons \u2014 silent cache pollution.",
+      "status": "verified",
+      "source": "exploration",
+      "labels": ["security"],
+      "also_involves": ["cart.py::COUPON_CACHE"],
+      "dream_report": "_dreams/20260420-142000Z-adversarial-inputs/"
+    },
+    {
+      "op": "add",
+      "anchor": "cart.py::calculate_total",
+      "text": "Non-string coupon_code values (True, 42, etc.) pass the `if coupon_code:` truthiness check, reach get_coupon, cache None under the non-string key, and silently produce no discount. No type validation exists.",
+      "status": "verified",
+      "source": "exploration",
+      "labels": ["security"],
+      "also_involves": ["cart.py::get_coupon", "cart.py::COUPON_CACHE"],
+      "dream_report": "_dreams/20260420-142000Z-adversarial-inputs/"
+    }
+  ],
+  "cross_cutting": []
+}

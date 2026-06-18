@@ -1,0 +1,35 @@
+# Directories
+node_modules/
+vendor/
+venv/
+.venv/
+__pycache__/
+dist/
+build/
+target/
+out/
+
+# Generated / minified
+*.min.js
+*.min.css
+*.map
+*.lock
+
+# Binary
+*.png
+*.jpg
+*.gif
+*.ico
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.pdf
+*.zip
+*.tar.gz
+
+# The shadow itself
+.shadow/
+
+# Project-specific
+README.md

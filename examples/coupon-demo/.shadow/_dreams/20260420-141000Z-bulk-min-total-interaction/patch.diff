@@ -1,0 +1,50 @@
+diff --git a/dream_exp2_bulk_min_total.py b/dream_exp2_bulk_min_total.py
+new file mode 100644
+--- /dev/null
++++ b/dream_exp2_bulk_min_total.py
+@@ -0,0 +1,48 @@
++"""Dream experiment: clarify how bulk discount interacts with coupon min_total.
++
++Resolves an uncertain shadow discovery by checking whether
++calculate_total's min_total check sees pre- or post-bulk-discount
++subtotals. Two scenarios cover HALF (min_total=100, drops below) and
++SAVE20 (min_total=50, boundary case).
++"""
++
++import cart
++from cart import COUPON_CACHE, calculate_total
++from inventory import apply_bulk_discount
++
++
++def reset():
++    COUPON_CACHE.clear()
++
++
++def scenario_drops_below_min_total():
++    reset()
++    items = [{"price": 21.00, "qty": 5}]
++    apply_bulk_discount(items)
++    assert items[0]["price"] == 18.90
++    with_coupon = calculate_total(items, coupon_code="HALF")
++    without_coupon = calculate_total(items)
++    assert with_coupon == without_coupon, (
++        f"coupon should NOT apply (subtotal $94.50 < min_total $100), "
++        f"but got {with_coupon} vs {without_coupon}"
++    )
++
++
++def scenario_just_above_min_total():
++    reset()
++    items = [{"price": 11.12, "qty": 5}]
++    apply_bulk_discount(items)
++    subtotal = items[0]["price"] * items[0]["qty"]
++    assert subtotal > 50.0
++    with_coupon = calculate_total(items, coupon_code="SAVE20")
++    without_coupon = calculate_total(items)
++    assert with_coupon < without_coupon, "coupon should apply at boundary"
++
++
++if __name__ == "__main__":
++    scenario_drops_below_min_total()
++    scenario_just_above_min_total()
++    print("All scenarios passed.")

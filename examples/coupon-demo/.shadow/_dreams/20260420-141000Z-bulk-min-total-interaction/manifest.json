@@ -1,0 +1,20 @@
+{
+  "dream_id": "20260420-141000Z-bulk-min-total-interaction",
+  "branch": "dream/coupon-demo/20260420-141000Z-bulk-min-total-interaction",
+  "parent_branch": "main",
+  "category": "investigation",
+  "verdict": "useful",
+  "title": "Bulk discount vs coupon min_total interaction",
+  "discoveries": [
+    {
+      "op": "add",
+      "anchor": "cart.py::calculate_total",
+      "text": "min_total check evaluates against the post-bulk-discount subtotal because apply_bulk_discount mutates item prices in place before calculate_total runs. If bulk discount drops the subtotal below min_total, the coupon is correctly rejected \u2014 but only by accident of the in-place mutation contract.",
+      "status": "verified",
+      "source": "exploration",
+      "also_involves": ["inventory.py::apply_bulk_discount"],
+      "dream_report": "_dreams/20260420-141000Z-bulk-min-total-interaction/"
+    }
+  ],
+  "cross_cutting": []
+}

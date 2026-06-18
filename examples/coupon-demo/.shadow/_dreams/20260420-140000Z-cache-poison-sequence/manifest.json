@@ -1,0 +1,21 @@
+{
+  "dream_id": "20260420-140000Z-cache-poison-sequence",
+  "branch": "dream/coupon-demo/20260420-140000Z-cache-poison-sequence",
+  "parent_branch": "main",
+  "category": "bug hunting",
+  "verdict": "useful",
+  "title": "Cache poisoning via validate-then-calculate sequence",
+  "discoveries": [
+    {
+      "op": "add",
+      "anchor": "cart.py::COUPON_CACHE",
+      "text": "Case-variant lookups create duplicate cache entries for the same logical coupon. validate_coupon(\"save20\") caches \"SAVE20\" \u2192 valid, then calculate_total(\"save20\") caches \"save20\" \u2192 None. Cache grows 2\u00d7 faster with mixed-case usage.",
+      "status": "verified",
+      "source": "exploration",
+      "labels": ["bug", "performance"],
+      "also_involves": ["cart.py::get_coupon", "inventory.py::validate_coupon"],
+      "dream_report": "_dreams/20260420-140000Z-cache-poison-sequence/"
+    }
+  ],
+  "cross_cutting": []
+}

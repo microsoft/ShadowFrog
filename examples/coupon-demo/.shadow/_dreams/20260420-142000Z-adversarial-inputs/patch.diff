@@ -1,0 +1,75 @@
+diff --git a/dream_exp3_adversarial.py b/dream_exp3_adversarial.py
+new file mode 100644
+--- /dev/null
++++ b/dream_exp3_adversarial.py
+@@ -0,0 +1,70 @@
++"""Dream experiment: adversarial input audit across all public functions.
++
++Systematically tests non-string coupons, missing keys, wrong types,
++extreme values, and non-string cache pollution. Records which inputs
++crash vs are silently accepted.
++"""
++
++import cart
++from cart import COUPON_CACHE, calculate_total, get_coupon
++from inventory import apply_bulk_discount, validate_coupon
++
++
++def reset():
++    COUPON_CACHE.clear()
++
++
++def expect_crash(label, fn):
++    try:
++        fn()
++    except (AttributeError, KeyError, TypeError) as exc:
++        print(f"  CRASH ({type(exc).__name__}): {label}")
++        return True
++    print(f"  NO CRASH (unexpected): {label}")
++    return False
++
++
++def expect_silent(label, fn):
++    try:
++        result = fn()
++        print(f"  SILENT ({result!r}): {label}")
++        return True
++    except Exception as exc:
++        print(f"  CRASH (unexpected): {label} -> {exc}")
++        return False
++
++
++def main():
++    reset()
++
++    expect_crash("validate_coupon(None)", lambda: validate_coupon(None))
++    expect_crash("validate_coupon(123)", lambda: validate_coupon(123))
++    expect_crash("validate_coupon(['X'])", lambda: validate_coupon(["X"]))
++
++    expect_crash(
++        "calculate_total missing 'price'",
++        lambda: calculate_total([{"qty": 1}]),
++    )
++    expect_crash(
++        "apply_bulk_discount missing 'qty'",
++        lambda: apply_bulk_discount([{"price": 10.0}]),
++    )
++
++    expect_silent(
++        "calculate_total(price=-50, qty=1)",
++        lambda: calculate_total([{"price": -50.0, "qty": 1}]),
++    )
++    expect_silent(
++        "calculate_total(price=50, qty=-1)",
++        lambda: calculate_total([{"price": 50.0, "qty": -1}]),
++    )
++
++    reset()
++    get_coupon(True)
++    get_coupon(42)
++    assert True in COUPON_CACHE and 42 in COUPON_CACHE
++    print(f"  cache pollution: {dict(COUPON_CACHE)!r}")
++
++
++if __name__ == "__main__":
++    main()
