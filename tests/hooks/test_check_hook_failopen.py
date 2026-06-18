@@ -1,4 +1,4 @@
-"""Tests for scripts/check-hook-failopen.py — the static guard that
+"""Tests for hook-templates/check-hook-failopen.py — the static guard that
 enforces the fail-open contract on advisory hook scripts.
 
 Every known regression vector must be detected by this checker. These tests
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHECKER = REPO_ROOT / "scripts" / "check-hook-failopen.py"
+CHECKER = REPO_ROOT / "hook-templates" / "check-hook-failopen.py"
 
 
 def _run(tmp_path: Path, body: str) -> tuple[int, str]:

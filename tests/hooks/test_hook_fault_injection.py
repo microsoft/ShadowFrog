@@ -57,7 +57,7 @@ HOOK_BUDGET_SEC = 5.0
 # the hook completes in ~1s, on busy CI it has been observed at ~6.3s while
 # doing identical bounded work. We accept that latency variance and rely on
 # (a) the 10s hard subprocess timeout for true hangs, and (b) the CI guard
-# (scripts/check-hook-failopen.py) for static unbounded-call
+# (hook-templates/check-hook-failopen.py) for static unbounded-call
 # detection. The bounded-work budget itself is ~3.5s; doubling that for CI
 # headroom yields the 7.0s soft cap below.
 WALL_CLOCK_LIMIT_SEC = 7.0

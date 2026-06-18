@@ -256,7 +256,7 @@ Two agent platforms, two hook-config shapes, **one set of shared scripts**:
   4. **`state.json` read inside Python** (`json.load(open(...))`) rather than
      a shell `< redirect`, so a missing file is a caught exception instead of
      an stderr leak.
-  5. **Static enforcement** — `scripts/check-hook-failopen.py` blocks changes
+  5. **Static enforcement** — `hook-templates/check-hook-failopen.py` blocks changes
      that re-introduce any of: short/long-form strict-mode flags, `source`/`.`
      of external files, missing EXIT or TERM trap,
      comment-masquerading-as-trap, or unbounded `git` calls at bash level.

@@ -101,7 +101,7 @@ strict 5s budget, regression-guard, and cross-platform readonly-tmpdir.
      inside a single consolidated Python block with per-call
      `subprocess.run(timeout=...)` wrappers. Total bounded work budget is
      ~3.5s, leaving >=1.5s headroom under the hook's 5s `timeoutSec`.
-  3. **Static structural enforcement**: `scripts/check-hook-failopen.py`
+  3. **Static structural enforcement**: `hook-templates/check-hook-failopen.py`
      blocks PRs that re-introduce ANY of the regression vectors the panel
      identified — short-form `set -e`/`-u`, long-form `set -o
      errexit|nounset|pipefail|errtrace`, `source`/`.` of external files,
