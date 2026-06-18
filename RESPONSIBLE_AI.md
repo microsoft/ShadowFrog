@@ -12,7 +12,7 @@ ShadowFrog was developed to give AI coding agents a persistent, compounding memo
 
 The system is designed for a research audience studying how AI agents can build and leverage long-term understanding of software. It operates entirely within the user's local repository and git workflow, producing human-readable Markdown artifacts. During autonomous exploration ShadowFrog may write and run throwaway experiments in isolated, disposable git branches, but it does not merge or ship that experimental code into your production branches on its own — only the resulting behavioral discoveries (not the experiment code) are integrated into the knowledge base; it builds a knowledge layer that the host agent can consult when performing downstream tasks such as bug fixing, code review, or feature planning.
 
-A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadowfrog/).
+A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
 ### Intended Uses
 
@@ -42,7 +42,7 @@ To begin using ShadowFrog, follow the installation and usage instructions in the
 
 ShadowFrog was evaluated on its ability to: (1) navigate and retrieve relevant shadow knowledge given a file path (read-path recall); (2) independently discover known real-world bugs through autonomous exploration without being given a problem statement (blind bug hunting on SWE-Bench Verified and at scale on SWE-Smith); (3) improve bug-fix success rates by providing pre-built shadow context to a coding agent (bug fixing on SWE-Bench Verified); and (4) generate higher-quality, more architecturally grounded feature ideas compared to a no-shadow baseline (feature ideation across 8 open-source repositories, blind-judged by an ensemble of three LLMs).
 
-A detailed discussion of our evaluation methods and results can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadowfrog/).
+A detailed discussion of our evaluation methods and results can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
 ### Evaluation Methods
 
@@ -56,7 +56,7 @@ Results may vary if ShadowFrog is used with a different model based on its uniqu
 
 ### Evaluation Results
 
-At a high level, we found that ShadowFrog performed strongly on knowledge retrieval and blind bug discovery, modestly on bug fixing, and with a distinctive quality profile on feature ideation. Specifically: the read path achieves ~98% recall at realistic tool-call budgets. On blind bug hunting (no problem statement given), the agent independently locates 88% of real-world bugs to the correct subsystem and 22% exactly, purely from idle-time exploration; at scale (20 repos × 100 stacked bugs), it leads the no-shadow baseline by +25.4 percentage points at peak. On bug fixing (50 SWE-Bench Verified tasks), ShadowFrog resolves 82.0% vs the baseline's 77.3% (+4.7 pp), though most of the lift traces to the structured workflow rather than shadow content itself, highlighting a consumption bottleneck we plan to address. On feature ideation (3,310 ideas blind-judged), ShadowFrog generates ideas rated higher on insight (+0.40) and user impact (+0.24), while trading off slightly on specification clarity, a gap that largely dissolves when controlling for problem size. We refer readers to our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadowfrog/) for detailed evaluation results.
+At a high level, we found that ShadowFrog performed strongly on knowledge retrieval and blind bug discovery, modestly on bug fixing, and with a distinctive quality profile on feature ideation. Specifically: the read path achieves ~98% recall at realistic tool-call budgets. On blind bug hunting (no problem statement given), the agent independently locates 88% of real-world bugs to the correct subsystem and 22% exactly, purely from idle-time exploration; at scale (20 repos × 100 stacked bugs), it leads the no-shadow baseline by +25.4 percentage points at peak. On bug fixing (50 SWE-Bench Verified tasks), ShadowFrog resolves 82.0% vs the baseline's 77.3% (+4.7 pp), though most of the lift traces to the structured workflow rather than shadow content itself, highlighting a consumption bottleneck we plan to address. On feature ideation (3,310 ideas blind-judged), ShadowFrog generates ideas rated higher on insight (+0.40) and user impact (+0.24), while trading off slightly on specification clarity, a gap that largely dissolves when controlling for problem size. We refer readers to our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/) for detailed evaluation results.
 
 ## Limitations
 
