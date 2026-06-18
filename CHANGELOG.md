@@ -27,7 +27,7 @@ shadow knowledge bases for any codebase.
 
 ### Added (additional hook hardening)
 Follow-up coverage pass before release surfaced sixteen further fixes
-across the hook scripts, CI guard, and test matrix. Categorized as 1
+across the hook scripts, static guard, and test matrix. Categorized as 1
 BLOCKING, 6 HIGH, 9 MEDIUM:
 
 - **BLOCKING — Per-test dedup isolation.** The 70-cell fault matrix shared
@@ -53,7 +53,7 @@ BLOCKING, 6 HIGH, 9 MEDIUM:
   Claude Code mutations to the base reminder — undetected. Added
   `TestPreToolPascalCaseToolNames` with 11 spellings asserting the
   file-specific actionable branch fires for each.
-- **HIGH — CI guard evasion patterns.** The `FORBIDDEN_SET_RE` anchor
+- **HIGH — Static guard evasion patterns.** The `FORBIDDEN_SET_RE` anchor
   `^\s*set\s+` was bypassed by `[[ X ]] && set -e`, `eval 'set -e'`,
   `; set -e`, and `set \\\n -e` (line continuation). Substring scanning +
   pre-joining line continuations now catch all four. Signal aliases
@@ -67,7 +67,7 @@ BLOCKING, 6 HIGH, 9 MEDIUM:
   bash itself emits `cat: No such file or directory` to stderr before any
   hook code runs. Defensive PATH append + `cat 2>/dev/null` + stderr
   redirects on final emitters close the leaks.
-- **HIGH — Raw bash-level `python3` script invocations.** CI guard now
+- **HIGH — Raw bash-level `python3` script invocations.** Static guard now
   flags `python3 path.py` / `python3 -m module` at bash level (same bug
   class as raw `git`). Three separate `python3 -c` calls in both hooks
   consolidated into single invocations to reduce blast radius.
@@ -82,7 +82,7 @@ guard that asserts the viewer-branch is actually reachable.
 
 Test count: **908 passed** (+46 from 862 baseline). New tests include 11
 PascalCase tool variants, 2 SIGTERM behavioral, 6 state.json edge cases,
-17 CI guard evasion/alias/raw-python detection, file_path precedence,
+17 static guard evasion/alias/raw-python detection, file_path precedence,
 strict 5s budget, regression-guard, and cross-platform readonly-tmpdir.
 
 ### Added
@@ -133,8 +133,8 @@ strict 5s budget, regression-guard, and cross-platform readonly-tmpdir.
   behind HEAD and `git diff` returned non-zero — exited the script non-zero and
   surfaced as *"Denied by preToolUse hook (hook errored)"*. The advisory hooks
   are now **fail-open** via the multi-layer defense described above. Affects
-  `hooks/scripts/shadow-frog-pre-tool.sh` and
-  `hooks/scripts/shadow-frog-check-init.sh`.
+  `hook-templates/scripts/shadow-frog-pre-tool.sh` and
+  `hook-templates/scripts/shadow-frog-check-init.sh`.
 - **Unbounded `git rev-parse --show-toplevel` in viewer-discovery branch**
   (pre-tool.sh:94, pre-fix). On any system where this git call hangs (NFS,
   `.git/index.lock` held by `gitk`/`vscode`/`gh`, fsmonitor/Watchman, large
@@ -164,9 +164,9 @@ strict 5s budget, regression-guard, and cross-platform readonly-tmpdir.
   read-only instead of `state.json` (the latter is read-only by design and
   the hook never writes to it, so the original cell was a no-op).
 - Fixed `SC2295` quoting bugs (`${VAR#"$PREFIX"}`) in
-  `hooks/scripts/shadow-frog-pre-tool.sh` and `install.sh` — the unquoted
+  `hook-templates/scripts/shadow-frog-pre-tool.sh` and `install.sh` — the unquoted
   form treats `$PREFIX` as a glob pattern, which could mangle paths
-  containing `*`, `?`, or `[` characters. Surfaced by shellcheck CI.
+  containing `*`, `?`, or `[` characters. Surfaced by shellcheck.
 
 ### Notes
 - **`additionalContext` on `preToolUse` is undocumented but functional on
@@ -466,7 +466,7 @@ tidying. Risky refactors flagged for future review.
 
 - **First test suite** — 408 pytest cases across 11 test files
   covering every script in the package (5 Python scripts + 4 shell
-  scripts in `hooks/` + `install.sh` + `dream-setup.sh`). Full suite
+  hook template scripts + `install.sh` + `dream-setup.sh`). Full suite
   runs in ~22s; no per-test fixtures rely on network, user gitconfig,
   or `~/.copilot`. Counts by file:
   - `shadow-init.py` — 164 (10 language extractor families, brace
@@ -811,7 +811,7 @@ Agent context, broader trigger, install improvements.
 - **Custom instructions guidance** in README for manual setup.
 
 ### Fixed
-- Circular symlinks in `hooks/scripts/` (skenv artifact).
+- Circular symlinks in hook template scripts (skenv artifact).
 
 ---
 
