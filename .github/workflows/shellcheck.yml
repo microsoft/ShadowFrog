@@ -1,0 +1,56 @@
+name: Shellcheck
+
+# Catches shell-script bugs in the hook templates before they hit users.
+# Especially critical for the preToolUse hook: Copilot CLI >= 1.0.57 treats a
+# non-zero exit as a tool-call DENY, so any regression that re-introduces
+# strict mode or removes the trap pyramid would block every ShadowFrog user.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hook-templates/**'
+      - 'install.sh'
+      - 'skills/**/*.sh'
+      - '.github/workflows/shellcheck.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint hook templates (strict, info-level)
+        run: |
+          fail=0
+          for f in hook-templates/scripts/*.sh; do
+            echo "::group::shellcheck (info) $f"
+            shellcheck --severity=info "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: Lint installer and bundled scripts (warning-level)
+        run: |
+          fail=0
+          for f in install.sh $(find skills -name '*.sh'); do
+            [ -f "$f" ] || continue
+            echo "::group::shellcheck (warning) $f"
+            shellcheck --severity=warning "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: Guard against fail-closed regressions in hook templates
+        run: |
+          python3 hook-templates/check-hook-failopen.py hook-templates/scripts/*.sh
