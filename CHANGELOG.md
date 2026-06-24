@@ -7,6 +7,24 @@ shadow knowledge bases for any codebase.
 
 ---
 
+## 2026-06-23
+
+### Added
+- **`install.ps1` — Windows/PowerShell installer.** A native port of
+  `install.sh` so Windows users can install without `bash` or `python3`. Same
+  flags (`-Project`, `-Agent copilot|claude`, `-NoHooks`, `-NoContext`),
+  comment-based `Get-Help`, and `[ValidateSet]`/`[Mandatory]` validation.
+  JSON merge for Claude `settings.json` and the agent-context regex are handled
+  natively (`ConvertFrom-Json`/`ConvertTo-Json`, `[regex]::Replace`), and
+  executable bits are set via `git update-index --chmod=+x` since `chmod` has
+  no Windows equivalent. Output is BOM-free UTF-8.
+- Beyond bash parity, the PowerShell version resolves `-Project` to an absolute
+  path before the git-index step and wraps the `git update-index` calls in
+  `try/catch` so they stay best-effort under PowerShell 7.4+ (where native
+  non-zero exits respect `$ErrorActionPreference = 'Stop'`).
+
+---
+
 ## 2026-06-03
 
 ### Changed

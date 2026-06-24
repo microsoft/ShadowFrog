@@ -30,6 +30,14 @@ cd /path/to/ShadowFrog
 # ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
 ```
 
+On **Windows**, use the PowerShell installer instead (no `bash`/`python3` needed):
+
+```powershell
+cd C:\path\to\ShadowFrog
+.\install.ps1 -Project C:\path\to\your-repo                 # Copilot CLI (default)
+# .\install.ps1 -Agent claude -Project C:\path\to\your-repo  # Claude Code
+```
+
 Commit the installed files in the target repo:
 
 ```bash
@@ -220,8 +228,16 @@ cd /path/to/ShadowFrog
 # ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
 ```
 
+On **Windows**, run the PowerShell equivalent (same flags, PowerShell style):
+
+```powershell
+cd C:\path\to\ShadowFrog
+.\install.ps1 -Project C:\path\to\your-repo                 # Copilot CLI (default)
+# .\install.ps1 -Agent claude -Project C:\path\to\your-repo  # Claude Code
+```
+
 This installs skills, hooks, and agent-context all at once.
-Use `--no-hooks` or `--no-context` to skip individual components.
+Use `--no-hooks` or `--no-context` (`-NoHooks` / `-NoContext` in PowerShell) to skip individual components.
 
 **After installing**, commit and push so future agent sessions find the skills.
 The installer prints the exact `git add` paths for your chosen agent. For
