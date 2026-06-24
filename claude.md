@@ -46,7 +46,8 @@ ShadowFrog/
     results_dashboard.html       Interactive results dashboard
     swesmith/manifests_canonical/ SWE-Smith stacked-bug task manifests
   agent-context.md               Always-on context for project instructions
-  install.sh                     Install skills + hooks into a project repo
+  install.sh                     Install skills + hooks into a project repo (bash)
+  install.ps1                    Windows/PowerShell port of install.sh (no python3 dep)
   README.md                      User-facing documentation
   claude.md                      This file
 ```
