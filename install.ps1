@@ -125,6 +125,9 @@ if (-not $NoHooks) {
     # `chmod +x` has no Windows equivalent. Set the executable bit in the Git
     # index instead, so the scripts keep their +x mode when committed and
     # checked out on Unix/cloud runners. Best-effort: never fail the install.
+    # Note: unlike bash's `chmod +x`, `git update-index --add` also *stages*
+    # these scripts (they show as `A` in `git status`); the rest of the install
+    # stays unstaged and is picked up by the printed `git add` next-step.
     $isGitRepo = $false
     try {
         $gitCheck = git -C $Project rev-parse --is-inside-work-tree 2>$null
@@ -226,7 +229,16 @@ if (-not $NoHooks) {
             $settings.hooks.$eventName = @($existingGroups)
         }
 
-        $jsonOutput = $settings | ConvertTo-Json -Depth 20
+        # Use a high depth so deeply nested existing settings survive the
+        # round-trip (install.sh's Python json has no depth cap; ConvertTo-Json
+        # silently truncates past -Depth). Capture the truncation warning and
+        # refuse to write rather than emit lossy JSON — mirrors the invalid-JSON
+        # guard above.
+        $jsonOutput = $settings | ConvertTo-Json -Depth 100 -WarningVariable jsonWarn -WarningAction SilentlyContinue
+        if ($jsonWarn) {
+            Write-Host "  x Existing $claudeSettingsPath is nested too deeply to merge safely; refusing to write to avoid data loss." -ForegroundColor Red
+            exit 1
+        }
         Write-Utf8File -Path $claudeSettingsPath -Content "$jsonOutput`n"
         Write-Host "  + hooks -> $claudeSettingsPath (+ scripts)" -ForegroundColor Green
     } else {
