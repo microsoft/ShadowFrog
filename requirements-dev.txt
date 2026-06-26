@@ -2,6 +2,6 @@
 # Runtime ShadowFrog skills themselves have no Python dependencies beyond
 # the standard library; this file is what `tests/` and CI need.
 
-pytest>=9.1.0
+pytest>=9.1.1
 pytest-cov>=7.1.0
 pathspec>=1.1.1
