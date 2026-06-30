@@ -73,7 +73,7 @@ def load_index(shadow_dir):
     branch_by_slug = {}
 
     # First pass: collect all branches and build slug index
-    with open(index_path) as f:
+    with open(index_path, encoding="utf-8") as f:
         for line in f:
             parts = [p.strip() for p in line.split("|")]
             if len(parts) < 8:
@@ -91,7 +91,7 @@ def load_index(shadow_dir):
                 branch_by_slug[branch[slug_match.start():]] = branch
 
     # Second pass: resolve parent references (handle timestamp mismatches)
-    with open(index_path) as f:
+    with open(index_path, encoding="utf-8") as f:
         for line in f:
             parts = [p.strip() for p in line.split("|")]
             if len(parts) < 8:
@@ -119,7 +119,7 @@ def load_index(shadow_dir):
         manifest_path = os.path.join(dreams_dir, did, "manifest.json")
         if os.path.exists(manifest_path):
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, encoding="utf-8") as f:
                     mdata = json.load(f)
                 mp = mdata.get("parent_branch", "")
             except Exception:
@@ -129,7 +129,7 @@ def load_index(shadow_dir):
             report_path = os.path.join(dreams_dir, did, "report.md")
             if os.path.exists(report_path):
                 try:
-                    with open(report_path) as f:
+                    with open(report_path, encoding="utf-8") as f:
                         head = f.read(2000)
                     # Check builds_on in frontmatter
                     m = re.search(r"builds_on:\s*\[?\s*[\"']?([^\]\"'\n,]+)", head)
@@ -182,7 +182,7 @@ def load_reports(shadow_dir, meta):
 
         if os.path.exists(report_path):
             try:
-                with open(report_path) as f:
+                with open(report_path, encoding="utf-8") as f:
                     content = f.read()
                 body = content
                 if content.startswith("---"):
@@ -196,7 +196,7 @@ def load_reports(shadow_dir, meta):
         manifest_path = os.path.join(shadow_dir, "_dreams", did, "manifest.json")
         if os.path.exists(manifest_path):
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, encoding="utf-8") as f:
                     mdata = json.load(f)
                 info["tests"] = str(mdata.get("tests_passed", mdata.get("test_count", "")))
                 info["discoveries_count"] = len(mdata.get("discoveries", []))
@@ -545,7 +545,7 @@ def generate_html(shadow_dir, output_path):
         templates=templates_html,
     )
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"Wrote {output_path} ({os.path.getsize(output_path):,} bytes)")
     print(f"  {total} experiments, {len(chain_roots)} chains (max depth {max_depth}), "

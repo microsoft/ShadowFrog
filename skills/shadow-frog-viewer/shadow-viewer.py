@@ -1250,6 +1250,9 @@ def view_check_invariants(shadow_dir):
 
 
 def main():
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     try:
         parser = argparse.ArgumentParser(
             description="Query and browse a .shadow/ knowledge base.",

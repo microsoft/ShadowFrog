@@ -53,6 +53,7 @@ def _run_viewer(repo_root, cwd, *args):
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 

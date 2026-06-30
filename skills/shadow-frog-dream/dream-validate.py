@@ -33,6 +33,9 @@ import sys
 
 
 def main():
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     args = sys.argv[1:]
 
     if not args or args[0] in ('--help', '-h'):
@@ -97,7 +100,7 @@ def main():
 
     # 5. Validate report dream_id
     report_path = os.path.join(dream_dir, 'report.md')
-    with open(report_path) as f:
+    with open(report_path, encoding="utf-8") as f:
         content = f.read()
     m = re.match(r'^\ufeff?\s*---\r?\n(.*?)\r?\n---', content, re.S)
     if m:
@@ -115,7 +118,7 @@ def main():
     # 6. Validate manifest
     manifest_path = os.path.join(dream_dir, 'manifest.json')
     try:
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
     except json.JSONDecodeError as e:
         errors.append(f"manifest.json is invalid JSON: {e}")
@@ -211,7 +214,7 @@ def main():
                 d = subprocess.run(
                     ['git', '-C', worktree, 'diff', '--name-only',
                      '--relative', f'{base}..HEAD', '--', '.shadow/'],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding="utf-8", timeout=10,
                 )
                 if d.returncode == 0:
                     if d.stdout:
@@ -231,7 +234,7 @@ def main():
                 s = subprocess.run(
                     ['git', '-C', worktree, 'status', '--porcelain=v1',
                      '--untracked-files=all', '--', '.shadow/'],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding="utf-8", timeout=10,
                 )
                 if s.returncode == 0:
                     for line in s.stdout.strip().splitlines():

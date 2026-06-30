@@ -36,14 +36,14 @@ def _git_env(home: Path) -> dict:
 
 def _run(cmd, cwd, env=None, check=True):
     return subprocess.run(
-        cmd, cwd=cwd, env=env, capture_output=True, text=True, check=check
+        cmd, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", check=check
     )
 
 
 def _commit_base(repo: Path) -> str:
     """Seed initial commit. Returns the base SHA (full)."""
     env = _git_env(repo)
-    (repo / "README.md").write_text("# base\n")
+    (repo / "README.md").write_text("# base\n", encoding="utf-8")
     _run(["git", "add", "-A"], cwd=repo, env=env)
     _run(["git", "commit", "-q", "-m", "base"], cwd=repo, env=env)
     return _run(["git", "rev-parse", "HEAD"], cwd=repo, env=env).stdout.strip()
@@ -53,7 +53,7 @@ def _run_validate(dream_id: str, worktree: Path) -> subprocess.CompletedProcess:
     """Invoke dream-validate.py as a subprocess; never raises on non-zero."""
     return subprocess.run(
         [sys.executable, str(SCRIPT), dream_id, str(worktree)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
 
 
@@ -98,10 +98,10 @@ def _write_dream(
     d = worktree / ".shadow" / "_dreams" / dream_id
     d.mkdir(parents=True, exist_ok=True)
     if manifest is not None:
-        (d / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        (d / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if report is not None:
-        (d / "report.md").write_text(report)
-    (d / "patch.diff").write_text(patch)
+        (d / "report.md").write_text(report, encoding="utf-8")
+    (d / "patch.diff").write_text(patch, encoding="utf-8")
     return d
 
 
@@ -114,7 +114,7 @@ def _write_dream(
 def test_help_exits_zero():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode == 0
     assert "Validate dream artifacts" in result.stdout
@@ -125,7 +125,7 @@ def test_help_exits_zero():
 def test_no_args_exits_nonzero_and_prints_usage():
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode == 1
     assert "Usage" in result.stdout or "Validate dream artifacts" in result.stdout
@@ -149,7 +149,7 @@ def test_missing_manifest_and_report_fails(tmp_git_repo):
     dream_id = "20260101-000000Z-missing"
     d = tmp_git_repo / ".shadow" / "_dreams" / dream_id
     d.mkdir(parents=True, exist_ok=True)
-    (d / "patch.diff").write_text("diff\n")
+    (d / "patch.diff").write_text("diff\n", encoding="utf-8")
     # No report.md, no manifest.json.
 
     result = _run_validate(dream_id, tmp_git_repo)
@@ -166,7 +166,7 @@ def test_flat_file_fails(tmp_git_repo):
     dream_id = "20260101-000000Z-flat"
     dreams = tmp_git_repo / ".shadow" / "_dreams"
     dreams.mkdir(parents=True, exist_ok=True)
-    (dreams / f"{dream_id}.md").write_text("# flat\n")  # forbidden
+    (dreams / f"{dream_id}.md").write_text("# flat\n", encoding="utf-8")  # forbidden
 
     result = _run_validate(dream_id, tmp_git_repo)
     assert result.returncode == 1
@@ -343,7 +343,7 @@ def _mirror_shadow(repo: Path, source_rel: str, base_sha: str):
     """
     shadow = repo / ".shadow" / (source_rel + ".md")
     shadow.parent.mkdir(parents=True, exist_ok=True)
-    shadow.write_text("## `y`\n\n- mirrored discovery\n")
+    shadow.write_text("## `y`\n\n- mirrored discovery\n", encoding="utf-8")
 
 
 # ===========================================================================
