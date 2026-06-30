@@ -18,14 +18,8 @@ UTF-8 pinned, both pass on every platform.
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
-
-REPO = Path(__file__).resolve().parent.parent
-DEMO_SHADOW = REPO / "examples" / "coupon-demo" / ".shadow"
-VIEWER = REPO / "skills" / "shadow-frog-viewer" / "shadow-viewer.py"
-LINEAGE = REPO / "skills" / "shadow-frog-viewer" / "dream-lineage.py"
 
 
 def _narrow_env():
@@ -39,27 +33,29 @@ def _narrow_env():
 
 @pytest.mark.slow
 @pytest.mark.integration
-def test_shadow_viewer_invariants_under_narrow_codec():
-    """shadow-viewer prints a non-ASCII check mark; it must survive a pipe."""
-    r = subprocess.run(
-        [sys.executable, str(VIEWER), "--check-invariants",
-         "--shadow-dir", str(DEMO_SHADOW)],
-        capture_output=True, encoding="utf-8", env=_narrow_env(),
-    )
-    assert r.returncode == 0, f"stderr:\n{r.stderr}"
-    assert "\u2713 Invariants OK" in r.stdout  # the U+2713 check mark survived
+class TestNarrowCodecOutput:
+    """Run the helpers under a forced narrow codec; non-ASCII output must survive."""
 
+    def test_shadow_viewer_invariants(self, repo_root, coupon_demo_src):
+        """shadow-viewer prints a non-ASCII check mark; it must survive a pipe."""
+        viewer = repo_root / "skills/shadow-frog-viewer/shadow-viewer.py"
+        r = subprocess.run(
+            [sys.executable, str(viewer), "--check-invariants",
+             "--shadow-dir", str(coupon_demo_src / ".shadow")],
+            capture_output=True, encoding="utf-8", env=_narrow_env(),
+        )
+        assert r.returncode == 0, f"stderr:\n{r.stderr}"
+        assert "\u2713 Invariants OK" in r.stdout  # the U+2713 check mark survived
 
-@pytest.mark.slow
-@pytest.mark.integration
-def test_dream_lineage_writes_utf8_html_under_narrow_codec(tmp_path):
-    """dream-lineage embeds a frog emoji + box glyphs in the HTML it writes."""
-    out = tmp_path / "lineage.html"
-    r = subprocess.run(
-        [sys.executable, str(LINEAGE), "-o", str(out),
-         "--shadow-dir", str(DEMO_SHADOW)],
-        capture_output=True, encoding="utf-8", env=_narrow_env(),
-    )
-    assert r.returncode == 0, f"stderr:\n{r.stderr}"
-    # The U+1F438 frog must round-trip as UTF-8 bytes regardless of locale.
-    assert b"\xf0\x9f\x90\xb8" in out.read_bytes()
+    def test_dream_lineage_writes_utf8_html(self, repo_root, coupon_demo_src, tmp_path):
+        """dream-lineage embeds a frog emoji + box glyphs in the HTML it writes."""
+        lineage = repo_root / "skills/shadow-frog-viewer/dream-lineage.py"
+        out = tmp_path / "lineage.html"
+        r = subprocess.run(
+            [sys.executable, str(lineage), "-o", str(out),
+             "--shadow-dir", str(coupon_demo_src / ".shadow")],
+            capture_output=True, encoding="utf-8", env=_narrow_env(),
+        )
+        assert r.returncode == 0, f"stderr:\n{r.stderr}"
+        # The U+1F438 frog must round-trip as UTF-8 bytes regardless of locale.
+        assert b"\xf0\x9f\x90\xb8" in out.read_bytes()
