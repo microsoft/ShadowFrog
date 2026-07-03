@@ -37,14 +37,14 @@ def test_coupon_demo_copy_is_independent(coupon_demo, coupon_demo_src):
     assert coupon_demo != coupon_demo_src
     assert (coupon_demo / ".shadow" / "_index.md").is_file()
     # Mutate the copy and confirm the source is untouched.
-    (coupon_demo / "cart.py").write_text("# mutated by test\n")
-    assert (coupon_demo_src / "cart.py").read_text() != "# mutated by test\n"
+    (coupon_demo / "cart.py").write_text("# mutated by test\n", encoding="utf-8")
+    assert (coupon_demo_src / "cart.py").read_text(encoding="utf-8") != "# mutated by test\n"
 
 
 def test_coupon_demo_is_git_repo(coupon_demo):
     out = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=coupon_demo,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, encoding="utf-8",
     )
     assert len(out.stdout.strip()) == 40
 
@@ -55,6 +55,6 @@ def test_tmp_git_repo_is_empty(tmp_git_repo):
     # No commits yet
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=tmp_git_repo,
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode != 0  # HEAD doesn't exist
