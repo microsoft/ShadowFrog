@@ -96,7 +96,7 @@ def get_source_files(repo_root, scopes=None):
     """
     result = subprocess.run(
         ['git', 'ls-files', '-z'],
-        capture_output=True, text=True, cwd=repo_root
+        capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
     )
     files = []
     for f in result.stdout.split('\0'):
@@ -118,7 +118,7 @@ def _count_discoveries(shadow_path):
     """
     count = 0
     in_xref = False
-    with open(shadow_path) as sf:
+    with open(shadow_path, encoding="utf-8") as sf:
         for line in sf:
             stripped = line.rstrip('\n')
             if stripped.startswith('## ') or stripped.startswith('### '):
@@ -171,7 +171,7 @@ def compute_fan_in(repo_root, uncovered_files, max_files=200):
             result = subprocess.run(
                 ['git', 'grep', '-F', '-w', '-l', '--', base],
                 capture_output=True, text=True, cwd=repo_root,
-                timeout=10
+                timeout=10, encoding="utf-8"
             )
             count = len([l for l in result.stdout.strip().split('\n') if l]) if result.stdout.strip() else 0
             for f in files_for_base:
@@ -184,6 +184,9 @@ def compute_fan_in(repo_root, uncovered_files, max_files=200):
 
 
 def main():
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description="Dream coverage map — compute exploration coverage for task planning.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

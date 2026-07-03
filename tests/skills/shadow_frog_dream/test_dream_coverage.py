@@ -32,7 +32,7 @@ def _seed_tree(repo: Path, files: dict[str, str]):
     for rel, content in files.items():
         path = repo / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=repo, env=env, check=True)
 
@@ -151,7 +151,7 @@ def test_count_discoveries_excludes_cross_references(dream_coverage, tmp_path):
         "\n"
         "## Cross-References\n\n"
         "- [bp one](_cross/a.md)\n"
-        "- [bp two](_cross/b.md)\n"
+        "- [bp two](_cross/b.md)\n", encoding="utf-8"
     )
     assert dream_coverage._count_discoveries(str(shadow)) == 4
 
@@ -159,7 +159,7 @@ def test_count_discoveries_excludes_cross_references(dream_coverage, tmp_path):
 def test_count_discoveries_handles_lowercase_xref(dream_coverage, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
-        "## `foo`\n\n- real\n\n## cross-references\n\n- [bp](_cross/x.md)\n"
+        "## `foo`\n\n- real\n\n## cross-references\n\n- [bp](_cross/x.md)\n", encoding="utf-8"
     )
     assert dream_coverage._count_discoveries(str(shadow)) == 1
 
@@ -187,10 +187,10 @@ def test_check_coverage_classifies_files(dream_coverage, tmp_git_repo):
     })
     (tmp_git_repo / ".shadow").mkdir()
     (tmp_git_repo / ".shadow" / "a.py.md").write_text(
-        "## `a`\n\n- one\n- two\n"
+        "## `a`\n\n- one\n- two\n", encoding="utf-8"
     )
     (tmp_git_repo / ".shadow" / "b.py.md").write_text(
-        "## `b`\n\n_No discoveries yet._\n"
+        "## `b`\n\n_No discoveries yet._\n", encoding="utf-8"
     )
     # c.py: no shadow at all.
 
@@ -209,7 +209,7 @@ def test_check_coverage_saturated_threshold(dream_coverage, tmp_git_repo):
     _seed_tree(tmp_git_repo, {"big.py": "x\n"})
     (tmp_git_repo / ".shadow").mkdir()
     (tmp_git_repo / ".shadow" / "big.py.md").write_text(
-        "## `big`\n\n" + "\n".join(f"- discovery {i}" for i in range(8)) + "\n"
+        "## `big`\n\n" + "\n".join(f"- discovery {i}" for i in range(8)) + "\n", encoding="utf-8"
     )
     files = dream_coverage.get_source_files(str(tmp_git_repo))
     covered, uncovered, saturated = dream_coverage.check_coverage(
@@ -288,6 +288,7 @@ def test_cli_help_exits_zero():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "Dream coverage" in result.stdout or "coverage" in result.stdout.lower()
@@ -299,6 +300,7 @@ def test_cli_runs_against_coupon_demo(coupon_demo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(coupon_demo)],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "EXPLORATION COVERAGE MAP" in result.stdout
@@ -314,6 +316,7 @@ def test_cli_scope_with_no_matches_exits_nonzero(coupon_demo):
         [sys.executable, str(SCRIPT), str(coupon_demo),
          "--scope", "no-such-prefix/"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 2
     assert "No source files matched" in result.stdout
@@ -326,6 +329,7 @@ def test_cli_scope_filters_to_subset(coupon_demo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(coupon_demo), "--scope", "cart.py"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Total source files: 1" in result.stdout
