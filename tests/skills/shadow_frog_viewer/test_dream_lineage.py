@@ -197,7 +197,7 @@ class TestLoadIndex:
             "| 20250101-120000Z-base | investigation | useful | Base exp | dream/proj/20250101-120000Z-base | main | abc1234 |\n"
             "| 20250102-120000Z-extend | investigation | useful | Extend exp | dream/proj/20250102-120000Z-extend | dream/proj/20250101-120000Z-base | def5678 |\n"
         )
-        (dreams / "_index.md").write_text(index_content)
+        (dreams / "_index.md").write_text(index_content, encoding="utf-8")
         # Create minimal dream dirs
         (dreams / "20250101-120000Z-base").mkdir()
         (dreams / "20250102-120000Z-extend").mkdir()
@@ -222,7 +222,7 @@ class TestLoadIndex:
             "| 20250101-120000Z-t01-base | investigation | useful | Base | dream/proj/20250101-120000Z-t01-base | main | abc1234 |\n"
             "| 20250102-120000Z-t02-child | investigation | useful | Child | dream/proj/20250102-120000Z-t02-child | dream/proj/99999999-999999Z-t01-base | def5678 |\n"
         )
-        (dreams / "_index.md").write_text(index_content)
+        (dreams / "_index.md").write_text(index_content, encoding="utf-8")
         (dreams / "20250101-120000Z-t01-base").mkdir()
         (dreams / "20250102-120000Z-t02-child").mkdir()
 
@@ -249,10 +249,10 @@ class TestLoadReports:
             "---\ndream_id: \"20250101-120000Z-test\"\ncategory: investigation\n"
             "verdict: useful\n---\n\n# Test Experiment\n\nBody content here.\n"
         )
-        (dream_dir / "report.md").write_text(report)
+        (dream_dir / "report.md").write_text(report, encoding="utf-8")
 
         manifest = {"verdict": "useful", "tests_passed": 5, "discoveries": ["a", "b"]}
-        (dream_dir / "manifest.json").write_text(json.dumps(manifest))
+        (dream_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
         branch = "dream/proj/20250101-120000Z-test"
         meta = {branch: {"did": did}}
@@ -273,7 +273,7 @@ class TestCLI:
     def test_help_exits_zero(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--help"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8",
         )
         assert result.returncode == 0
         assert "Dream lineage" in result.stdout or "output" in result.stdout.lower()
@@ -283,7 +283,7 @@ class TestCLI:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "-o", str(out_file),
              "--shadow-dir", str(coupon_demo / ".shadow")],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8",
             cwd=str(coupon_demo),
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -295,9 +295,9 @@ class TestCLI:
         subprocess.run(
             [sys.executable, str(SCRIPT), "-o", str(out_file),
              "--shadow-dir", str(coupon_demo / ".shadow")],
-            capture_output=True, text=True, cwd=str(coupon_demo), check=True,
+            capture_output=True, text=True, encoding="utf-8", cwd=str(coupon_demo), check=True,
         )
-        content = out_file.read_text()
+        content = out_file.read_text(encoding="utf-8")
 
         # Parse with HTMLParser — should not raise
         errors = []
@@ -349,11 +349,11 @@ def _build_dreams(shadow_dir: Path, rows, reports=None, manifests=None):
             f"| {did} | {cat} | {verdict} | {title} | {branch} | {parent} | {tip} |"
         )
         (dreams / did).mkdir(exist_ok=True)
-    (dreams / "_index.md").write_text(header + "\n".join(body_lines) + "\n")
+    (dreams / "_index.md").write_text(header + "\n".join(body_lines) + "\n", encoding="utf-8")
     for did, text in (reports or {}).items():
-        (dreams / did / "report.md").write_text(text)
+        (dreams / did / "report.md").write_text(text, encoding="utf-8")
     for did, data in (manifests or {}).items():
-        (dreams / did / "manifest.json").write_text(json.dumps(data))
+        (dreams / did / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
     return dreams
 
 
@@ -548,7 +548,7 @@ class TestGenerateHtmlCouponDemo:
         dream_lineage.generate_html(str(coupon_demo / ".shadow"), str(out))
         # capture but don't fail on console output
         capsys.readouterr()
-        return out.read_text()
+        return out.read_text(encoding="utf-8")
 
     def test_writes_non_empty_file(self, dream_lineage, coupon_demo, tmp_path):
         out = tmp_path / "lineage.html"
@@ -652,7 +652,7 @@ class TestGenerateHtmlEdgeCases:
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
 
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         assert html.startswith("<!DOCTYPE html>")
         # Zero experiments dashboard
         assert ">0<" in html
@@ -683,7 +683,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         # The short name should still appear in the rendered shell
         assert "ghost" in html
         # No template since report.md was never created
@@ -706,14 +706,14 @@ class TestGenerateHtmlEdgeCases:
             "\n"
             "trailing prose line that is not a table row\n"
         )
-        (dreams / "_index.md").write_text(content)
+        (dreams / "_index.md").write_text(content, encoding="utf-8")
         (dreams / "20250101-120000Z-ok").mkdir()
 
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         msg = capsys.readouterr().out
         assert "1 experiments" in msg
-        assert "ok" in out.read_text()
+        assert "ok" in out.read_text(encoding="utf-8")
 
     def test_lineage_chain_renders_both_ancestors(self, dream_lineage, tmp_path, capsys):
         """A → B → C chain: all 3 short names appear and chain count = 1."""
@@ -732,7 +732,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         msg = capsys.readouterr().out
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
 
         # Chain depth: 3-node chain = 1 root with depth 2 → max_depth = 3
         assert "1 chains" in msg
@@ -802,7 +802,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         assert html.count('class="fresh-group"') == 3
         # Dead-end ❌ rendered
         assert "❌" in html
@@ -820,7 +820,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         # The "Unknown" cat-stat block
         assert "Unknown" in html
 
@@ -841,7 +841,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         # template body contains markdown→html output
         assert "<template id=" in html
         assert "<h2>Big Heading</h2>" in html
@@ -862,7 +862,7 @@ class TestGenerateHtmlEdgeCases:
         out = tmp_path / "out.html"
         dream_lineage.generate_html(str(shadow), str(out))
         capsys.readouterr()
-        html = out.read_text()
+        html = out.read_text(encoding="utf-8")
         # 3 sessions: 20250101-1200, 20250101-1259, 20250102-0800
         m = re.search(r'<div class="num">(\d+)</div><div class="label">Sessions</div>', html)
         assert m and m.group(1) == "3"
@@ -881,7 +881,7 @@ class TestCLIMain:
         result = subprocess.run(
             [sys.executable, str(SCRIPT),
              "--shadow-dir", str(coupon_demo / ".shadow")],
-            capture_output=True, text=True, cwd=str(coupon_demo),
+            capture_output=True, text=True, encoding="utf-8", cwd=str(coupon_demo),
         )
         assert result.returncode == 0, result.stderr
         default = coupon_demo / "dream-lineage.html"
@@ -895,18 +895,18 @@ class TestCLIMain:
             [sys.executable, str(SCRIPT),
              "-o", str(target),
              "--shadow-dir", str(coupon_demo / ".shadow")],
-            capture_output=True, text=True, cwd=str(coupon_demo),
+            capture_output=True, text=True, encoding="utf-8", cwd=str(coupon_demo),
         )
         assert result.returncode == 0, result.stderr
         assert target.exists()
-        assert target.read_text().startswith("<!DOCTYPE html>")
+        assert target.read_text(encoding="utf-8").startswith("<!DOCTYPE html>")
 
     def test_shadow_dir_auto_detect_from_cwd(self, coupon_demo):
         # When --shadow-dir is omitted, find_shadow_dir scans cwd for .shadow
         out_file = coupon_demo / "auto.html"
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "-o", str(out_file)],
-            capture_output=True, text=True, cwd=str(coupon_demo),
+            capture_output=True, text=True, encoding="utf-8", cwd=str(coupon_demo),
         )
         assert result.returncode == 0, result.stderr
         assert out_file.exists()
@@ -917,7 +917,7 @@ class TestCLIMain:
         empty.mkdir()
         result = subprocess.run(
             [sys.executable, str(SCRIPT)],
-            capture_output=True, text=True, cwd=str(empty),
+            capture_output=True, text=True, encoding="utf-8", cwd=str(empty),
         )
         assert result.returncode == 1
         assert "ERROR" in result.stderr
@@ -928,7 +928,7 @@ class TestCLIMain:
             [sys.executable, str(SCRIPT),
              "-o", str(out_file),
              "--shadow-dir", str(coupon_demo / ".shadow")],
-            capture_output=True, text=True, cwd=str(coupon_demo),
+            capture_output=True, text=True, encoding="utf-8", cwd=str(coupon_demo),
         )
         assert result.returncode == 0
         assert "3 experiments" in result.stdout
@@ -985,7 +985,8 @@ class TestTreeDepthCycleGuard:
             "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
             "|----------|----------|---------|-------|--------|--------|------------|\n"
             "| ida | exploration | useful | T-A | dream/proj/A | dream/proj/B | abc |\n"
-            "| idb | exploration | useful | T-B | dream/proj/B | dream/proj/A | def |\n"
+            "| idb | exploration | useful | T-B | dream/proj/B | dream/proj/A | def |\n",
+            encoding="utf-8",
         )
         out = tmp_path / "lineage.html"
         dream_lineage.generate_html(shadow, out)
