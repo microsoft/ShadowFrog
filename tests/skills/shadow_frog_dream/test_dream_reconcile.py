@@ -41,7 +41,7 @@ def _git_env(home: Path) -> dict:
 
 def _run(cmd, cwd, env=None, check=True):
     return subprocess.run(
-        cmd, cwd=cwd, env=env, capture_output=True, text=True, check=check
+        cmd, cwd=cwd, env=env, capture_output=True, text=True, check=check, encoding="utf-8"
     )
 
 
@@ -52,7 +52,7 @@ def _git(*args, cwd, env, check=True):
 def _seed_repo(repo: Path):
     """Seed an empty initialized git repo with one commit and a bare origin."""
     env = _git_env(repo)
-    (repo / "README.md").write_text("# test\n")
+    (repo / "README.md").write_text("# test\n", encoding="utf-8")
     _git("add", "-A", cwd=repo, env=env)
     _git("commit", "-q", "-m", "init", cwd=repo, env=env)
     return env
@@ -93,17 +93,17 @@ def make_dream_branch(
 
     dream_dir = repo / ".shadow" / "_dreams" / dream_id
     dream_dir.mkdir(parents=True, exist_ok=True)
-    (dream_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (dream_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if report is not None:
-        (dream_dir / "report.md").write_text(report)
+        (dream_dir / "report.md").write_text(report, encoding="utf-8")
     if patch is not None:
-        (dream_dir / "patch.diff").write_text(patch)
+        (dream_dir / "patch.diff").write_text(patch, encoding="utf-8")
 
     if extra_files:
         for rel, content in extra_files.items():
             target = repo / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
+            target.write_text(content, encoding="utf-8")
 
     _git("add", "-A", cwd=repo, env=env)
     _git("commit", "-q", "-m", f"dream: {dream_id}", cwd=repo, env=env)
@@ -259,7 +259,7 @@ def test_add_cross_reference_backpointer_bootstraps_missing_shadow(dream_reconci
 
     shadow = repo / ".shadow" / "src" / "foo.py.md"
     assert shadow.is_file()
-    text = shadow.read_text()
+    text = shadow.read_text(encoding="utf-8")
     assert "## File-Level" in text
     assert "## Cross-References" in text
     # depth=1 for src/foo.py → prefix "../"
@@ -281,7 +281,7 @@ def test_add_cross_reference_backpointer_is_idempotent(dream_reconcile, tmp_path
     assert written2 is False
 
     shadow = repo / ".shadow" / "foo.py.md"
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert body.count("[Title X](_cross/slug-x.md)") == 1
 
 
@@ -300,7 +300,7 @@ def test_add_cross_reference_backpointer_false_positive_substring(dream_reconcil
         "\n"
         "## Cross-References\n"
         "\n"
-        "_No cross-cutting discoveries yet._\n"
+        "_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
 
     written = dream_reconcile.add_cross_reference_backpointer(
@@ -308,7 +308,7 @@ def test_add_cross_reference_backpointer_false_positive_substring(dream_reconcil
     )
     assert written is True
 
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "[Foo Title](_cross/foo.md)" in body
     # Discovery line preserved.
     assert "talks about `_cross/foo.md`" in body
@@ -330,7 +330,7 @@ def test_add_cross_reference_backpointer_depth_math(
     shadow = repo / ".shadow" / (file_part + ".md")
     assert shadow.is_file()
     expected = f"[T]({expected_prefix}_cross/slug.md)"
-    assert expected in shadow.read_text()
+    assert expected in shadow.read_text(encoding="utf-8")
 
 
 def test_add_cross_reference_backpointer_replaces_placeholder(
@@ -340,12 +340,12 @@ def test_add_cross_reference_backpointer_replaces_placeholder(
     (repo / ".shadow").mkdir()
     shadow = repo / ".shadow" / "foo.py.md"
     shadow.write_text(
-        "## `foo`\n\n- d\n\n## Cross-References\n\n_No cross-cutting discoveries yet._\n"
+        "## `foo`\n\n- d\n\n## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
     dream_reconcile.add_cross_reference_backpointer(
         str(repo), "foo.py", "slug-y", "Y", "20260101-000000Z-q"
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "_No cross-cutting discoveries yet._" not in body
     assert "[Y](_cross/slug-y.md)" in body
 
@@ -365,7 +365,7 @@ def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
     )
     assert written is True
     assert shadow.is_file()
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "## `do_thing`" in body
     assert "- Returns None on empty input." in body
     assert "_(verified, source: exploration)_" in body
@@ -376,7 +376,7 @@ def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
 def test_merge_discovery_replaces_no_discoveries_placeholder(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
-        "## `foo`\n\n_No discoveries yet._\n\n## Cross-References\n\n_No cross-cutting discoveries yet._\n"
+        "## `foo`\n\n_No discoveries yet._\n\n## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
     dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -384,7 +384,7 @@ def test_merge_discovery_replaces_no_discoveries_placeholder(dream_reconcile, tm
          "source": "exploration"},
         "20260101-000000Z-x",
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "_No discoveries yet._" not in body
     assert "- Actual discovery." in body
 
@@ -393,7 +393,7 @@ def test_merge_discovery_appends_after_existing_bullets(dream_reconcile, tmp_pat
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- existing discovery\n  _(verified, source: exploration)_\n\n"
-        "## Cross-References\n\n_No cross-cutting discoveries yet._\n"
+        "## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
     dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -401,7 +401,7 @@ def test_merge_discovery_appends_after_existing_bullets(dream_reconcile, tmp_pat
          "source": "exploration"},
         "20260101-000000Z-x",
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "- existing discovery" in body
     assert "- Another discovery." in body
     # Discovery order preserved.
@@ -412,7 +412,7 @@ def test_merge_discovery_skips_duplicate(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- already here\n  _(verified, source: exploration)_\n\n"
-        "## Cross-References\n\n_No cross-cutting discoveries yet._\n"
+        "## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
     written = dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -444,7 +444,7 @@ def test_merge_discovery_unions_labels_on_exact_match(dream_reconcile, tmp_path)
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- claim text here\n  _(verified, source: exploration, labels: [bug])_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     written = dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -453,7 +453,7 @@ def test_merge_discovery_unions_labels_on_exact_match(dream_reconcile, tmp_path)
         "20260101-000000Z-x",
     )
     assert written is True
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     # Single merged discovery line (no duplicate appended).
     assert body.count("- claim text here") == 1
     assert "labels: [bug, security]" in body
@@ -463,7 +463,7 @@ def test_merge_discovery_upgrades_source_trust(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- some claim\n  _(verified, source: exploration)_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     written = dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -471,7 +471,7 @@ def test_merge_discovery_upgrades_source_trust(dream_reconcile, tmp_path):
         "20260101-000000Z-x",
     )
     assert written is True
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "source: user" in body
     assert "source: exploration" not in body
 
@@ -480,7 +480,7 @@ def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_pat
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(uncertain, source: exploration)_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     written = dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -488,7 +488,7 @@ def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_pat
         "20260101-000000Z-x",
     )
     assert written is True
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "_(verified, source: exploration)_" in body
 
 
@@ -496,7 +496,7 @@ def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(verified, source: exploration)_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     written = dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
@@ -505,14 +505,14 @@ def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
     )
     # Nothing to upgrade → no write.
     assert written is False
-    assert "_(verified, source: exploration)_" in shadow.read_text()
+    assert "_(verified, source: exploration)_" in shadow.read_text(encoding="utf-8")
 
 
 def test_merge_discovery_never_touches_refuted(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(refuted, source: exploration)_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     # New says verified — but refuted is a deliberate signal; status must hold.
     written = dream_reconcile.merge_discovery_into_file(
@@ -521,7 +521,7 @@ def test_merge_discovery_never_touches_refuted(dream_reconcile, tmp_path):
          "labels": ["bug"]},
         "20260101-000000Z-x",
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     # Status stays refuted; labels may still union.
     assert "refuted" in body
     assert "verified" not in body
@@ -535,7 +535,7 @@ def test_merge_discovery_fuzzy_match_still_skips(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         f"## `foo`\n\n{existing}\n  _(uncertain, source: exploration)_\n"
-        + _xref_footer()
+        + _xref_footer(), encoding="utf-8"
     )
     # Same words minus one — high overlap but not exact.
     new_text = ("the function returns none when the input list is "
@@ -547,7 +547,7 @@ def test_merge_discovery_fuzzy_match_still_skips(dream_reconcile, tmp_path):
     )
     # Treated as fuzzy duplicate → skipped, metadata untouched.
     assert written is False
-    assert "_(uncertain, source: exploration)_" in shadow.read_text()
+    assert "_(uncertain, source: exploration)_" in shadow.read_text(encoding="utf-8")
 
 
 class TestMetaMergeHelpers:
@@ -595,7 +595,7 @@ def test_merge_discovery_with_also_involves_and_labels(dream_reconcile, tmp_path
         },
         "20260101-000000Z-x",
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "labels: [bug, security]" in body
     assert "Also involves: `other.py::thing`, `more.py::stuff`" in body
 
@@ -617,7 +617,7 @@ INDEX_FIXTURE = """# Dream Experiments
 def _write_index(repo: Path, content: str = INDEX_FIXTURE):
     idx = repo / ".shadow" / "_dreams" / "_index.md"
     idx.parent.mkdir(parents=True, exist_ok=True)
-    idx.write_text(content)
+    idx.write_text(content, encoding="utf-8")
 
 
 def test_read_indexed_dream_ids_parses_table(dream_reconcile, tmp_path):
@@ -649,9 +649,9 @@ def test_read_indexed_branches_parses_table(dream_reconcile, tmp_path):
 def _seed_dream_artifacts(repo: Path, dream_id: str):
     d = repo / ".shadow" / "_dreams" / dream_id
     d.mkdir(parents=True, exist_ok=True)
-    (d / "report.md").write_text(f"# {dream_id}\n")
-    (d / "manifest.json").write_text("{}")
-    (d / "patch.diff").write_text("diff\n")
+    (d / "report.md").write_text(f"# {dream_id}\n", encoding="utf-8")
+    (d / "manifest.json").write_text("{}", encoding="utf-8")
+    (d / "patch.diff").write_text("diff\n", encoding="utf-8")
 
 
 def test_verify_reconciliation_passes_for_indexed_dream(dream_reconcile, tmp_path):
@@ -688,7 +688,7 @@ def test_verify_reconciliation_reports_missing_artifacts(dream_reconcile, tmp_pa
     # Only create report.md — manifest.json and patch.diff missing.
     d = tmp_path / ".shadow" / "_dreams" / dream_id
     d.mkdir(parents=True, exist_ok=True)
-    (d / "report.md").write_text("# r\n")
+    (d / "report.md").write_text("# r\n", encoding="utf-8")
     manifests = [(f"dream/p/{dream_id}", dream_id, {})]
     failures = dream_reconcile.verify_reconciliation(str(tmp_path), manifests)
     assert any("manifest.json" in f for f in failures)
@@ -853,7 +853,7 @@ def test_count_discoveries_excludes_cross_references_section(dream_reconcile, tm
         "\n"
         "## Cross-References\n\n"
         "- [back-pointer one](_cross/a.md)\n"
-        "- [back-pointer two](_cross/b.md)\n"
+        "- [back-pointer two](_cross/b.md)\n", encoding="utf-8"
     )
     assert dream_reconcile._count_discoveries(str(shadow)) == 5
 
@@ -863,7 +863,7 @@ def test_count_discoveries_case_insensitive_xref_heading(dream_reconcile, tmp_pa
     shadow = tmp_path / "foo.md"
     shadow.write_text(
         "## `foo`\n\n- real discovery\n\n"
-        "## cross-references\n\n- [bp](_cross/a.md)\n"
+        "## cross-references\n\n- [bp](_cross/a.md)\n", encoding="utf-8"
     )
     assert dream_reconcile._count_discoveries(str(shadow)) == 1
 
@@ -894,7 +894,7 @@ def test_shadow_symbol_names_extracts_top_level_only(dream_reconcile, tmp_path):
         "### `bar.method`\n\n- nested d (not counted)\n\n"
         "## `class Baz`\n\n- d\n\n"
         "## `interface IQux`\n\n- d\n\n"
-        "## Cross-References\n\n"
+        "## Cross-References\n\n", encoding="utf-8"
     )
     names = dream_reconcile._shadow_symbol_names(str(shadow))
     assert names == ["bar", "Baz", "IQux"]
@@ -909,14 +909,14 @@ def test_shadow_language_reads_header(dream_reconcile, tmp_path):
     shadow.write_text(
         "# Shadow: foo.py\n\n"
         "**Language**: Python | **Lines**: 28 | **Last modified**: 2026-04-20\n\n"
-        "## `foo`\n"
+        "## `foo`\n", encoding="utf-8"
     )
     assert dream_reconcile._shadow_language(str(shadow)) == "Python"
 
 
 def test_shadow_language_missing_header_returns_unknown(dream_reconcile, tmp_path):
     shadow = tmp_path / "foo.md"
-    shadow.write_text("## `foo`\n\n- d\n")
+    shadow.write_text("## `foo`\n\n- d\n", encoding="utf-8")
     assert dream_reconcile._shadow_language(str(shadow)) == "Unknown"
 
 
@@ -931,15 +931,15 @@ def test_shadow_language_reads_from_coupon_demo(dream_reconcile, coupon_demo):
 
 def test_rebuild_top_index_dry_run_does_not_write(dream_reconcile, coupon_demo):
     index_path = coupon_demo / ".shadow" / "_index.md"
-    original = index_path.read_text()
+    original = index_path.read_text(encoding="utf-8")
     dream_reconcile.rebuild_top_index(str(coupon_demo), dry_run=True)
-    assert index_path.read_text() == original
+    assert index_path.read_text(encoding="utf-8") == original
 
 
 def test_rebuild_top_index_regenerates_coupon_demo_counts(dream_reconcile, coupon_demo):
     """Regenerated header must report the same totals as the committed file."""
     index_path = coupon_demo / ".shadow" / "_index.md"
-    original = index_path.read_text()
+    original = index_path.read_text(encoding="utf-8")
 
     # Sanity-check the committed file states the expected counts.
     assert "Total files: 3" in original
@@ -949,7 +949,7 @@ def test_rebuild_top_index_regenerates_coupon_demo_counts(dream_reconcile, coupo
     assert "Dream cycles: 3" in original
 
     dream_reconcile.rebuild_top_index(str(coupon_demo), dry_run=False)
-    new = index_path.read_text()
+    new = index_path.read_text(encoding="utf-8")
 
     assert "Total files: 3" in new
     assert "Symbols: 9" in new
@@ -966,7 +966,7 @@ def test_rebuild_top_index_regenerates_coupon_demo_counts(dream_reconcile, coupo
 def test_rebuild_top_index_preserves_init_provenance(dream_reconcile, coupon_demo):
     index_path = coupon_demo / ".shadow" / "_index.md"
     dream_reconcile.rebuild_top_index(str(coupon_demo), dry_run=False)
-    new = index_path.read_text()
+    new = index_path.read_text(encoding="utf-8")
     assert "Initially generated by shadow-frog-init on 2026-04-20" in new
     assert "Last updated by shadow-frog-dream on" in new
 
@@ -987,10 +987,10 @@ def test_rebuild_top_index_includes_underscore_prefixed_source_dirs(
     (shadow / "_meta").mkdir(parents=True)
     (shadow / "src" / "_internal").mkdir(parents=True)
     (shadow / "src" / "_internal" / "helper.py.md").write_text(
-        "# Shadow\n## `helper`\n\n- d1\n\n## Cross-References\n\n_No discoveries yet._\n"
+        "# Shadow\n## `helper`\n\n- d1\n\n## Cross-References\n\n_No discoveries yet._\n", encoding="utf-8"
     )
     dream_reconcile.rebuild_top_index(str(tmp_path), dry_run=False)
-    new = (shadow / "_index.md").read_text()
+    new = (shadow / "_index.md").read_text(encoding="utf-8")
     assert "src/_internal/helper.py" in new
     assert "Total files: 1" in new
 
@@ -1068,6 +1068,7 @@ def test_cli_help_exits_zero():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "Dream reconciliation" in result.stdout
@@ -1088,6 +1089,7 @@ def test_cli_dry_run_with_no_dream_branches(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "No new branches" in result.stdout
@@ -1099,6 +1101,7 @@ def test_cli_unknown_argument_exits_nonzero():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--bogus-flag"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 1
     assert "Unknown argument" in result.stderr
@@ -1181,7 +1184,7 @@ def test_git_check_false_swallows_error(dream_reconcile, tmp_git_repo):
 
 def test_git_show_returns_file_content(dream_reconcile, tmp_git_repo):
     env = _seed_repo(tmp_git_repo)
-    (tmp_git_repo / "hello.txt").write_text("hello world\n")
+    (tmp_git_repo / "hello.txt").write_text("hello world\n", encoding="utf-8")
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "add hello", cwd=tmp_git_repo, env=env)
     out = dream_reconcile.git_show("HEAD", "hello.txt", cwd=str(tmp_git_repo))
@@ -1279,8 +1282,8 @@ def test_merge_discoveries_creates_per_file_shadows(dream_reconcile, tmp_path):
     assert merged == 3
     assert skipped == 0
 
-    cart = (repo / ".shadow" / "src" / "cart.py.md").read_text()
-    util = (repo / ".shadow" / "lib" / "util.py.md").read_text()
+    cart = (repo / ".shadow" / "src" / "cart.py.md").read_text(encoding="utf-8")
+    util = (repo / ".shadow" / "lib" / "util.py.md").read_text(encoding="utf-8")
 
     assert "## `add_item`" in cart
     assert "## `checkout`" in cart
@@ -1303,7 +1306,7 @@ def test_merge_discoveries_adds_dream_report_marker_to_each(
     dream_reconcile.merge_discoveries(
         str(repo), [(f"dream/proj/{dream_id}", dream_id, manifest)],
     )
-    body = (repo / ".shadow" / "a.py.md").read_text()
+    body = (repo / ".shadow" / "a.py.md").read_text(encoding="utf-8")
     assert body.count(f"Dream report: `_dreams/{dream_id}/`") == 2
 
 
@@ -1387,7 +1390,7 @@ def test_merge_discoveries_creates_cross_cutting_file_with_back_pointers(
 
     cross = repo / ".shadow" / "_cross" / "auth-lifecycle.md"
     assert cross.is_file()
-    body = cross.read_text()
+    body = cross.read_text(encoding="utf-8")
     assert body.startswith("# Auth Lifecycle\n")
     assert "**Category**: behavior" in body
     assert "`src/auth.py::login`" in body
@@ -1395,8 +1398,8 @@ def test_merge_discoveries_creates_cross_cutting_file_with_back_pointers(
     assert "_(verified, source: exploration)_" in body
 
     # Each referenced per-file shadow must have a back-pointer.
-    auth = (repo / ".shadow" / "src" / "auth.py.md").read_text()
-    sess = (repo / ".shadow" / "lib" / "session.py.md").read_text()
+    auth = (repo / ".shadow" / "src" / "auth.py.md").read_text(encoding="utf-8")
+    sess = (repo / ".shadow" / "lib" / "session.py.md").read_text(encoding="utf-8")
     assert "[Auth Lifecycle](../_cross/auth-lifecycle.md)" in auth
     assert "[Auth Lifecycle](../_cross/auth-lifecycle.md)" in sess
     assert f"dream: {dream_id}" in auth
@@ -1450,7 +1453,7 @@ def test_merge_discoveries_skips_existing_cross_cutting_file(
     repo = tmp_path
     (repo / ".shadow" / "_cross").mkdir(parents=True)
     existing = repo / ".shadow" / "_cross" / "preexist.md"
-    existing.write_text("# Old Title\n\n**Refs**:\n- `x.py::y`\n")
+    existing.write_text("# Old Title\n\n**Refs**:\n- `x.py::y`\n", encoding="utf-8")
 
     dream_id = "20260420-000800Z-preexist"
     manifest = _manifest_with(dream_id, cross_cutting=[
@@ -1465,11 +1468,11 @@ def test_merge_discoveries_skips_existing_cross_cutting_file(
     # No new cross file created — but the back-pointer to x.py is still added.
     assert merged == 0
     assert skipped == 1
-    assert "# Old Title" in existing.read_text()
+    assert "# Old Title" in existing.read_text(encoding="utf-8")
     # And the back-pointer landed.
     assert "[Old Title](_cross/preexist.md)" in (
         repo / ".shadow" / "x.py.md"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 def test_merge_discoveries_skips_cross_ref_without_double_colon(
@@ -1533,7 +1536,7 @@ def test_merge_discoveries_multiple_manifests(dream_reconcile, tmp_path):
         ],
     )
     assert merged == 2
-    body = (repo / ".shadow" / "a.py.md").read_text()
+    body = (repo / ".shadow" / "a.py.md").read_text(encoding="utf-8")
     assert "## `x`" in body
     assert "## `y`" in body
     assert f"_dreams/{d1}/" in body
@@ -1562,10 +1565,10 @@ def test_mirror_reports_copies_report_and_patch(dream_reconcile, tmp_git_repo):
     assert mirrored == 1
     assert corrupted == []
     dream_dir = tmp_git_repo / ".shadow" / "_dreams" / dream_id
-    assert (dream_dir / "report.md").read_text() == report
-    assert (dream_dir / "patch.diff").read_text() == patch
+    assert (dream_dir / "report.md").read_text(encoding="utf-8") == report
+    assert (dream_dir / "patch.diff").read_text(encoding="utf-8") == patch
     # Manifest is rewritten from the in-memory dict.
-    saved_manifest = json.loads((dream_dir / "manifest.json").read_text())
+    saved_manifest = json.loads((dream_dir / "manifest.json").read_text(encoding="utf-8"))
     assert saved_manifest["dream_id"] == dream_id
 
 
@@ -1668,7 +1671,7 @@ def test_mirror_reports_detects_dream_id_mismatch(dream_reconcile, tmp_git_repo)
     assert mirrored == 1
     assert corrupted == [(dream_id, wrong_id)]
     dream_dir = tmp_git_repo / ".shadow" / "_dreams" / dream_id
-    body = (dream_dir / "report.md").read_text()
+    body = (dream_dir / "report.md").read_text(encoding="utf-8")
     assert "Corrupted Report" in body
     assert wrong_id in body
     # The manifest must still be mirrored despite the corrupt report.
@@ -1718,7 +1721,7 @@ def test_mirror_reports_multiple_manifests(dream_reconcile, tmp_git_repo):
     assert mirrored == 2
     for d in (d1, d2):
         body = (tmp_git_repo / ".shadow" / "_dreams" / d /
-                "report.md").read_text()
+                "report.md").read_text(encoding="utf-8")
         assert f"# {d}" in body
 
 
@@ -1737,7 +1740,7 @@ def test_update_index_bootstraps_when_missing(dream_reconcile, tmp_git_repo):
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
     )
-    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert "# Dream Experiment Archive" in idx
     assert "| dream_id | category | verdict |" in idx
     assert f"| {dream_id} | bug hunting | useful |" in idx
@@ -1758,7 +1761,7 @@ def test_update_index_preserves_existing_rows(dream_reconcile, tmp_git_repo):
         str(tmp_git_repo),
         [(f"dream/proj/{new_id}", new_id, _default_manifest(new_id))],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert "20260101-000000Z-alpha" in body
     assert "20260102-000000Z-beta" in body
     assert "20260103-000000Z-gamma" in body
@@ -1777,7 +1780,7 @@ def test_update_index_records_real_tip_commit(dream_reconcile, tmp_git_repo):
         str(tmp_git_repo),
         [(branch, dream_id, _default_manifest(dream_id))],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     row = [l for l in body.splitlines() if dream_id in l][0]
     assert f"| {expected_tip} |" in row
 
@@ -1793,14 +1796,14 @@ def test_update_index_dry_run_does_not_write(dream_reconcile, tmp_git_repo):
     idx_path = tmp_git_repo / ".shadow" / "_dreams" / "_index.md"
     # Pre-seed the file so the bootstrap path doesn't fire.
     idx_path.parent.mkdir(parents=True, exist_ok=True)
-    idx_path.write_text("# Dream Index\n\nold body\n")
-    before = idx_path.read_text()
+    idx_path.write_text("# Dream Index\n\nold body\n", encoding="utf-8")
+    before = idx_path.read_text(encoding="utf-8")
     dream_reconcile.update_index(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
         dry_run=True,
     )
-    assert idx_path.read_text() == before
+    assert idx_path.read_text(encoding="utf-8") == before
 
 
 @pytest.mark.slow
@@ -1828,7 +1831,7 @@ def test_update_index_uses_report_heading_when_manifest_title_missing(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, manifest)],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert "Beautiful Title From Report" in body
 
 
@@ -1848,7 +1851,7 @@ def test_update_index_falls_back_to_dream_id_when_no_title(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, manifest)],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert f"| Dream {dream_id} |" in body
 
 
@@ -1865,7 +1868,7 @@ def test_update_index_strips_pipe_chars_from_title(dream_reconcile, tmp_git_repo
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, manifest)],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     row = [l for l in body.splitlines() if dream_id in l][0]
     # Sanitized: pipes replaced with hyphens; row still has exactly the
     # canonical 8 separators ('| ' + 7 columns + ' |').
@@ -1889,7 +1892,7 @@ def test_update_index_normalizes_category_with_parens(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, manifest)],
     )
-    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     row = [l for l in body.splitlines() if dream_id in l][0]
     assert "| bug hunting |" in row
     assert "(notes" not in row
@@ -1913,7 +1916,7 @@ def test_update_state_bootstraps_missing_state_json(
     )
     state_path = tmp_git_repo / ".shadow" / "_meta" / "state.json"
     assert state_path.is_file()
-    state = json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["dream_cycles_completed"] == 1
     assert state["last_update_type"] == "dream"
     assert "last_update_at" in state
@@ -1928,13 +1931,13 @@ def test_update_state_increments_dream_cycles(dream_reconcile, tmp_git_repo):
     (state_dir / "state.json").write_text(json.dumps({
         "version": 1, "dream_cycles_completed": 5,
         "total_files": 0, "total_symbols": 0, "total_discoveries": 0,
-    }))
+    }), encoding="utf-8")
     dream_id = "20260420-040100Z-inc"
     dream_reconcile.update_state(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
     )
-    state = json.loads((state_dir / "state.json").read_text())
+    state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
     assert state["dream_cycles_completed"] == 6
     assert state["last_update_type"] == "dream"
 
@@ -1952,17 +1955,17 @@ def test_update_state_recomputes_totals_excludes_internal_dirs(
         "# Shadow\n"
         "## `foo`\n\n- d1\n- d2\n\n"
         "## `bar`\n\n- d3\n\n"
-        "## Cross-References\n\n- [bp](../_cross/x.md)\n"
+        "## Cross-References\n\n- [bp](../_cross/x.md)\n", encoding="utf-8"
     )
     # Cross-cutting (should NOT contribute).
     (shadow / "_cross").mkdir()
     (shadow / "_cross" / "x.md").write_text(
-        "# X\n## `should_not_count`\n- bogus\n"
+        "# X\n## `should_not_count`\n- bogus\n", encoding="utf-8"
     )
     # Dream report (should NOT contribute).
     (shadow / "_dreams" / "20260420-040200Z-x").mkdir(parents=True)
     (shadow / "_dreams" / "20260420-040200Z-x" / "report.md").write_text(
-        "## `also_not_counted`\n- bogus\n"
+        "## `also_not_counted`\n- bogus\n", encoding="utf-8"
     )
     dream_id = "20260420-040200Z-totals"
     dream_reconcile.update_state(
@@ -1970,7 +1973,7 @@ def test_update_state_recomputes_totals_excludes_internal_dirs(
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
     )
     state = json.loads(
-        (shadow / "_meta" / "state.json").read_text()
+        (shadow / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     assert state["total_files"] == 1
     assert state["total_symbols"] == 2     # foo + bar
@@ -1992,7 +1995,7 @@ def test_update_state_counts_underscore_prefixed_source_dirs(
     (shadow / "src" / "_internal" / "helper.py.md").write_text(
         "# Shadow\n"
         "## `helper`\n\n- d1\n- d2\n\n"
-        "## Cross-References\n\n_No discoveries yet._\n"
+        "## Cross-References\n\n_No discoveries yet._\n", encoding="utf-8"
     )
     dream_id = "20260420-040250Z-underscore"
     dream_reconcile.update_state(
@@ -2000,7 +2003,7 @@ def test_update_state_counts_underscore_prefixed_source_dirs(
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
     )
     state = json.loads(
-        (shadow / "_meta" / "state.json").read_text()
+        (shadow / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     assert state["total_files"] == 1
     assert state["total_symbols"] == 1
@@ -2033,15 +2036,15 @@ def test_update_state_dry_run_does_not_modify_existing(
         "version": 1, "dream_cycles_completed": 7,
         "total_files": 9, "total_symbols": 99, "total_discoveries": 42,
     }
-    (state_dir / "state.json").write_text(json.dumps(payload))
-    original = (state_dir / "state.json").read_text()
+    (state_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+    original = (state_dir / "state.json").read_text(encoding="utf-8")
     dream_id = "20260420-040400Z-drye"
     dream_reconcile.update_state(
         str(tmp_git_repo),
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
         dry_run=True,
     )
-    assert (state_dir / "state.json").read_text() == original
+    assert (state_dir / "state.json").read_text(encoding="utf-8") == original
     assert "Would update state.json" in capsys.readouterr().out
 
 
@@ -2055,7 +2058,7 @@ def test_update_state_records_last_commit_sha(dream_reconcile, tmp_git_repo):
         [(f"dream/proj/{dream_id}", dream_id, _default_manifest(dream_id))],
     )
     state = json.loads(
-        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text()
+        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     assert state["last_commit"] == head_sha
 
@@ -2132,7 +2135,7 @@ def test_cleanup_branches_refuses_when_head_not_pushed(
         f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
     )
     # Make a new local commit on main that is NOT pushed.
-    (tmp_git_repo / "drift.txt").write_text("unpushed\n")
+    (tmp_git_repo / "drift.txt").write_text("unpushed\n", encoding="utf-8")
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "local-only", cwd=tmp_git_repo, env=env)
 
@@ -2293,13 +2296,13 @@ def test_add_cross_reference_backpointer_appends_when_other_links_exist(
     shadow.write_text(
         "## `foo`\n\n- discovery\n\n"
         "## Cross-References\n\n"
-        "- [Existing](_cross/existing.md) (dream: 20260101-prev)\n"
+        "- [Existing](_cross/existing.md) (dream: 20260101-prev)\n", encoding="utf-8"
     )
     written = dream_reconcile.add_cross_reference_backpointer(
         str(repo), "foo.py", "fresh", "Fresh Title", "20260420-091000Z-new",
     )
     assert written is True
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "[Existing](_cross/existing.md)" in body
     assert "[Fresh Title](_cross/fresh.md)" in body
     # The pre-existing entry is before the new one.
@@ -2318,12 +2321,12 @@ def test_add_cross_reference_backpointer_inserts_before_next_heading(
         "## `z`\n\n- d\n\n"
         "## Cross-References\n\n"
         "- [Pre](_cross/pre.md)\n\n"
-        "## Other Section\n\nstuff\n"
+        "## Other Section\n\nstuff\n", encoding="utf-8"
     )
     dream_reconcile.add_cross_reference_backpointer(
         str(repo), "z.py", "new", "New", "20260420-091500Z-y",
     )
-    body = shadow.read_text()
+    body = shadow.read_text(encoding="utf-8")
     assert "[New](_cross/new.md)" in body
     # Inserted before `## Other Section`.
     assert body.index("[New]") < body.index("## Other Section")
@@ -2350,6 +2353,7 @@ def test_cli_namespace_requires_value():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--namespace"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 1
     assert "--namespace requires a value" in result.stderr
@@ -2382,18 +2386,19 @@ def test_cli_full_happy_path_reconciles_two_dreams(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo)],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "All 2 dreams verified" in result.stdout
     # state.json updated.
     state = json.loads(
-        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text()
+        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     assert state["dream_cycles_completed"] == 1
     assert state["last_update_type"] == "dream"
     assert state["total_discoveries"] >= 2
     # _index.md has both dreams.
-    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert d1 in idx
     assert d2 in idx
     # Per-dream mirror dirs.
@@ -2402,13 +2407,13 @@ def test_cli_full_happy_path_reconciles_two_dreams(tmp_git_repo):
         assert (d_dir / "manifest.json").is_file()
         assert (d_dir / "report.md").is_file()
     # Per-file shadow exists.
-    cart = (tmp_git_repo / ".shadow" / "src" / "cart.py.md").read_text()
+    cart = (tmp_git_repo / ".shadow" / "src" / "cart.py.md").read_text(encoding="utf-8")
     assert "## `add_item`" in cart
     assert "## `checkout`" in cart
     # Cross-cutting file exists.
     assert (tmp_git_repo / ".shadow" / "_cross" / "cart-flow.md").is_file()
     # Top-level _index.md regenerated with dream cycles.
-    top = (tmp_git_repo / ".shadow" / "_index.md").read_text()
+    top = (tmp_git_repo / ".shadow" / "_index.md").read_text(encoding="utf-8")
     assert "Dream cycles: 1" in top
 
 
@@ -2428,6 +2433,7 @@ def test_cli_dry_run_makes_no_persistent_changes(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "DRY RUN" in result.stdout
@@ -2458,6 +2464,7 @@ def test_cli_namespace_filters_branches(tmp_git_repo):
         [sys.executable, str(SCRIPT), str(tmp_git_repo),
          "--namespace", "inside", "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert in_id in result.stdout
@@ -2485,13 +2492,14 @@ def test_cli_skips_invalid_manifest_and_continues(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo)],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert good in result.stdout
     # The bad one is mentioned as SKIP, not crashed.
     assert "SKIP" in result.stdout and bad in result.stdout
     # And only the good one made it into _index.md.
-    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert good in idx
     assert bad not in idx
 
@@ -2505,6 +2513,7 @@ def test_cli_no_dreams_exits_zero_with_message(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo)],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "No new branches" in result.stdout
@@ -2520,6 +2529,7 @@ def test_cli_not_in_git_repo_exits_nonzero(tmp_path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(not_a_repo / "nope")],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 1
     assert "Not in a git repository" in result.stderr
@@ -2535,6 +2545,7 @@ def test_cli_no_positional_uses_git_toplevel(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--dry-run"],
         capture_output=True, text=True, env=full_env, cwd=str(tmp_git_repo),
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "No new branches" in result.stdout
@@ -2546,12 +2557,13 @@ def test_cli_namespace_from_dotenv_file(tmp_git_repo):
     """If DREAM_NAMESPACE is unset and a `.env` provides one, use it."""
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
-    (tmp_git_repo / ".env").write_text("DREAM_NAMESPACE=fromdotenv\n")
+    (tmp_git_repo / ".env").write_text("DREAM_NAMESPACE=fromdotenv\n", encoding="utf-8")
     full_env = _cli_env()
     full_env.pop("DREAM_NAMESPACE", None)
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Namespace: fromdotenv" in result.stdout
@@ -2563,13 +2575,14 @@ def test_cli_namespace_from_task_info_json(tmp_git_repo):
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
     (tmp_git_repo / "TASK_INFO.json").write_text(
-        json.dumps({"dream_namespace": "fromtaskinfo"})
+        json.dumps({"dream_namespace": "fromtaskinfo"}), encoding="utf-8"
     )
     full_env = _cli_env()
     full_env.pop("DREAM_NAMESPACE", None)
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Namespace: fromtaskinfo" in result.stdout
@@ -2585,6 +2598,7 @@ def test_cli_namespace_falls_back_to_repo_basename(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     # The fixture's repo dir is named "repo".
@@ -2600,6 +2614,7 @@ def test_cli_verify_only_empty_index_exits_zero(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--verify-only"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "No reconciled dreams" in result.stdout
@@ -2623,6 +2638,7 @@ def test_cli_verify_only_passes_for_fully_reconciled_dream(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--verify-only"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "All 1 indexed dreams verified" in result.stdout
@@ -2646,6 +2662,7 @@ def test_cli_verify_only_reports_missing_artifacts(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo), "--verify-only"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 1
     assert "Verification FAILED" in result.stdout
@@ -2670,6 +2687,7 @@ def test_cli_cleanup_branches_after_reconcile(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo)],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     _git("add", "-A", cwd=tmp_git_repo, env=env)
@@ -2681,6 +2699,7 @@ def test_cli_cleanup_branches_after_reconcile(tmp_git_repo):
         [sys.executable, str(SCRIPT), str(tmp_git_repo),
          "--cleanup-branches"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Deleted: 1" in result.stdout
@@ -2701,6 +2720,7 @@ def test_cli_cleanup_no_new_no_indexed_exits_zero(tmp_git_repo):
         [sys.executable, str(SCRIPT), str(tmp_git_repo),
          "--cleanup-branches"],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "Nothing in _index.md to clean up" in result.stdout
@@ -2720,7 +2740,7 @@ def test_cli_corrupted_manifest_json_skipped(tmp_git_repo):
     _git("checkout", "-q", "-b", branch, cwd=tmp_git_repo, env=env)
     dream_dir = tmp_git_repo / ".shadow" / "_dreams" / bad_id
     dream_dir.mkdir(parents=True)
-    (dream_dir / "manifest.json").write_text("{this is not json")
+    (dream_dir / "manifest.json").write_text("{this is not json", encoding="utf-8")
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "bad json", cwd=tmp_git_repo, env=env)
     _git("push", "-q", "origin", branch, cwd=tmp_git_repo, env=env)
@@ -2730,6 +2750,7 @@ def test_cli_corrupted_manifest_json_skipped(tmp_git_repo):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(tmp_git_repo)],
         capture_output=True, text=True, env=full_env,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "SKIP" in result.stdout
@@ -2781,7 +2802,7 @@ class TestUpdateIndexDryRunIsReadOnly:
             "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
             "|----------|----------|---------|-------|--------|--------|------------|\n"
         )
-        index_path.write_text(original)
+        index_path.write_text(original, encoding="utf-8")
 
         manifests = [
             ("dream/proj/xx", "20260420-1500Z-feat",
@@ -2789,7 +2810,7 @@ class TestUpdateIndexDryRunIsReadOnly:
         ]
         dream_reconcile.update_index(str(tmp_git_repo), manifests, dry_run=True)
 
-        assert index_path.read_text() == original
+        assert index_path.read_text(encoding="utf-8") == original
 
     def test_dry_run_still_prints_preview(
         self, dream_reconcile, tmp_git_repo, capsys
@@ -2860,7 +2881,7 @@ class TestMergeRefsIntoCrossFile:
         body = ["# Title", "", "**Category**: pattern", "**Refs**:"]
         body += [f"- `{r}`" for r in refs]
         body += ["", "**Discovery**: something", ""]
-        p.write_text("\n".join(body))
+        p.write_text("\n".join(body), encoding="utf-8")
         return p
 
     def test_unions_new_refs(self, dream_reconcile, tmp_path):
@@ -2869,7 +2890,7 @@ class TestMergeRefsIntoCrossFile:
             str(p), ["src/b.py::g", "src/a.py::f"]
         )
         assert changed is True
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         assert "- `src/a.py::f`" in text
         assert "- `src/b.py::g`" in text
         # No duplication of the already-present ref.
@@ -2877,12 +2898,12 @@ class TestMergeRefsIntoCrossFile:
 
     def test_no_change_when_all_present(self, dream_reconcile, tmp_path):
         p = self._write_cross(tmp_path, ["src/a.py::f"])
-        before = p.read_text()
+        before = p.read_text(encoding="utf-8")
         changed = dream_reconcile._merge_refs_into_cross_file(
             str(p), ["src/a.py::f"]
         )
         assert changed is False
-        assert p.read_text() == before
+        assert p.read_text(encoding="utf-8") == before
 
     def test_missing_file_returns_false(self, dream_reconcile, tmp_path):
         assert dream_reconcile._merge_refs_into_cross_file(
@@ -2891,12 +2912,12 @@ class TestMergeRefsIntoCrossFile:
 
     def test_no_refs_block_returns_false(self, dream_reconcile, tmp_path):
         p = tmp_path / "norefs.md"
-        p.write_text("# Title\n\nNo refs section here.\n")
+        p.write_text("# Title\n\nNo refs section here.\n", encoding="utf-8")
         assert dream_reconcile._merge_refs_into_cross_file(
             str(p), ["x::y"]
         ) is False
         # File untouched.
-        assert "No refs section here." in p.read_text()
+        assert "No refs section here." in p.read_text(encoding="utf-8")
 
 
 # ===========================================================================
@@ -3044,8 +3065,8 @@ def test_cleanup_branches_worktree_gc_falls_back_on_dead_gitdir(
     base = tmp_path / "wt-base"
     worktree_dir = base / "proj" / "dream-dead"
     worktree_dir.mkdir(parents=True)
-    (worktree_dir / ".git").write_text("gitdir: /nonexistent/wt-dir\n")
-    (worktree_dir / "leaked.pyc").write_text("# leak me\n")
+    (worktree_dir / ".git").write_text("gitdir: /nonexistent/wt-dir\n", encoding="utf-8")
+    (worktree_dir / "leaked.pyc").write_text("# leak me\n", encoding="utf-8")
 
     monkeypatch.setenv("DREAM_WORKTREE_BASE", str(base))
 
@@ -3089,7 +3110,7 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     # Decoy at /tmp/proj/dream-unsafe — must NOT be touched.
     decoy = tmp_path / "should-not-be-deleted"
     decoy.mkdir()
-    (decoy / "important.txt").write_text("keep me\n")
+    (decoy / "important.txt").write_text("keep me\n", encoding="utf-8")
 
     # Point DREAM_WORKTREE_BASE at /tmp — gate must refuse.
     monkeypatch.setenv("DREAM_WORKTREE_BASE", "/tmp")
@@ -3106,7 +3127,7 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     assert "Skipping worktree GC" in captured.out or "sensitive root" in captured.out
     # Decoy is untouched.
     assert decoy.is_dir()
-    assert (decoy / "important.txt").read_text() == "keep me\n"
+    assert (decoy / "important.txt").read_text(encoding="utf-8") == "keep me\n"
 
 
 @pytest.mark.slow
@@ -3247,7 +3268,7 @@ def test_cleanup_branches_does_not_clobber_concurrent_slug_collision(
          cwd=tmp_git_repo, env=env)
     assert shared_path.is_dir()
     # Add a "user file" — proxy for uncommitted work that must survive.
-    (shared_path / "uncommitted-work.txt").write_text("PRECIOUS WORK\n")
+    (shared_path / "uncommitted-work.txt").write_text("PRECIOUS WORK\n", encoding="utf-8")
 
     # Reconcile A — its GC must NOT take down B's worktree.
     deleted, _ = dream_reconcile.cleanup_branches(
@@ -3263,7 +3284,7 @@ def test_cleanup_branches_does_not_clobber_concurrent_slug_collision(
         "B's live worktree was DESTROYED by A's reconciler GC — "
         "cross-deletion regression (S2)"
     )
-    assert (shared_path / "uncommitted-work.txt").read_text() == "PRECIOUS WORK\n", (
+    assert (shared_path / "uncommitted-work.txt").read_text(encoding="utf-8") == "PRECIOUS WORK\n", (
         "user's uncommitted work in B's worktree was lost"
     )
     # B's branch must still exist too.

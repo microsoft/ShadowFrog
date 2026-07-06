@@ -65,6 +65,7 @@ def run_git(args, cwd=None):
         result = subprocess.run(
             ["git"] + args,
             capture_output=True, text=True, timeout=30, cwd=cwd, env=env,
+            encoding="utf-8",
         )
         if result.returncode != 0:
             warn(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -98,7 +99,7 @@ def find_repo_root():
         # pointing to a non-existent or inaccessible gitdir path
         git_path = Path(".git")
         if git_path.is_file():
-            gitdir_line = git_path.read_text().strip()
+            gitdir_line = git_path.read_text(encoding="utf-8").strip()
             warn(f"git rev-parse --show-toplevel failed. "
                  f".git is a file (worktree): {gitdir_line}. "
                  "The gitdir path may be inaccessible (e.g., running inside Docker "
@@ -1449,6 +1450,9 @@ def init_shadow(repo_root, reset=False, dry_run=False):
 # ---------------------------------------------------------------------------
 
 def main():
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description="Initialize a .shadow/ knowledge base for any codebase.",
         prog="shadow-init.py",

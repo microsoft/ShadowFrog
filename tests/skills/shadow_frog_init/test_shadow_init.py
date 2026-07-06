@@ -42,6 +42,7 @@ def _run_shadow_init(repo_root, *args, timeout=60):
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(repo_root), *args],
         capture_output=True, text=True, timeout=timeout, cwd=str(repo_root),
+        encoding="utf-8",
     )
 
 
@@ -218,22 +219,22 @@ def test_walk_files_empty_repo(shadow_init, tmp_path):
 def test_walk_files_one_file(shadow_init, tmp_path):
     repo = tmp_path / "one_file"
     repo.mkdir()
-    (repo / "foo.py").write_text("x = 1\n")
+    (repo / "foo.py").write_text("x = 1\n", encoding="utf-8")
     assert shadow_init._walk_files(str(repo)) == ["foo.py"]
 
 
 def test_walk_files_skips_excluded_and_dotfile_dirs(shadow_init, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "foo.py").write_text("x = 1\n")
+    (repo / "foo.py").write_text("x = 1\n", encoding="utf-8")
     (repo / "src").mkdir()
-    (repo / "src" / "main.py").write_text("y = 2\n")
+    (repo / "src" / "main.py").write_text("y = 2\n", encoding="utf-8")
     # Excluded dir
     (repo / "node_modules").mkdir()
-    (repo / "node_modules" / "bundle.js").write_text("z = 3\n")
+    (repo / "node_modules" / "bundle.js").write_text("z = 3\n", encoding="utf-8")
     # Hidden dir (skipped by _walk_files's leading-dot filter)
     (repo / ".git").mkdir()
-    (repo / ".git" / "config").write_text("[core]\n")
+    (repo / ".git" / "config").write_text("[core]\n", encoding="utf-8")
 
     result = sorted(shadow_init._walk_files(str(repo)))
     assert "foo.py" in result
@@ -252,19 +253,19 @@ def test_load_shadowignore_no_file(shadow_init, tmp_path):
 
 
 def test_load_shadowignore_empty_file(shadow_init, tmp_path):
-    (tmp_path / ".shadowignore").write_text("")
+    (tmp_path / ".shadowignore").write_text("", encoding="utf-8")
     matcher = shadow_init._load_shadowignore(tmp_path)
     assert matcher("anything.py") is False
 
 
 def test_load_shadowignore_comments_only(shadow_init, tmp_path):
-    (tmp_path / ".shadowignore").write_text("# header comment\n\n# another\n")
+    (tmp_path / ".shadowignore").write_text("# header comment\n\n# another\n", encoding="utf-8")
     matcher = shadow_init._load_shadowignore(tmp_path)
     assert matcher("anything.py") is False
 
 
 def test_load_shadowignore_pattern_matches(shadow_init, tmp_path):
-    (tmp_path / ".shadowignore").write_text("*.log\nsecret/\n")
+    (tmp_path / ".shadowignore").write_text("*.log\nsecret/\n", encoding="utf-8")
     matcher = shadow_init._load_shadowignore(tmp_path)
     assert matcher("foo.log") is True
     assert matcher("nested/path/error.log") is True
@@ -273,7 +274,7 @@ def test_load_shadowignore_pattern_matches(shadow_init, tmp_path):
 
 def test_load_shadowignore_negation_does_not_crash(shadow_init, tmp_path):
     # Negation is valid gitwildmatch syntax — the matcher must not raise.
-    (tmp_path / ".shadowignore").write_text("*.log\n!keep.log\n")
+    (tmp_path / ".shadowignore").write_text("*.log\n!keep.log\n", encoding="utf-8")
     matcher = shadow_init._load_shadowignore(tmp_path)
     # Both calls must succeed (we don't assert specific values because
     # pathspec respects negation but the fnmatch fallback does not).
@@ -287,12 +288,12 @@ def test_load_shadowignore_negation_does_not_crash(shadow_init, tmp_path):
 
 @pytest.mark.slow
 def test_discover_files_end_to_end(shadow_init, tmp_git_repo):
-    (tmp_git_repo / "foo.py").write_text("def hello(): pass\n")
-    (tmp_git_repo / "bar.js").write_text("function world() {}\n")
-    (tmp_git_repo / "ignore.txt").write_text("not source\n")
+    (tmp_git_repo / "foo.py").write_text("def hello(): pass\n", encoding="utf-8")
+    (tmp_git_repo / "bar.js").write_text("function world() {}\n", encoding="utf-8")
+    (tmp_git_repo / "ignore.txt").write_text("not source\n", encoding="utf-8")
     sub = tmp_git_repo / "src"
     sub.mkdir()
-    (sub / "baz.py").write_text("x = 1\n")
+    (sub / "baz.py").write_text("x = 1\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add files"],
                    cwd=tmp_git_repo, check=True)
@@ -310,15 +311,15 @@ def test_discover_files_end_to_end(shadow_init, tmp_git_repo):
 
 @pytest.mark.slow
 def test_discover_files_honors_shadowignore(shadow_init, tmp_git_repo):
-    (tmp_git_repo / "foo.py").write_text("def a(): pass\n")
-    (tmp_git_repo / "bar.py").write_text("def b(): pass\n")
+    (tmp_git_repo / "foo.py").write_text("def a(): pass\n", encoding="utf-8")
+    (tmp_git_repo / "bar.py").write_text("def b(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"],
                    cwd=tmp_git_repo, check=True)
 
     shadow_dir = tmp_git_repo / ".shadow"
     shadow_dir.mkdir()
-    (shadow_dir / ".shadowignore").write_text("bar.py\n")
+    (shadow_dir / ".shadowignore").write_text("bar.py\n", encoding="utf-8")
 
     result = shadow_init.discover_files(str(tmp_git_repo), shadow_dir)
     assert "foo.py" in result
@@ -739,7 +740,7 @@ def test_cli_dry_run_does_not_write_shadow(tmp_git_repo):
 def test_cli_creates_shadow_for_committed_file(tmp_git_repo):
     """End-to-end: a committed `foo.py` should yield a complete .shadow/ tree."""
     (tmp_git_repo / "foo.py").write_text(
-        "def hello():\n    return 'world'\n\nclass Greeter:\n    def hi(self):\n        return 'hi'\n"
+        "def hello():\n    return 'world'\n\nclass Greeter:\n    def hi(self):\n        return 'hi'\n", encoding="utf-8"
     )
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add foo"],
@@ -760,7 +761,7 @@ def test_cli_creates_shadow_for_committed_file(tmp_git_repo):
     assert (shadow / "_cross").is_dir()
     assert (shadow / "_dreams").is_dir()
 
-    state = json.loads((shadow / "_meta" / "state.json").read_text())
+    state = json.loads((shadow / "_meta" / "state.json").read_text(encoding="utf-8"))
     assert isinstance(state["last_commit"], str)
     assert re.fullmatch(r"[0-9a-f]{40}", state["last_commit"]), (
         f"Expected 40-char hex SHA, got: {state['last_commit']!r}"
@@ -770,7 +771,7 @@ def test_cli_creates_shadow_for_committed_file(tmp_git_repo):
     assert state["last_update_type"] == "init"
     assert state["version"] == 1
 
-    shadow_content = (shadow / "foo.py.md").read_text()
+    shadow_content = (shadow / "foo.py.md").read_text(encoding="utf-8")
     assert "hello" in shadow_content
     assert "Greeter" in shadow_content
     assert "Python" in shadow_content
@@ -791,7 +792,7 @@ def test_cli_b2_no_commits_uses_none_sentinel(tmp_git_repo):
     )
 
     state_path = tmp_git_repo / ".shadow" / "_meta" / "state.json"
-    state = json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["last_commit"] == "none", (
         f"B2 regression: expected sentinel 'none', got {state['last_commit']!r}. "
         "An empty string here breaks downstream hooks that distinguish "
@@ -804,7 +805,7 @@ def test_cli_b2_no_commits_uses_none_sentinel(tmp_git_repo):
 def test_cli_refuses_to_overwrite_without_reset(tmp_git_repo):
     """If .shadow/ already exists, the script must refuse without --reset."""
     (tmp_git_repo / ".shadow").mkdir()
-    (tmp_git_repo / ".shadow" / "marker").write_text("preserve me\n")
+    (tmp_git_repo / ".shadow" / "marker").write_text("preserve me\n", encoding="utf-8")
 
     result = _run_shadow_init(tmp_git_repo)  # no --reset
     assert result.returncode == 1
@@ -931,9 +932,9 @@ def test_find_repo_root_inside_subdirectory(shadow_init, tmp_git_repo,
 # ---------------------------------------------------------------------------
 
 def test_walk_files_lists_all_non_excluded(shadow_init, tmp_path):
-    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
     (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "b.txt").write_text("y")
+    (tmp_path / "sub" / "b.txt").write_text("y", encoding="utf-8")
     result = shadow_init._walk_files(tmp_path)
     # Note: walk does NOT filter by extension — that's discover_files's job
     assert "a.py" in result
@@ -949,7 +950,7 @@ def test_walk_files_lists_all_non_excluded(shadow_init, tmp_path):
 def test_load_shadowignore_unreadable_file_warns(shadow_init, tmp_path,
                                                  reset_diagnostics):
     ignore = tmp_path / ".shadowignore"
-    ignore.write_text("*.log\n")
+    ignore.write_text("*.log\n", encoding="utf-8")
     ignore.chmod(0o000)
     try:
         matcher = reset_diagnostics._load_shadowignore(tmp_path)
@@ -969,9 +970,9 @@ def test_load_shadowignore_unreadable_file_warns(shadow_init, tmp_path,
 def test_discover_files_falls_back_to_walk_in_non_git_dir(shadow_init,
                                                           tmp_path):
     """ls-files fails outside git → walk fallback finds files anyway."""
-    (tmp_path / "foo.py").write_text("def x(): pass\n")
-    (tmp_path / "bar.js").write_text("function y(){}\n")
-    (tmp_path / "ignored.txt").write_text("not source\n")
+    (tmp_path / "foo.py").write_text("def x(): pass\n", encoding="utf-8")
+    (tmp_path / "bar.js").write_text("function y(){}\n", encoding="utf-8")
+    (tmp_path / "ignored.txt").write_text("not source\n", encoding="utf-8")
     result = shadow_init.discover_files(str(tmp_path), tmp_path / ".shadow")
     assert "foo.py" in result
     assert "bar.js" in result
@@ -1118,7 +1119,7 @@ def test_extract_swift_clamps_negative_brace_depth(shadow_init):
 
 def test_get_last_modified_returns_iso_date_for_committed_file(shadow_init,
                                                                tmp_git_repo):
-    (tmp_git_repo / "foo.py").write_text("x\n")
+    (tmp_git_repo / "foo.py").write_text("x\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1129,13 +1130,13 @@ def test_get_last_modified_returns_iso_date_for_committed_file(shadow_init,
 
 def test_get_last_modified_returns_unknown_in_non_git_dir(shadow_init,
                                                           tmp_path):
-    (tmp_path / "foo.py").write_text("x\n")
+    (tmp_path / "foo.py").write_text("x\n", encoding="utf-8")
     assert shadow_init.get_last_modified("foo.py", str(tmp_path)) == "unknown"
 
 
 def test_get_last_modified_returns_unknown_for_uncommitted(shadow_init,
                                                            tmp_git_repo):
-    (tmp_git_repo / "fresh.py").write_text("x\n")  # not committed
+    (tmp_git_repo / "fresh.py").write_text("x\n", encoding="utf-8")  # not committed
     assert shadow_init.get_last_modified("fresh.py",
                                          str(tmp_git_repo)) == "unknown"
 
@@ -1229,7 +1230,7 @@ def test_init_shadow_empty_git_repo_writes_none_sentinel(shadow_init,
     assert (shadow / "_index.md").is_file()
     assert (shadow / "_prefs.md").is_file()
 
-    state = json.loads((shadow / "_meta" / "state.json").read_text())
+    state = json.loads((shadow / "_meta" / "state.json").read_text(encoding="utf-8"))
     assert state["last_commit"] == "none"
     assert state["total_files"] == 0
     assert state["total_symbols"] == 0
@@ -1244,7 +1245,7 @@ def test_init_shadow_dreams_index_has_seven_column_header(shadow_init,
     """The _dreams/_index.md scaffold must use the 7-column schema that
     dream-reconcile.py / dream-lineage.py validate against."""
     shadow_init.init_shadow(str(tmp_git_repo))
-    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text()
+    idx = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(encoding="utf-8")
     assert "dream_id" in idx
     assert "category" in idx
     assert "verdict" in idx
@@ -1257,7 +1258,7 @@ def test_init_shadow_dreams_index_has_seven_column_header(shadow_init,
 def test_init_shadow_default_shadowignore_has_expected_content(shadow_init,
                                                                tmp_git_repo):
     shadow_init.init_shadow(str(tmp_git_repo))
-    sig = (tmp_git_repo / ".shadow" / ".shadowignore").read_text()
+    sig = (tmp_git_repo / ".shadow" / ".shadowignore").read_text(encoding="utf-8")
     assert "node_modules/" in sig
     assert "*.min.js" in sig
     assert ".shadow/" in sig
@@ -1266,22 +1267,22 @@ def test_init_shadow_default_shadowignore_has_expected_content(shadow_init,
 
 def test_init_shadow_prefs_default_content(shadow_init, tmp_git_repo):
     shadow_init.init_shadow(str(tmp_git_repo))
-    prefs = (tmp_git_repo / ".shadow" / "_prefs.md").read_text()
+    prefs = (tmp_git_repo / ".shadow" / "_prefs.md").read_text(encoding="utf-8")
     assert "# Preferences" in prefs
     assert "_No preferences recorded yet._" in prefs
 
 
 def test_init_shadow_mixed_language_project(shadow_init, tmp_git_repo):
     """Multi-language repo: every recognized source file gets a shadow."""
-    (tmp_git_repo / "main.py").write_text("def main(): pass\n")
-    (tmp_git_repo / "app.js").write_text("function start() {}\n")
-    (tmp_git_repo / "lib.go").write_text("package x\nfunc Hello() {}\n")
-    (tmp_git_repo / "mod.rb").write_text("class Foo\n  def bar\n  end\nend\n")
-    (tmp_git_repo / "thing.rs").write_text("pub fn run() {}\n")
-    (tmp_git_repo / "shell.sh").write_text("greet() { echo hi; }\n")
+    (tmp_git_repo / "main.py").write_text("def main(): pass\n", encoding="utf-8")
+    (tmp_git_repo / "app.js").write_text("function start() {}\n", encoding="utf-8")
+    (tmp_git_repo / "lib.go").write_text("package x\nfunc Hello() {}\n", encoding="utf-8")
+    (tmp_git_repo / "mod.rb").write_text("class Foo\n  def bar\n  end\nend\n", encoding="utf-8")
+    (tmp_git_repo / "thing.rs").write_text("pub fn run() {}\n", encoding="utf-8")
+    (tmp_git_repo / "shell.sh").write_text("greet() { echo hi; }\n", encoding="utf-8")
     sub = tmp_git_repo / "src"
     sub.mkdir()
-    (sub / "deep.ts").write_text("export function compute() {}\n")
+    (sub / "deep.ts").write_text("export function compute() {}\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"],
                    cwd=tmp_git_repo, check=True)
@@ -1293,12 +1294,12 @@ def test_init_shadow_mixed_language_project(shadow_init, tmp_git_repo):
                  "thing.rs.md", "shell.sh.md", "src/deep.ts.md"):
         assert (shadow / path).is_file(), f"missing shadow: {path}"
 
-    state = json.loads((shadow / "_meta" / "state.json").read_text())
+    state = json.loads((shadow / "_meta" / "state.json").read_text(encoding="utf-8"))
     assert state["total_files"] == 7
     assert state["total_symbols"] >= 7  # each file contributes >=1 symbol
     assert re.fullmatch(r"[0-9a-f]{40}", state["last_commit"])
 
-    index = (shadow / "_index.md").read_text()
+    index = (shadow / "_index.md").read_text(encoding="utf-8")
     for p in ("main.py", "app.js", "lib.go", "mod.rb",
               "thing.rs", "shell.sh", "src/deep.ts"):
         assert p in index
@@ -1307,16 +1308,16 @@ def test_init_shadow_mixed_language_project(shadow_init, tmp_git_repo):
 def test_init_shadow_state_counts_match_disk(shadow_init, tmp_git_repo):
     """state.json totals must match actual files/symbols on disk."""
     (tmp_git_repo / "a.py").write_text(
-        "def f1(): pass\ndef f2(): pass\nclass C:\n    def m(self): pass\n"
+        "def f1(): pass\ndef f2(): pass\nclass C:\n    def m(self): pass\n", encoding="utf-8"
     )
-    (tmp_git_repo / "b.py").write_text("def only(): pass\n")
+    (tmp_git_repo / "b.py").write_text("def only(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
 
     shadow_init.init_shadow(str(tmp_git_repo))
     state = json.loads(
-        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text()
+        (tmp_git_repo / ".shadow" / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     # Two source files
     assert state["total_files"] == 2
@@ -1328,18 +1329,18 @@ def test_init_shadow_refuses_when_shadow_exists_without_reset(shadow_init,
                                                               tmp_git_repo,
                                                               reset_diagnostics):
     (tmp_git_repo / ".shadow").mkdir()
-    (tmp_git_repo / ".shadow" / "marker").write_text("preserve\n")
+    (tmp_git_repo / ".shadow" / "marker").write_text("preserve\n", encoding="utf-8")
     ok = reset_diagnostics.init_shadow(str(tmp_git_repo), reset=False)
     assert ok is False
-    assert (tmp_git_repo / ".shadow" / "marker").read_text() == "preserve\n"
+    assert (tmp_git_repo / ".shadow" / "marker").read_text(encoding="utf-8") == "preserve\n"
     msgs = [m for lvl, m in reset_diagnostics._diagnostics if lvl == "error"]
     assert any("already exists" in m for m in msgs)
 
 
 def test_init_shadow_reset_replaces_existing(shadow_init, tmp_git_repo):
     (tmp_git_repo / ".shadow").mkdir()
-    (tmp_git_repo / ".shadow" / "stale.md").write_text("old\n")
-    (tmp_git_repo / "foo.py").write_text("def x(): pass\n")
+    (tmp_git_repo / ".shadow" / "stale.md").write_text("old\n", encoding="utf-8")
+    (tmp_git_repo / "foo.py").write_text("def x(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1352,7 +1353,7 @@ def test_init_shadow_reset_replaces_existing(shadow_init, tmp_git_repo):
 
 def test_init_shadow_dry_run_creates_no_files(shadow_init, tmp_git_repo,
                                               capsys):
-    (tmp_git_repo / "foo.py").write_text("def x(): pass\n")
+    (tmp_git_repo / "foo.py").write_text("def x(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1369,11 +1370,11 @@ def test_init_shadow_dry_run_with_existing_shadow_and_reset(shadow_init,
                                                             capsys):
     """dry_run + reset must report 'Would delete' without actually deleting."""
     (tmp_git_repo / ".shadow").mkdir()
-    (tmp_git_repo / ".shadow" / "keep.txt").write_text("preserved\n")
+    (tmp_git_repo / ".shadow" / "keep.txt").write_text("preserved\n", encoding="utf-8")
     ok = shadow_init.init_shadow(str(tmp_git_repo), reset=True, dry_run=True)
     assert ok is True
     # Original .shadow contents untouched
-    assert (tmp_git_repo / ".shadow" / "keep.txt").read_text() == "preserved\n"
+    assert (tmp_git_repo / ".shadow" / "keep.txt").read_text(encoding="utf-8") == "preserved\n"
     out = capsys.readouterr().out.lower()
     assert "would delete" in out
 
@@ -1381,14 +1382,14 @@ def test_init_shadow_dry_run_with_existing_shadow_and_reset(shadow_init,
 def test_init_shadow_skips_excluded_paths_and_basenames(shadow_init,
                                                        tmp_git_repo):
     """node_modules/, *.lock, *.min.js are filtered by built-in rules."""
-    (tmp_git_repo / "real.py").write_text("def x(): pass\n")
+    (tmp_git_repo / "real.py").write_text("def x(): pass\n", encoding="utf-8")
     nm = tmp_git_repo / "node_modules"
     nm.mkdir()
-    (nm / "junk.js").write_text("function junk(){}\n")
-    (tmp_git_repo / "huge.lock").write_text("{}\n")
-    (tmp_git_repo / "min.min.js").write_text("var a=1;\n")
+    (nm / "junk.js").write_text("function junk(){}\n", encoding="utf-8")
+    (tmp_git_repo / "huge.lock").write_text("{}\n", encoding="utf-8")
+    (tmp_git_repo / "min.min.js").write_text("var a=1;\n", encoding="utf-8")
     # Non-source file (no recognized extension)
-    (tmp_git_repo / "README.txt").write_text("docs\n")
+    (tmp_git_repo / "README.txt").write_text("docs\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1402,14 +1403,14 @@ def test_init_shadow_skips_excluded_paths_and_basenames(shadow_init,
     assert not (shadow / "min.min.js.md").exists()
     assert not (shadow / "README.txt.md").exists()
 
-    state = json.loads((shadow / "_meta" / "state.json").read_text())
+    state = json.loads((shadow / "_meta" / "state.json").read_text(encoding="utf-8"))
     assert state["total_files"] == 1
 
 
 def test_init_shadow_special_basenames_detected(shadow_init, tmp_git_repo):
     """Dockerfile and Makefile (basename-keyed languages) get shadows too."""
-    (tmp_git_repo / "Dockerfile").write_text("FROM scratch\n")
-    (tmp_git_repo / "Makefile").write_text("all:\n\techo hi\n")
+    (tmp_git_repo / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (tmp_git_repo / "Makefile").write_text("all:\n\techo hi\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1418,20 +1419,20 @@ def test_init_shadow_special_basenames_detected(shadow_init, tmp_git_repo):
     shadow = tmp_git_repo / ".shadow"
     assert (shadow / "Dockerfile.md").is_file()
     assert (shadow / "Makefile.md").is_file()
-    docker_md = (shadow / "Dockerfile.md").read_text()
+    docker_md = (shadow / "Dockerfile.md").read_text(encoding="utf-8")
     assert "Dockerfile" in docker_md
 
 
 def test_init_shadow_handles_unknown_language_file(shadow_init, tmp_git_repo):
     """A YAML file is recognized as a source file but has no extractor —
     a shadow is still created (with File-Level only, no symbols)."""
-    (tmp_git_repo / "config.yaml").write_text("key: value\n")
+    (tmp_git_repo / "config.yaml").write_text("key: value\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
 
     shadow_init.init_shadow(str(tmp_git_repo))
-    content = (tmp_git_repo / ".shadow" / "config.yaml.md").read_text()
+    content = (tmp_git_repo / ".shadow" / "config.yaml.md").read_text(encoding="utf-8")
     assert "YAML" in content
     assert "## File-Level" in content
     assert "## Cross-References" in content
@@ -1449,7 +1450,7 @@ def test_init_shadow_returns_true_with_no_source_files(shadow_init,
 
 def test_init_shadow_summary_printed_to_stdout(shadow_init, tmp_git_repo,
                                                capsys):
-    (tmp_git_repo / "a.py").write_text("def x(): pass\n")
+    (tmp_git_repo / "a.py").write_text("def x(): pass\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "m"],
                    cwd=tmp_git_repo, check=True)
@@ -1507,7 +1508,7 @@ def test_main_nonexistent_root_exits_one(shadow_init, tmp_path, monkeypatch,
 def test_main_root_pointing_to_file_exits_one(shadow_init, tmp_path,
                                               monkeypatch):
     f = tmp_path / "regular.txt"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["shadow-init.py", "--root", str(f)])
     with pytest.raises(SystemExit) as exc:
         shadow_init.main()
@@ -1560,7 +1561,7 @@ def test_main_refuses_when_shadow_exists_without_reset(shadow_init,
 def test_main_reset_replaces_existing_shadow(shadow_init, tmp_git_repo,
                                              monkeypatch):
     (tmp_git_repo / ".shadow").mkdir()
-    (tmp_git_repo / ".shadow" / "stale").write_text("old\n")
+    (tmp_git_repo / ".shadow" / "stale").write_text("old\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv",
                         ["shadow-init.py", "--root", str(tmp_git_repo),
                          "--reset"])
@@ -1580,7 +1581,7 @@ def test_main_with_coupon_demo_reset(shadow_init, coupon_demo, monkeypatch):
         shadow_init.main()
     assert exc.value.code == 0
     state = json.loads(
-        (coupon_demo / ".shadow" / "_meta" / "state.json").read_text()
+        (coupon_demo / ".shadow" / "_meta" / "state.json").read_text(encoding="utf-8")
     )
     assert state["version"] == 1
     assert state["last_update_type"] == "init"
@@ -1599,6 +1600,7 @@ def test_subprocess_main_block_via_cli_help():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
         capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert result.returncode == 0
     assert "usage" in result.stdout.lower()

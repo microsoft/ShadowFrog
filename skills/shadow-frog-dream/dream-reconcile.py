@@ -151,7 +151,7 @@ def git(*args, cwd=None, check=True):
     """Run a git command and return stdout."""
     result = subprocess.run(
         ['git'] + list(args),
-        capture_output=True, text=True, cwd=cwd
+        capture_output=True, text=True, cwd=cwd, encoding="utf-8"
     )
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -162,7 +162,7 @@ def git_show(ref, path, cwd=None):
     """Read a file from a git ref. Returns None if not found."""
     result = subprocess.run(
         ['git', 'show', f'{ref}:{path}'],
-        capture_output=True, text=True, cwd=cwd
+        capture_output=True, text=True, cwd=cwd, encoding="utf-8"
     )
     if result.returncode != 0:
         return None
@@ -206,7 +206,7 @@ def _read_indexed_dream_ids(repo_root):
     existing = set()
     if not os.path.isfile(index_path):
         return existing
-    with open(index_path) as f:
+    with open(index_path, encoding="utf-8") as f:
         for line in f:
             if line.startswith('|') and not line.startswith('| dream_id') and not line.startswith('|---'):
                 parts = [p.strip() for p in line.split('|')]
@@ -221,7 +221,7 @@ def _read_indexed_branches(repo_root):
     rows = []
     if not os.path.isfile(index_path):
         return rows
-    with open(index_path) as f:
+    with open(index_path, encoding="utf-8") as f:
         for line in f:
             if line.startswith('|') and not line.startswith('| dream_id') and not line.startswith('|---'):
                 parts = [p.strip() for p in line.split('|')]
@@ -463,7 +463,7 @@ def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id):
             '## Cross-References\n', '\n', '_No cross-cutting discoveries yet._\n',
         ]
     else:
-        with open(shadow_path) as f:
+        with open(shadow_path, encoding="utf-8") as f:
             lines = f.readlines()
         lines = _ensure_cross_references_section(lines)
 
@@ -497,7 +497,7 @@ def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id):
             if not changed:
                 return False
             lines[meta_idx] = _format_meta_line(m_status, m_source, m_labels)
-            with open(shadow_path, 'w') as f:
+            with open(shadow_path, 'w', encoding="utf-8") as f:
                 f.writelines(lines)
             return True
 
@@ -525,7 +525,7 @@ def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id):
         new_section = ['\n', f'## `{anchor_symbol}`\n', '\n'] + lines_to_add
         lines[insert_at:insert_at] = new_section
 
-    with open(shadow_path, 'w') as f:
+    with open(shadow_path, 'w', encoding="utf-8") as f:
         f.writelines(lines)
 
     return True
@@ -548,7 +548,7 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
     backpointer = f'- [{title}]({prefix}_cross/{slug}.md) (dream: {dream_id})'
 
     if os.path.isfile(shadow_path):
-        with open(shadow_path) as f:
+        with open(shadow_path, encoding="utf-8") as f:
             lines = f.readlines()
     else:
         # Create a minimal shadow file with the canonical header + footer if
@@ -570,7 +570,7 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
     # legitimate back-pointer add.
     link_marker = f']({prefix}_cross/{slug}.md)'
     if any(link_marker in line for line in lines):
-        with open(shadow_path, 'w') as f:
+        with open(shadow_path, 'w', encoding="utf-8") as f:
             f.writelines(lines)
         return False
 
@@ -599,7 +599,7 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
             insert_at -= 1
         lines[insert_at:insert_at] = [f'{backpointer}\n']
 
-    with open(shadow_path, 'w') as f:
+    with open(shadow_path, 'w', encoding="utf-8") as f:
         f.writelines(lines)
     return True
 
@@ -613,7 +613,7 @@ def _merge_refs_into_cross_file(cross_path, new_refs):
     bidirectional-reference invariant breaks. Returns True if modified.
     """
     try:
-        with open(cross_path) as f:
+        with open(cross_path, encoding="utf-8") as f:
             content = f.read()
     except OSError:
         return False
@@ -638,7 +638,7 @@ def _merge_refs_into_cross_file(cross_path, new_refs):
     if not to_add:
         return False
     lines[block_end:block_end] = [f'- `{r}`' for r in to_add]
-    with open(cross_path, 'w') as f:
+    with open(cross_path, 'w', encoding="utf-8") as f:
         f.write('\n'.join(lines))
     return True
 
@@ -709,7 +709,7 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
                     f"_({cross.get('status', 'verified')}, "
                     f"source: {cross.get('source', 'exploration')})_\n"
                 )
-                with open(cross_path, 'w') as f:
+                with open(cross_path, 'w', encoding="utf-8") as f:
                     f.write(content)
                 merged_count += 1
             else:
@@ -772,16 +772,16 @@ def mirror_reports(repo_root, manifests, dry_run=False):
                     # and patch below are still mirrored unconditionally so a
                     # single bad frontmatter line never discards valid
                     # artifacts (discoveries are read from the manifest).
-                    with open(os.path.join(dream_dir, 'report.md'), 'w') as f:
+                    with open(os.path.join(dream_dir, 'report.md'), 'w', encoding="utf-8") as f:
                         f.write(f"# Corrupted Report\n\nContained content from {report_did}.\n"
                                 f"Original on branch: {branch}\n")
 
             if not report_corrupt:
-                with open(os.path.join(dream_dir, 'report.md'), 'w') as f:
+                with open(os.path.join(dream_dir, 'report.md'), 'w', encoding="utf-8") as f:
                     f.write(report)
 
         # Mirror manifest
-        with open(os.path.join(dream_dir, 'manifest.json'), 'w') as f:
+        with open(os.path.join(dream_dir, 'manifest.json'), 'w', encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
         # Mirror patch
@@ -796,7 +796,7 @@ def mirror_reports(repo_root, manifests, dry_run=False):
         # write only when truly absent.
         patch = git_show(f'origin/{branch}', f'.shadow/_dreams/{dream_id}/patch.diff', cwd=repo_root)
         if patch is not None:
-            with open(os.path.join(dream_dir, 'patch.diff'), 'w') as f:
+            with open(os.path.join(dream_dir, 'patch.diff'), 'w', encoding="utf-8") as f:
                 f.write(patch)
 
         mirrored += 1
@@ -836,12 +836,12 @@ def update_index(repo_root, manifests, dry_run=False):
     # stays clean — dry-run must not mutate disk).
     if not os.path.isfile(index_path):
         os.makedirs(os.path.dirname(index_path), exist_ok=True)
-        with open(index_path, 'w') as f:
+        with open(index_path, 'w', encoding="utf-8") as f:
             f.write('# Dream Experiment Archive\n\n'
                     '| dream_id | category | verdict | title | branch | parent | tip_commit |\n'
                     '|----------|----------|---------|-------|--------|--------|------------|\n')
 
-    with open(index_path, 'a') as f:
+    with open(index_path, 'a', encoding="utf-8") as f:
         for branch, dream_id, manifest in manifests:
             tip = _resolve_tip_commit(repo_root, branch)
             cat = re.sub(r'\s*\(.*\)\s*$', '', manifest.get('category', 'unknown').lower().strip())
@@ -878,7 +878,7 @@ def _count_discoveries(shadow_path):
     if not os.path.isfile(shadow_path):
         return 0
     count = 0
-    with open(shadow_path) as sf:
+    with open(shadow_path, encoding="utf-8") as sf:
         in_xref = False
         for line in sf:
             stripped = line.rstrip()
@@ -913,7 +913,7 @@ def update_state(repo_root, manifests, dry_run=False):
             'dream_cycles_completed': 0,
         }
     else:
-        with open(state_path) as f:
+        with open(state_path, encoding="utf-8") as f:
             state = json.load(f)
 
     if dry_run:
@@ -944,7 +944,7 @@ def update_state(repo_root, manifests, dry_run=False):
                 continue
 
             total_files += 1
-            with open(filepath) as f:
+            with open(filepath, encoding="utf-8") as f:
                 # `## Cross-References` and `## File-Level` are structural
                 # sections, not symbols. Bullets inside `## Cross-References`
                 # are back-pointer links to `_cross/*.md`, not discoveries.
@@ -978,7 +978,7 @@ def update_state(repo_root, manifests, dry_run=False):
     except RuntimeError:
         pass
 
-    with open(state_path, 'w') as f:
+    with open(state_path, 'w', encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
 
@@ -1005,7 +1005,7 @@ def _shadow_symbol_names(shadow_path):
     names = []
     if not os.path.isfile(shadow_path):
         return names
-    with open(shadow_path) as sf:
+    with open(shadow_path, encoding="utf-8") as sf:
         for line in sf:
             stripped = line.rstrip()
             if not stripped.startswith('## '):
@@ -1032,7 +1032,7 @@ def _shadow_language(shadow_path):
     """
     if not os.path.isfile(shadow_path):
         return 'Unknown'
-    with open(shadow_path) as sf:
+    with open(shadow_path, encoding="utf-8") as sf:
         for i, line in enumerate(sf):
             if i > 10:
                 break
@@ -1074,7 +1074,7 @@ def rebuild_top_index(repo_root, dry_run=False):
     original_init_date = None
     if os.path.isfile(index_path):
         try:
-            with open(index_path) as f:
+            with open(index_path, encoding="utf-8") as f:
                 for line in f:
                     m = re.match(
                         r'>\s*(?:Initially g|G)enerated by shadow-frog-init on (\S+)',
@@ -1138,7 +1138,7 @@ def rebuild_top_index(repo_root, dry_run=False):
     state_path = os.path.join(shadow_dir, '_meta', 'state.json')
     if os.path.isfile(state_path):
         try:
-            with open(state_path) as f:
+            with open(state_path, encoding="utf-8") as f:
                 dream_cycles = int(json.load(f).get('dream_cycles_completed', 0) or 0)
         except (json.JSONDecodeError, OSError, ValueError, TypeError):
             dream_cycles = 0
@@ -1173,7 +1173,7 @@ def rebuild_top_index(repo_root, dry_run=False):
     out.append('')
 
     try:
-        with open(index_path, 'w') as f:
+        with open(index_path, 'w', encoding="utf-8") as f:
             f.write('\n'.join(out))
     except OSError as e:
         print(f"  ⚠️  Could not write _index.md: {e}")
@@ -1250,7 +1250,7 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
         # signal that reconciliation output has not been committed + pushed.
         shadow_status = subprocess.run(
             ['git', 'status', '--porcelain=v1', '--', '.shadow/'],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
         if shadow_status.stdout.strip():
             print(f"  ❌ Refusing cleanup: .shadow/ has uncommitted changes.", file=sys.stderr)
@@ -1272,7 +1272,7 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
         ancestor_check = subprocess.run(
             ['git', 'merge-base', '--is-ancestor',
              head_sha, f'origin/{default_branch}'],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
         if ancestor_check.returncode != 0:
             print(f"  ❌ Refusing cleanup: HEAD ({head_sha[:7]}) is NOT an", file=sys.stderr)
@@ -1358,7 +1358,7 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
         # Delete remote first (network op that can fail)
         result = subprocess.run(
             ['git', 'push', 'origin', '--delete', branch],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
         if result.returncode == 0:
             print(f"  🗑  Deleted remote: {branch}")
@@ -1370,14 +1370,14 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
         # Delete local
         result = subprocess.run(
             ['git', 'branch', '-D', branch],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
         if result.returncode == 0:
             print(f"  🗑  Deleted local: {branch}")
         # Also delete the remote-tracking ref
         subprocess.run(
             ['git', 'branch', '-dr', f'origin/{branch}'],
-            capture_output=True, text=True, cwd=repo_root
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
 
         # Best-effort worktree GC — the directory at
@@ -1435,6 +1435,7 @@ def _registered_worktree_branch(repo_root, candidate_path):
         result = subprocess.run(
             ['git', 'worktree', 'list', '--porcelain'],
             capture_output=True, text=True, cwd=repo_root, timeout=10,
+            encoding="utf-8",
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1528,6 +1529,7 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
         result = subprocess.run(
             ['git', 'worktree', 'remove', str(resolved), '--force'],
             capture_output=True, text=True, cwd=repo_root,
+            encoding="utf-8",
         )
         if result.returncode == 0:
             worktree_removed = True
@@ -1547,6 +1549,7 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
         subprocess.run(
             ['git', 'worktree', 'prune'],
             capture_output=True, text=True, cwd=repo_root,
+            encoding="utf-8",
         )
     except Exception as exc:  # noqa: BLE001 — GC must never crash cleanup.
         print(f"  ⚠️  Worktree GC raised for {dream_id}: {exc}")
@@ -1555,6 +1558,9 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
 # --- Main orchestration ---
 
 def main():
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     # Parse arguments
     repo_root = None
     dry_run = False
@@ -1591,7 +1597,7 @@ def main():
     if not repo_root:
         repo_root = subprocess.run(
             ['git', 'rev-parse', '--show-toplevel'],
-            capture_output=True, text=True
+            capture_output=True, text=True, encoding="utf-8"
         ).stdout.strip()
 
     if not repo_root or not os.path.isdir(repo_root):
@@ -1604,13 +1610,13 @@ def main():
         task_info = os.path.join(repo_root, 'TASK_INFO.json')
         if os.path.isfile(task_info):
             try:
-                dream_ns = json.load(open(task_info)).get('dream_namespace', '')
+                dream_ns = json.load(open(task_info, encoding="utf-8")).get('dream_namespace', '')
             except (json.JSONDecodeError, OSError):
                 pass
     if not dream_ns:
         env_file = os.path.join(repo_root, '.env')
         if os.path.isfile(env_file):
-            with open(env_file) as f:
+            with open(env_file, encoding="utf-8") as f:
                 for line in f:
                     if line.startswith('DREAM_NAMESPACE='):
                         dream_ns = line.split('=', 1)[1].strip()
@@ -1643,7 +1649,7 @@ def main():
             )
             if os.path.isfile(local_manifest):
                 try:
-                    with open(local_manifest) as f:
+                    with open(local_manifest, encoding="utf-8") as f:
                         m = json.load(f)
                     manifests.append((branch, dream_id, m))
                 except (json.JSONDecodeError, OSError):
@@ -1682,7 +1688,7 @@ def main():
                 m = {}
                 if os.path.isfile(local_manifest):
                     try:
-                        with open(local_manifest) as f:
+                        with open(local_manifest, encoding="utf-8") as f:
                             m = json.load(f)
                     except (json.JSONDecodeError, OSError):
                         pass

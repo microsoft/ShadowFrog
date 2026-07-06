@@ -20,9 +20,9 @@ def make_dream(dreams_dir: Path, did: str, *, report: str = "", manifest: dict |
     d = dreams_dir / did
     d.mkdir(parents=True, exist_ok=True)
     if report:
-        (d / "report.md").write_text(report)
+        (d / "report.md").write_text(report, encoding="utf-8")
     if manifest is not None:
-        (d / "manifest.json").write_text(json.dumps(manifest))
+        (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return d
 
 
@@ -34,7 +34,7 @@ def make_index(dreams_dir: Path, rows: list[str]) -> Path:
     )
     content = header + "\n".join(rows) + "\n"
     index_path = dreams_dir / "_index.md"
-    index_path.write_text(content)
+    index_path.write_text(content, encoding="utf-8")
     return index_path
 
 
@@ -80,7 +80,7 @@ class TestLookupVerdict:
         did = "20250101-120000Z-v"
         d = tmp_path / did
         d.mkdir()
-        (d / "manifest.json").write_text(json.dumps({"verdict": "useful"}))
+        (d / "manifest.json").write_text(json.dumps({"verdict": "useful"}), encoding="utf-8")
 
         result = meditate_repair.lookup_verdict(str(d), "")
         assert result == "useful"
@@ -112,7 +112,7 @@ class TestLookupVerdict:
         did = "20250101-120000Z-bad"
         d = tmp_path / did
         d.mkdir()
-        (d / "manifest.json").write_text("not json")
+        (d / "manifest.json").write_text("not json", encoding="utf-8")
         content = "## Verdict\nThis is useful and verified."
         result = meditate_repair.lookup_verdict(str(d), content)
         assert result == "useful"
@@ -329,6 +329,7 @@ class TestCLI:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--help"],
             capture_output=True, text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0
 
@@ -361,12 +362,13 @@ class TestCLI:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--shadow-dir", str(shadow)],
             capture_output=True, text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Repaired" in result.stdout
 
         # Verify the index was actually fixed
-        repaired_content = (dreams / "_index.md").read_text()
+        repaired_content = (dreams / "_index.md").read_text(encoding="utf-8")
         assert "bug hunting" in repaired_content
         assert "Real Title" in repaired_content
 
@@ -375,6 +377,7 @@ class TestCLI:
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--shadow-dir", str(coupon_demo / ".shadow")],
             capture_output=True, text=True,
+            encoding="utf-8",
         )
         assert result.returncode == 0
         # Should say "Repaired 0 rows"

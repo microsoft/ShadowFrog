@@ -74,7 +74,7 @@ def detect_corrupted(dreams_dir: str) -> set[str]:
         report = os.path.join(dpath, 'report.md')
         if not os.path.exists(report):
             continue
-        with open(report) as rf:
+        with open(report, encoding="utf-8") as rf:
             rcontent = rf.read()
         fm_match = re.search(r'dream_id:\s*(\S+)', rcontent)
         body_match = re.search(r'\*\*Dream ID\*\*:\s*(\S+)', rcontent)
@@ -97,7 +97,7 @@ def lookup_verdict(dream_dir: str, content: str) -> str:
     manifest = os.path.join(dream_dir, 'manifest.json')
     if os.path.exists(manifest):
         try:
-            with open(manifest) as mf:
+            with open(manifest, encoding="utf-8") as mf:
                 mdata = json.load(mf)
             v = (mdata.get('verdict') or '').lower().strip()
             if v and v != 'unknown':
@@ -120,7 +120,7 @@ def repair_row(parts: list[str], dreams_dir: str) -> tuple[list[str], bool] | No
     report = os.path.join(dream_dir, 'report.md')
     if not os.path.exists(report):
         return None
-    with open(report) as rf:
+    with open(report, encoding="utf-8") as rf:
         content = rf.read()
 
     original = list(parts)
@@ -204,7 +204,7 @@ def repair_parent(
     parent_branch_raw: str | None = None
     if os.path.exists(manifest_path):
         try:
-            with open(manifest_path) as mf:
+            with open(manifest_path, encoding="utf-8") as mf:
                 mdata = json.load(mf)
             pb = mdata.get('parent_branch', '').strip()
             if pb and pb != 'main':
@@ -216,7 +216,7 @@ def repair_parent(
     if parent_branch_raw is None:
         report_path = os.path.join(dream_dir, 'report.md')
         if os.path.exists(report_path):
-            with open(report_path) as rf:
+            with open(report_path, encoding="utf-8") as rf:
                 rcontent = rf.read()
             fm_match = re.search(r'parent_branch:\s*["\']?([^"\'\n]+)', rcontent)
             if fm_match:
@@ -298,6 +298,9 @@ def repair_parent(
 
 
 def main() -> int:
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--shadow-dir', default='.shadow',
                     help='Shadow root (default: .shadow)')
@@ -309,11 +312,11 @@ def main() -> int:
         print(f'ERROR: {index_path} not found', file=sys.stderr)
         return 1
 
-    with open(index_path) as f:
+    with open(index_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     backup = index_path + '.bak'
-    with open(backup, 'w') as bf:
+    with open(backup, 'w', encoding="utf-8") as bf:
         bf.writelines(lines)
 
     corrupted = detect_corrupted(dreams_dir)
@@ -357,7 +360,7 @@ def main() -> int:
             lines[i] = '| ' + ' | '.join(new_parts[1:-1]) + ' |\n'
             repaired += 1
 
-    with open(index_path, 'w') as f:
+    with open(index_path, 'w', encoding="utf-8") as f:
         f.writelines(lines)
 
     print(
