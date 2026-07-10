@@ -26,6 +26,7 @@ sys.path.pop(0)
 # ===========================================================================
 
 class TestHappyPath:
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX absolute-path semantics")
     def test_canonical_shape_under_default_base(self):
         p = safe_worktree_path(
             "/tmp/shadowfrog-dreams/proj/dream-foo",
@@ -97,6 +98,7 @@ class TestRelativePaths:
 # Rule 3: no ".." traversal in literal input
 # ===========================================================================
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX absolute-path semantics")
 class TestTraversal:
     @pytest.mark.parametrize("path", [
         "/tmp/shadowfrog-dreams/../etc/passwd",
@@ -127,6 +129,7 @@ class TestSensitiveBases:
         # macOS /private prefixed forms — must ALSO refuse.
         "/private/tmp", "/private/etc", "/private/var",
     ])
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX absolute-path semantics")
     def test_rejects_sensitive_base(self, base):
         # Use a path shape that would pass shape-check, so only Rule 4 can fail.
         with pytest.raises(UnsafePath, match="sensitive root"):
@@ -303,3 +306,47 @@ class TestForbiddenBaseListInvariants:
                 f"{must_be_listed} must stay in _UNIX_FORBIDDEN_BASES to keep "
                 f"the safety gate trustworthy"
             )
+
+
+# ===========================================================================
+# Windows-only: drive/UNC roots, %SystemRoot% etc., backslash traversal, and a
+# real C:\ worktree. Mirror the POSIX-literal cases (skipped on Windows) against
+# Windows path semantics.
+# ===========================================================================
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path semantics")
+class TestWindowsPaths:
+    def test_accepts_real_windows_worktree(self, tmp_path):
+        base = tmp_path / "my-dreams"
+        target = base / "proj" / "dream-t01"
+        target.mkdir(parents=True)
+        assert safe_worktree_path(str(target), str(base)).exists()
+
+    def test_rejects_drive_root(self):
+        with pytest.raises(UnsafePath, match="sensitive root"):
+            safe_worktree_path("C:\\ns\\dream-foo", "C:\\")
+
+    def test_rejects_unc_share_root(self):
+        with pytest.raises(UnsafePath, match="sensitive root"):
+            safe_worktree_path(
+                "\\\\server\\share\\ns\\dream-foo", "\\\\server\\share",
+            )
+
+    @pytest.mark.parametrize("var", ["SystemRoot", "windir", "ProgramFiles"])
+    def test_rejects_windows_system_dirs(self, var):
+        base = os.environ.get(var)
+        if not base:
+            pytest.skip(f"%{var}% not set")
+        with pytest.raises(UnsafePath, match="sensitive root"):
+            safe_worktree_path(os.path.join(base, "ns", "dream-foo"), base)
+
+    def test_rejects_backslash_traversal(self):
+        with pytest.raises(UnsafePath, match=r"'\.\.'"):
+            safe_worktree_path(
+                "C:\\base\\..\\Windows\\ns\\dream-foo", "C:\\base\\..\\Windows",
+            )
+
+    def test_rejects_relative_base(self):
+        # Absolute worktree path, relative base -> Rule 2's base check.
+        with pytest.raises(UnsafePath, match="not absolute"):
+            safe_worktree_path("C:\\dreams\\ns\\dream-foo", "dreams")
