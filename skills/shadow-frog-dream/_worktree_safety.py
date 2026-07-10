@@ -49,7 +49,7 @@ _SAFE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # the check on macOS (verified empirically: macOS `realpath /tmp` returns
 # `/private/tmp` which is not in the list, so the literal `/tmp` check is
 # what catches it).
-_FORBIDDEN_BASES = frozenset({
+_UNIX_FORBIDDEN_BASES = frozenset({
     "/",
     "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64",
     "/Library", "/mnt", "/media", "/opt", "/private", "/proc", "/root",
@@ -110,7 +110,7 @@ def safe_worktree_path(path: str, base: str) -> Path:
     # implicit `/tmp → /private/tmp` redirection both fail closed.
     base_norm = os.path.normpath(base)
     candidates = {base_norm, base_res, _strip_macos_private(base_res)}
-    forbidden = set(_FORBIDDEN_BASES)
+    forbidden = set(_UNIX_FORBIDDEN_BASES)
     home = os.path.expanduser("~")
     if home and home != "~":
         forbidden.add(home)

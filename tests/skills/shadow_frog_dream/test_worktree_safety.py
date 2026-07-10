@@ -16,7 +16,7 @@ SKILL_DIR = REPO_ROOT / "skills" / "shadow-frog-dream"
 
 sys.path.insert(0, str(SKILL_DIR))
 from _worktree_safety import (  # noqa: E402
-    UnsafePath, _FORBIDDEN_BASES, _strip_macos_private, safe_worktree_path
+    UnsafePath, _UNIX_FORBIDDEN_BASES, _strip_macos_private, safe_worktree_path
 )
 sys.path.pop(0)
 
@@ -299,7 +299,7 @@ class TestMacosPrivateStripping:
 class TestForbiddenBaseListInvariants:
     def test_tmp_var_etc_are_forbidden(self):
         for must_be_listed in ("/tmp", "/var", "/etc", "/home", "/Users"):
-            assert must_be_listed in _FORBIDDEN_BASES, (
-                f"{must_be_listed} must stay in _FORBIDDEN_BASES to keep "
+            assert must_be_listed in _UNIX_FORBIDDEN_BASES, (
+                f"{must_be_listed} must stay in _UNIX_FORBIDDEN_BASES to keep "
                 f"the safety gate trustworthy"
             )
