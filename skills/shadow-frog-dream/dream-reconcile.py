@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Shared safety gate for `rm -rf <worktree>`. Lives next to this script so
 # bash callers (dream-cleanup.sh, dream-gc.sh) and this module share ONE
@@ -1108,8 +1109,9 @@ def rebuild_top_index(repo_root, dry_run=False):
                 continue
             shadow_path = os.path.join(root, fname)
             rel_shadow = os.path.relpath(shadow_path, shadow_dir)
-            # The shadow path mirrors the source path with `.md` appended.
-            source_path = rel_shadow[:-3]
+            # The shadow path mirrors the source path with `.md` appended;
+            # shadow artifacts always record POSIX (forward-slash) paths.
+            source_path = Path(rel_shadow[:-3]).as_posix()
 
             language = _shadow_language(shadow_path)
             names = _shadow_symbol_names(shadow_path)
