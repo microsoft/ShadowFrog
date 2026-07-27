@@ -6,7 +6,7 @@ and the throttled best-effort auto-GC.
 
 Cross-platform: invokes the Python entry point directly (no bash). The two
 auto-GC tests that assert an orphan is actually *swept* still need the bash
-`dream-gc.sh`, so they live in a `requires_bash` class skipped on Windows;
+`dream-gc.sh`, so they are skipped on Windows until `dream-gc.py` exists;
 every other test runs on all OSes.
 """
 import json
@@ -390,8 +390,8 @@ class TestDreamSetupDryRun:
 #
 # These four exercise dream-setup's OWN throttle/opt-out logic, which never
 # invokes the GC sweeper — so they run on every OS. The two tests that assert
-# an orphan is actually swept need bash `dream-gc.sh` and live in the
-# `requires_bash` class below (skipped on Windows).
+# an orphan is actually swept need bash `dream-gc.sh` and are skipped on
+# Windows until a cross-platform `dream-gc.py` exists.
 # ===========================================================================
 
 @pytest.mark.slow
@@ -504,11 +504,14 @@ class TestDreamSetupAutoGCThrottle:
 
 @pytest.mark.slow
 @pytest.mark.integration
-@pytest.mark.requires_bash
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="dream-gc.sh sweep uses POSIX path/realpath semantics",
+)
 class TestDreamSetupAutoGCSweep:
     """These assert the orphan is actually *removed*, which needs the bash
-    `dream-gc.sh` sweeper. Skipped on Windows by the requires_bash hook; the
-    mark is dropped once a cross-platform `dream-gc.py` exists."""
+    `dream-gc.sh` sweeper. Skipped on Windows until a cross-platform
+    `dream-gc.py` exists."""
 
     def test_auto_gc_runs_when_no_tombstone(self, tmp_path):
         """First invocation sweeps orphans (no tombstone yet)."""
