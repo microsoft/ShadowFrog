@@ -13,7 +13,7 @@ scripts:
   - dream-coverage.py
   - dream-validate.py
   - dream-reconcile.py
-  - dream-setup.sh
+  - dream-setup.py
   - dream-cleanup.sh
   - dream-gc.sh
 ---
@@ -37,7 +37,7 @@ the dream branch, pushed to the remote, then read back by the reconciler via
 `git show origin/<branch> .shadow/...`. If `.shadow/` is gitignored (the
 "local only" option in `shadow-frog-init`), `git add -A` silently skips those
 files, nothing reaches the remote, and the reconciler finds no manifest —
-**every discovery is lost without warning**. `dream-setup.sh` runs
+**every discovery is lost without warning**. `dream-setup.py` runs
 `git check-ignore .shadow` up front and refuses to start if it's ignored.
 Use `shadow-frog-update` instead for local-only shadows.
 
@@ -54,7 +54,7 @@ WORKTREE_DIR  = $WORKTREE_BASE/dream-<SLUG>
 - `DREAM_NS` (namespace) isolates branches per task/instance. Resolved
   from: `DREAM_NAMESPACE` env → `TASK_INFO.json` → `.env` → repo basename.
 - Override only with `DREAM_WORKTREE_BASE` env var if `/tmp` is too small.
-- `dream-setup.sh` computes and enforces all paths. Use it.
+- `dream-setup.py` computes and enforces all paths. Use it.
 
 ### Branch Naming
 
@@ -101,7 +101,7 @@ each batch or each individual dream.
 
 ### Script Failure Recovery
 
-All helper scripts (`dream-setup.sh`, `dream-reconcile.py`,
+All helper scripts (`dream-setup.py`, `dream-reconcile.py`,
 `dream-validate.py`) are **self-documenting**. If a script fails or is
 unavailable: **read the script source**, understand what it does, and adapt
 its logic manually for your situation. Never skip steps just because a
@@ -143,27 +143,22 @@ done
 
 | Script | Purpose | When to use |
 |--------|---------|-------------|
-| `dream-setup.sh` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
+| `dream-setup.py` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
 | `dream-validate.py` | Validates artifacts before push (hard gate) | **Phase 5** — before `git push` |
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
 | `dream-coverage.py` | Computes exploration coverage map | **Phase 2** — task planning for diversity |
 | `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
-| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.sh` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs |
+| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs |
 
 **Usage patterns:**
 
 ```bash
-# Setup: creates worktree, prints export vars.
-# IMPORTANT: capture the output FIRST, then eval it. Writing
-# `eval "$(dream-setup.sh ...)" || exit 1` does NOT catch failures: if the
-# command substitution exits non-zero and prints nothing, `eval ""` still
-# succeeds (exit 0) and the agent silently proceeds with empty env vars.
-# Assigning to a variable makes `|| exit 1` fire on the script's real exit code.
-SETUP_OUT="$("$SKILL_DIR/dream-setup.sh" --slug t01-my-experiment)" || exit 1
-eval "$SETUP_OUT"
-# → exports (keep in sync with dream-setup.sh emit_export block):
-#   REPO_ROOT, DEFAULT_BRANCH, DREAM_NS, DREAM_ID, BRANCH_NAME, PARENT_BRANCH,
-#   WORKTREE_DIR, WORKTREE_BASE, BASE_COMMIT, RUN_PREFIX, SLUG
+# Setup: creates the worktree and prints its context as JSON on stdout.
+# Run it, check the exit code, then parse the JSON object it prints.
+SETUP_JSON="$("$SKILL_DIR/dream-setup.py" --slug t01-my-experiment)" || exit 1
+# SETUP_JSON keys: repo_root, default_branch, dream_ns, dream_id, branch_name,
+#   parent_branch, worktree_dir, worktree_base, base_commit, run_prefix, slug.
+# The steps below use values parsed from that JSON (e.g. $DREAM_ID = .dream_id).
 
 # Validate: hard gate before push
 python3 "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
@@ -498,34 +493,31 @@ written, code run, results recorded.
 
 ### Experiment Setup
 
-Use `dream-setup.sh` to create worktrees (handles all path computation,
+Use `dream-setup.py` to create worktrees (handles all path computation,
 namespace resolution, worktree creation, and validation):
 
 ```bash
 # Find the setup script
 SETUP_SCRIPT=""
 for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-setup.sh" ] && SETUP_SCRIPT="$DIR/dream-setup.sh" && break
+    [ -f "$DIR/dream-setup.py" ] && SETUP_SCRIPT="$DIR/dream-setup.py" && break
 done
 
-# Fresh experiment from main:
-SETUP_OUT="$("$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
-eval "$SETUP_OUT"
+# Fresh experiment from main (prints JSON — parse it, don't eval):
+SETUP_JSON="$(python "$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
 
 # Compounding from prior dream:
-SETUP_OUT="$("$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
-eval "$SETUP_OUT"
+SETUP_JSON="$(python "$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
 ```
 
-Capture into `SETUP_OUT` first, then `eval` it — see Helper Scripts §
-usage patterns (above) for why bare `eval "$(…)" || exit 1` silently
-swallows the script's exit code.
+Capture the JSON into `SETUP_JSON` and check the exit code (`|| exit 1`),
+then parse it for the values below.
 
-This exports (keep in sync with `dream-setup.sh`): `REPO_ROOT`,
-`DEFAULT_BRANCH`, `DREAM_NS`, `DREAM_ID`, `BRANCH_NAME`, `PARENT_BRANCH`,
-`WORKTREE_DIR`, `WORKTREE_BASE`, `BASE_COMMIT`, `RUN_PREFIX`, `SLUG`.
+This prints a JSON object with keys: `repo_root`, `default_branch`,
+`dream_ns`, `dream_id`, `branch_name`, `parent_branch`, `worktree_dir`,
+`worktree_base`, `base_commit`, `run_prefix`, `slug`.
 
-**If `dream-setup.sh` fails or is not found:** Apply the Script Failure
+**If `dream-setup.py` fails or is not found:** Apply the Script Failure
 Recovery rule (read the script source, adapt its logic). Common causes:
 missing git remote, branch already exists, `/tmp` permissions.
 
@@ -1078,7 +1070,7 @@ are four places they get cleaned up:
    "Worktree Cleanup" earlier in this skill). Removes ONE worktree.
 2. **`dream-reconcile.py --cleanup-branches`** — after deleting a merged
    branch, also `rm -rf`s its worktree directory. No extra command needed.
-3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.sh` invokes this
+3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.py` invokes this
    sweeper at the start of each new dream, throttled by a per-namespace
    `.last-gc` tombstone to run at most once per `DREAM_GC_INTERVAL_MIN`
    minutes (default 60). Catches orphans from crashed dreams, machine
