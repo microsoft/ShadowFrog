@@ -43,7 +43,7 @@ $ErrorActionPreference = 'Stop'
 # so behavior is identical on PS 5.1 and PS 7+.
 function Read-Utf8File {
     param([string]$Path)
-    [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false, $true))
 }
 
 function Write-Utf8File {

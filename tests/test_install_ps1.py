@@ -9,7 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SCRIPT = REPO_ROOT / "install.ps1"
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
 pytestmark = [
     pytest.mark.slow,
