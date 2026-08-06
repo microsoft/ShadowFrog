@@ -61,12 +61,16 @@ def test_utf8_reads_ignore_narrow_default_encoding(tmp_path):
         "$PSDefaultParameterValues['Get-Content:Encoding'] = 'Latin1' }; "
         "& $env:SHADOWFROG_INSTALLER -Project $env:SHADOWFROG_TARGET -Agent claude"
     )
-    result = subprocess.run(
-        [POWERSHELL, "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+
+    def run_install():
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    result = run_install()
     assert result.returncode == 0, result.stderr
 
     settings_path = project / ".claude" / "settings.json"
@@ -80,13 +84,20 @@ def test_utf8_reads_ignore_narrow_default_encoding(tmp_path):
     assert existing_context in installed_context
     assert context_text in installed_context
 
-    malformed_settings = b'\xef\xbb\xbf{"model":"caf\xe9"}'
-    settings_path.write_bytes(malformed_settings)
-    result = subprocess.run(
-        [POWERSHELL, "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        env=env,
+    bom_model = "BOM—préservé"
+    settings_path.write_bytes(
+        b"\xef\xbb\xbf"
+        + json.dumps({"model": bom_model}, ensure_ascii=False).encode("utf-8")
     )
-    assert result.returncode != 0
-    assert settings_path.read_bytes() == malformed_settings
+    result = run_install()
+    assert result.returncode == 0, result.stderr
+    assert json.loads(settings_path.read_text(encoding="utf-8"))["model"] == bom_model
+
+    for malformed_settings in (
+        b'{"model":"caf\xe9"}',
+        b'\xef\xbb\xbf{"model":"caf\xe9"}',
+    ):
+        settings_path.write_bytes(malformed_settings)
+        result = run_install()
+        assert result.returncode != 0
+        assert settings_path.read_bytes() == malformed_settings
