@@ -69,9 +69,8 @@ def test_utf8_reads_ignore_narrow_default_encoding(tmp_path):
     )
     assert result.returncode == 0, result.stderr
 
-    settings = json.loads(
-        (project / ".claude" / "settings.json").read_text(encoding="utf-8")
-    )
+    settings_path = project / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["model"] == existing_model
     assert template_matcher in [
         group.get("matcher") for group in settings["hooks"]["PreToolUse"]
@@ -80,3 +79,14 @@ def test_utf8_reads_ignore_narrow_default_encoding(tmp_path):
     installed_context = (project / "CLAUDE.md").read_text(encoding="utf-8")
     assert existing_context in installed_context
     assert context_text in installed_context
+
+    malformed_settings = b'\xef\xbb\xbf{"model":"caf\xe9"}'
+    settings_path.write_bytes(malformed_settings)
+    result = subprocess.run(
+        [POWERSHELL, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert settings_path.read_bytes() == malformed_settings

@@ -43,7 +43,12 @@ $ErrorActionPreference = 'Stop'
 # so behavior is identical on PS 5.1 and PS 7+.
 function Read-Utf8File {
     param([string]$Path)
-    [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false, $true))
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $offset = 3
+    }
+    [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes, $offset, $bytes.Length - $offset)
 }
 
 function Write-Utf8File {
