@@ -5,7 +5,7 @@ description: >-
   categories (investigation, bug hunting, feature design, refactoring,
   optimization, security audit) to systematically discover non-obvious
   behaviors. Every task is an experiment — implement in worktrees, commit
-  to persistent dream branches, and push to the fork. Dreams compound
+  to persistent dream branches, and push to the configured remote. Dreams compound
   across sessions: future experiments branch from prior dream branches,
   building a tree of progressively deeper work. Invoke when the user is
   AFK or asks for a dream run.
@@ -22,7 +22,7 @@ scripts:
 
 Autonomous experimentation while the user is away. Every task is an
 **experiment** — implement real code in a worktree, run it, persist as a
-**named git branch** pushed to the fork. Dream's unique value is
+**named git branch** pushed to a remote the user can write to. Dream's unique value is
 implementation experience that **compounds across sessions**.
 
 ## Critical Invariants
@@ -108,7 +108,7 @@ its logic manually for your situation. Never skip steps just because a
 script errored — the steps still need to happen.
 
 ```
-Fork repo (user/target-repo)
+Pushable remote
   main --- .shadow/ (accumulated ALL discoveries)
   |
   +-- dream/<ns>/<id-1>  (cycle 1, agent A, from main)
@@ -122,9 +122,13 @@ Fork repo (user/target-repo)
 
 ### Prerequisites
 
-1. Forked repo cloned locally with pushable remote
-2. ShadowFrog skills installed (`install.sh --project /path/to/fork`)
-3. `.shadow/` initialized (`/shadow-frog-init`)
+1. Repo cloned locally with a pushable remote where `dream/...` branches are allowed
+2. ShadowFrog skills installed (`install.sh --project /path/to/repo`)
+3. `.shadow/` initialized (`/shadow-frog-init`) and tracked by git
+
+Use the user's existing repo directly when it has a remote that accepts
+`dream/...` branches. If no writable remote is configured, do not start a
+dream run; the user must configure one first.
 
 ## Helper Scripts
 
@@ -1198,6 +1202,6 @@ work. Resist that. Apply these heuristics:
    tweak is still a minor tweak. Judge the result, not the journey.
 
 When you do submit a PR, write the body for someone who has never seen
-the fork. Include: one-paragraph "what it does" derived from the dream
+the dream branch. Include: one-paragraph "what it does" derived from the dream
 report, the experiment's evidence (test output, before/after metric),
 and an honest "what we did not verify" note.

@@ -23,14 +23,14 @@ Discover](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 ## Quick Start
 
 ```bash
-# From your ShadowFrog checkout, install into the repo you want agents to remember.
+# From your ShadowFrog checkout, install into your target repo.
 cd /path/to/ShadowFrog
 # Choose one:
 ./install.sh --project /path/to/your-repo                 # Copilot CLI (default)
 # ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
 ```
 
-On **Windows**, use the PowerShell installer instead (no `bash`/`python3` needed):
+On **Windows**, use the PowerShell installer instead (no Bash shell needed):
 
 ```powershell
 cd C:\path\to\ShadowFrog
@@ -49,15 +49,19 @@ git commit -m "Add ShadowFrog skills, hooks, and context"
 git push
 ```
 
-Then open that repo in your AI agent session:
+Then open the target repo in your AI agent session:
 
 | Command | Use |
 |---------|-----|
 | `/shadow-frog-init` | Create the shadow |
 | `/shadow-frog-update` | Refresh after code changes |
-| `/shadow-frog-dream` | Explore and experiment while you're AFK |
+| `/shadow-frog-dream` | Explore and experiment while you're away |
 | `/shadow-frog-meditate` | Deduplicate and resolve conflicts |
 | `/shadow-frog-viewer` | Browse what's in the shadow |
+
+If you plan to use `/shadow-frog-dream`, commit and push `.shadow/` after
+init. Dream also needs permission to push `dream/...` branches to the repo's
+remote.
 
 > See [Installation](#installation) for full details.
 
@@ -70,25 +74,25 @@ files. It is not generated API documentation and it is not a transcript store.
 It stores **discoveries**: behavioral facts, edge cases, implicit contracts,
 warnings, and cross-file interactions that are useful to future agents.
 
-The retrieval design is **index-free** in the same sense that source-code
-navigation is index-free: the codebase itself tells the agent where to look.
-If an agent is editing `src/auth.py`, the corresponding knowledge lives at
-`.shadow/src/auth.py.md`; if it is reasoning about `src/auth.py::login`, the
-same shadow file contains the symbol-level section. Cross-file discoveries use
-`file::symbol` back-pointers in `.shadow/_cross/`. No vector store, embedding
-database, or separate retrieval service is required for this lookup path.
+Shadow lookup is **index-free**: it follows the source tree instead of a
+separate vector index. If an agent is editing `src/auth.py`, the corresponding
+knowledge lives at `.shadow/src/auth.py.md`; if it is reasoning about
+`src/auth.py::login`, the same shadow file contains the symbol-level section.
+Cross-file discoveries use `file::symbol` back-pointers in `.shadow/_cross/`.
+No embedding database or separate retrieval service is required for this
+lookup path.
 
 ```
-source code + user context + dream experiments
+source code + conversations + dream experiments
                  |
                  v
-       shadow-frog skills (init, update, dream)
+       shadow-frog skills and hooks
                  |
                  v
  .shadow/  (per-file discoveries, cross-cutting notes, prefs, dreams)
                  |
                  v
- future agent sessions  (hooks, viewer, ordinary cat/grep)
+ future agent sessions  (hooks, viewer, file reads, search)
 ```
 
 The `.shadow/` layout mirrors the repo:
@@ -99,7 +103,7 @@ your-repo/
     auth.py
     db/models.py
   .shadow/
-    .shadowignore                      gitignore-syntax excludes
+    .shadowignore                      gitignore-style excludes
     _index.md                          file list with discovery counts
     _prefs.md                          project-wide user preferences
     _cross/                            cross-cutting discoveries (span multiple files)
@@ -153,10 +157,10 @@ function is named. Prefer "silently returns `None` on expired tokens" over
 |-------|-------------|-------------|
 | **shadow-frog** | Reference docs for the shadow format and conventions | Use when working in a repo with `.shadow/` |
 | **shadow-frog-init** | Creates `.shadow/` with structural templates for every file | Once per repo |
-| **shadow-frog-update** | Refreshes shadows after code changes; captures conversational knowledge | After commits, or when you share context |
-| **shadow-frog-dream** | Autonomous exploration AND experimentation while you're AFK | Before lunch, overnight, weekends |
+| **shadow-frog-update** | Refreshes shadows after code changes; captures knowledge from conversations | After commits, or when you share context |
+| **shadow-frog-dream** | Autonomous exploration and experimentation while you're away | When you want the agent to explore on its own |
 | **shadow-frog-meditate** | Deduplicates, merges, and resolves conflicting discoveries | Periodically, to keep the shadow clean |
-| **shadow-frog-viewer** | Browse and query the shadow: overview, search, top-discoveries-per-file, recent, preferences, labels, dream lineage, structural invariant check | When you want to see what's in the shadow, or audit its integrity |
+| **shadow-frog-viewer** | Browse, search, inspect preferences and labels, render dream lineage, and check invariants | When you want to see what's in the shadow, or audit its integrity |
 
 **Design note:** skills are readable instructions backed by small helper
 scripts for deterministic work: initializing shadows, managing dream
@@ -167,8 +171,8 @@ and rendering viewer outputs. The installer copies both into the target repo.
 
 Dream is ShadowFrog's active-discovery mode. Each dream is an **experiment**:
 the agent implements real code, runs it, and persists the result as a **named
-git branch** pushed to a remote, typically your fork. The experiment branch is
-live, runnable code, but the primary output is the knowledge distilled into
+git branch** pushed to a writable remote. The experiment branch is live,
+runnable code, but the primary output is the knowledge distilled into
 `.shadow/`.
 
 - **Branch-based persistence**: each experiment becomes a `dream/<namespace>/<id>` branch
@@ -189,10 +193,9 @@ branches, continuing partially useful work, avoiding dead ends, and chaining
 discoveries across sessions. Dream #3 can branch from dream #1's code and pick
 up where it left off.
 
-> Selecting which dream experiments to submit upstream is a manual
-> curation step. The dream skill embeds a brief "Curating Dream
-> Experiments for Upstream PRs" cheat sheet covering the maintainer
-> test, devil's-advocate framing, and the 70% rejection heuristic.
+> The experiment code is not merged automatically. Turning a dream branch into
+> a PR is a manual curation step; the dream skill includes guidance for deciding
+> which experiments are worth proposing upstream.
 
 ---
 
@@ -209,17 +212,17 @@ Code**. The installer targets one agent's conventions at a time via
 
 ### Install into your repo
 
-ShadowFrog installs **into a specific repository**. It is never installed
-globally. This is deliberate: its shadow-edit hooks should only fire inside
-projects you have opted in, and a per-repo install is what enables both local
-agent use and fork-based [dream experiments](#4-dream).
+ShadowFrog is installed **per repository**, not globally. This keeps its hooks
+limited to projects you have explicitly opted in, and it lets shadow knowledge
+and dream artifacts sync through that repository's normal git workflow.
 
 Prerequisites:
 
 - `git` and `python3`
 - GitHub Copilot CLI or Claude Code
 - A git repository as the target project
-- For `/shadow-frog-dream`: a pushable fork/remote and a git-tracked `.shadow/`
+- To use `/shadow-frog-dream`: a pushable git remote where you can create
+  `dream/...` branches. After init, `.shadow/` must be tracked by git.
 
 ```bash
 cd /path/to/ShadowFrog
@@ -228,7 +231,8 @@ cd /path/to/ShadowFrog
 # ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
 ```
 
-On **Windows**, run the PowerShell equivalent (same flags, PowerShell style):
+On **Windows**, run the PowerShell equivalent (same flags, PowerShell style;
+no Bash shell needed):
 
 ```powershell
 cd C:\path\to\ShadowFrog
@@ -236,7 +240,7 @@ cd C:\path\to\ShadowFrog
 # .\install.ps1 -Agent claude -Project C:\path\to\your-repo  # Claude Code
 ```
 
-This installs skills, hooks, and agent-context all at once.
+This installs skills, hooks, and agent instructions all at once.
 Use `--no-hooks` or `--no-context` (`-NoHooks` / `-NoContext` in PowerShell) to skip individual components.
 
 **After installing**, commit and push so future agent sessions find the skills.
@@ -284,7 +288,8 @@ what would otherwise be lost:
 
 - **You share context** ("don't touch the retry logic, it's subtle") → agent writes it as a `source: user` discovery
 - **You debug together** → agent captures insights as `source: interaction`
-- **You commit** → before the next mutating agent action, the `preToolUse` hook notices the shadow is behind HEAD (compares `state.json::last_commit` to current HEAD) and reminds the agent to run `/shadow-frog-update`
+- **You commit** → before the next mutating agent action, the hook can notice
+  the shadow is behind HEAD and remind the agent to run `/shadow-frog-update`
 
 ### 3. Update
 
@@ -299,7 +304,7 @@ discoveries still hold, and captures any unrecorded session knowledge.
 
 ### 4. Dream
 
-Going AFK? Let the agent work while you're gone:
+Stepping away? Let the agent work while you're gone:
 
 ```
 /shadow-frog-dream
@@ -308,24 +313,40 @@ Going AFK? Let the agent work while you're gone:
 The agent explores uncovered code areas, runs experiments in isolated
 worktrees, pushes results as persistent dream branches, and writes what it
 learns into the shadow. When you return, the shadow is richer and experiment
-code is accessible on named branches.
+code is accessible on named branches in the same remote you configured for
+the repo.
 
-> **Requires a git-tracked `.shadow/`.** Dream pushes shadow updates through
-> git, so if you chose "local only" (gitignored `.shadow/`) during init, dream
-> is disabled. `dream-setup.sh` will tell you. The other skills (update,
-> meditate, viewer) work either way.
+> **Requires a git-tracked `.shadow/`.** Dream moves shadow updates through
+> git: experiment branches carry `.shadow/_dreams/` reports, manifests, and
+> diffs, then reconciliation commits the accumulated `.shadow/` updates back
+> to the default branch. If you chose "local only" (gitignored `.shadow/`)
+> during init, dream is disabled. `dream-setup.sh` will tell you. The other
+> skills (update, meditate, viewer) work either way.
 
-#### Fork-Based Workflow
+#### Remote requirements
 
-For dreaming on external repos, fork the target repo first:
+Dream needs a remote where it can push `dream/...` branches. For a repo you
+already work on, use your existing checkout and its normal remote.
+Dream branches are pushed to that remote under `dream/<namespace>/<id>`, and
+reconciliation commits shadow knowledge plus dream artifacts back to the
+default branch.
 
-1. Fork the repo on GitHub
-2. Clone your fork locally
-3. Install ShadowFrog: `./install.sh --project /path/to/fork`
-4. Init shadow: invoke `/shadow-frog-init`
-5. Dream: invoke `/shadow-frog-dream`
+If the repo's remote is not writable, configure a writable remote before
+running dream. If you only want private local notes, gitignore `.shadow/` and
+use update, meditate, and viewer. Dream is disabled because it depends on
+git-tracked shadow artifacts.
 
-Dream branches are pushed to the fork, keeping the original repo clean.
+The onboarding flow is:
+
+1. Install ShadowFrog into the existing repo checkout.
+2. Commit and push the installed skills, hooks, and context files.
+3. Run `/shadow-frog-init`.
+4. Commit and push `.shadow/`.
+5. Run `/shadow-frog-dream` when you want autonomous exploration.
+
+After that, shadow knowledge and dream artifacts sync through normal git:
+`.shadow/` lives on the default branch, while experiment code remains on
+`dream/...` branches until you manually curate anything worth upstreaming.
 
 ### 5. Meditate
 

@@ -209,8 +209,8 @@ strict 5s budget, regression-guard, and cross-platform readonly-tmpdir.
   flag. A global install would auto-engage the shadow-edit hooks across every
   repository the developer touches, firing unexpected shadow writes (and a
   potential information-leakage risk) in projects that never opted in. Per-repo
-  install also keeps skills committed to the fork, which is what fork-based
-  dreaming needs. Updated `install.sh` (required `--project`, dropped the
+  install also keeps skills committed to the target repo, which is what
+  branch-based dreaming needs. Updated `install.sh` (required `--project`, dropped the
   personal block + help text), `README.md` (single "Install into your repo"
   section), `claude.md`, the `pre-tool` hook's viewer-resolution loop, every
   SKILL.md path-resolution loop and usage example (project paths only), and the
@@ -585,10 +585,10 @@ validator hardening from a multi-agent review of the whole repo.
 
 ### Added
 - **Branch-based dream persistence** — each experiment becomes a
-  `dream/<namespace>/<id>` branch pushed to the fork. Dreams compound
+  `dream/<namespace>/<id>` branch pushed to the configured remote. Dreams compound
   by branching from prior dream branches, inheriting code + shadow from
   the ancestor. The `<namespace>` segment isolates dreams across
-  concurrent projects sharing a fork.
+  concurrent projects sharing a remote.
 - **Dream pipeline scripts** — `dream-setup.sh`, `dream-validate.py`,
   `dream-reconcile.py`, `dream-coverage.py`. Self-documenting, with
   `--help` and clear error messages. Listed in SKILL.md `scripts:`
