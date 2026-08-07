@@ -41,6 +41,15 @@ from pathlib import Path
 
 import pytest
 
+# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
+# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
+# distro installed), not Git Bash, so every invocation fails. The shell scripts
+# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PRE_TOOL_HOOK = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-pre-tool.sh"
 CHECK_INIT_HOOK = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-check-init.sh"
