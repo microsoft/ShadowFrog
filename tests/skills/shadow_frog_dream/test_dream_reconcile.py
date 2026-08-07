@@ -3112,8 +3112,15 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     decoy.mkdir()
     (decoy / "important.txt").write_text("keep me\n", encoding="utf-8")
 
-    # Point DREAM_WORKTREE_BASE at /tmp — gate must refuse.
-    monkeypatch.setenv("DREAM_WORKTREE_BASE", "/tmp")
+    # Point DREAM_WORKTREE_BASE at a sensitive base the gate must refuse.
+    # "/tmp" is sensitive only on POSIX; on Windows a filesystem root is the
+    # portable equivalent (refused as a sensitive root on every platform).
+    if os.name == "nt":
+        drive = os.path.splitdrive(os.getcwd())[0] or "C:"
+        unsafe_base = drive + os.sep
+    else:
+        unsafe_base = "/tmp"
+    monkeypatch.setenv("DREAM_WORKTREE_BASE", unsafe_base)
 
     deleted, _ = dream_reconcile.cleanup_branches(
         str(tmp_git_repo),

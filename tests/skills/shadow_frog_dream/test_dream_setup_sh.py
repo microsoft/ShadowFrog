@@ -23,6 +23,17 @@ pytestmark = pytest.mark.skipif(
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.sh"
 
+# dream-gc.sh sweeps orphan worktrees using POSIX absolute-path/realpath
+# semantics (it detects an orphan gitdir via the `/*` glob and resolves paths
+# with `realpath`). On the Windows CI runner the repo and the temp worktree
+# base live on different drives (D: vs C:), so the cross-drive sweep is a
+# no-op and the orphan survives. Dream-mode Windows support is out of scope;
+# skip only the two tests that assert an actual sweep occurred.
+_skip_win_gc_sweep = pytest.mark.skipif(
+    os.name == "nt",
+    reason="dream-gc worktree sweep relies on POSIX path/realpath semantics",
+)
+
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     env = {
@@ -401,6 +412,7 @@ class TestDreamSetupAutoGC:
         os.utime(d, (ancient, ancient))
         return d
 
+    @_skip_win_gc_sweep
     def test_auto_gc_runs_when_no_tombstone(self, tmp_path):
         """First invocation sweeps orphans (no tombstone yet)."""
         repo = tmp_path / "repo"
@@ -540,6 +552,7 @@ class TestDreamSetupAutoGC:
                 f"Full stdout:\n{result.stdout}"
             )
 
+    @_skip_win_gc_sweep
     def test_auto_gc_sweeps_other_namespace_orphans_too(self, tmp_path):
         """The auto-trigger sweeps the whole base, not just its own ns.
 
