@@ -223,7 +223,7 @@ def _walk_files(repo_root):
         for fname in filenames:
             full = Path(dirpath) / fname
             try:
-                rel = str(full.relative_to(root))
+                rel = full.relative_to(root).as_posix()
             except ValueError:
                 continue
             result.append(rel)

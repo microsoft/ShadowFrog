@@ -36,7 +36,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 # Same regex `dream-setup.sh` validates --slug and --namespace against.
 # Keep these in lockstep — if one widens, the other must follow.
@@ -49,7 +49,7 @@ _SAFE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # the check on macOS (verified empirically: macOS `realpath /tmp` returns
 # `/private/tmp` which is not in the list, so the literal `/tmp` check is
 # what catches it).
-_FORBIDDEN_BASES = frozenset({
+_UNIX_FORBIDDEN_BASES = frozenset({
     "/",
     "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64",
     "/Library", "/mnt", "/media", "/opt", "/private", "/proc", "/root",
@@ -70,6 +70,56 @@ def _strip_macos_private(p: str) -> str:
     return p
 
 
+def _get_windows_forbidden_bases() -> set[str]:
+    """Sensitive Windows base dirs, read from the environment at call time
+    (%SystemRoot%, %ProgramFiles%, %USERPROFILE%, ...); empty on POSIX.
+    A function (not a constant) because these are runtime/env-derived, and so
+    they stay monkeypatch-able in tests.
+    """
+    if os.name != "nt":
+        return set()
+    env_vars = ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)",
+                "ProgramData", "USERPROFILE", "PUBLIC")
+    return {os.path.normpath(v) for v in map(os.environ.get, env_vars) if v}
+
+
+def _normalize_path(p: str) -> str:
+    """Normalize a path into a comparison key. `os.path.normcase` lowercases and
+    unifies `/`->`\\` on Windows (no-op on POSIX); stripping macOS's `/private`
+    prefix lets `/tmp` and its resolved `/private/tmp` form compare equal.
+    """
+    return os.path.normcase(_strip_macos_private(p))
+
+
+def _is_filesystem_root(p: str) -> bool:
+    """True if `p` is a filesystem root with no parent to sweep under: POSIX
+    `/`, a Windows drive root (`C:\\`), or a UNC share root
+    (`\\\\server\\share`). A root is its own parent: `dirname(p) == p`.
+    """
+    p = os.path.normpath(p)
+    return os.path.dirname(p) == p
+
+
+# The two sources of "sensitive base" are ASYMMETRIC ON PURPOSE:
+#   * POSIX roots are fixed, known-at-author-time paths -> a CONSTANT
+#     (`_UNIX_FORBIDDEN_BASES`).
+#   * Windows roots come from the environment (%SystemRoot% etc.), vary by
+#     machine/user, and aren't known until runtime -> a FUNCTION.
+# `_get_forbidden_bases()` hides the split so callers just ask "what's forbidden here?".
+def _get_forbidden_bases() -> set[str]:
+    """Sensitive-base comparison keys for the CURRENT OS, plus the user's home.
+    Selects the platform-appropriate source: the static `_UNIX_FORBIDDEN_BASES`
+    on POSIX, the env-derived `_get_windows_forbidden_bases()` on Windows.
+    """
+    raw = _get_windows_forbidden_bases() if os.name == "nt" else _UNIX_FORBIDDEN_BASES
+    keys = {_normalize_path(p) for p in raw}
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        keys.add(_normalize_path(home))
+        keys.add(_normalize_path(os.path.realpath(home)))
+    return keys
+
+
 class UnsafePath(ValueError):
     """Raised when the candidate path fails any of the safety rules."""
 
@@ -88,37 +138,41 @@ def safe_worktree_path(path: str, base: str) -> Path:
         raise UnsafePath(f"empty or non-string base: {base!r}")
 
     # Rule 2: absolute.
-    if not path.startswith("/"):
+    if not os.path.isabs(path):
         raise UnsafePath(f"worktree path is not absolute: {path!r}")
-    if not base.startswith("/"):
+    if not os.path.isabs(base):
         raise UnsafePath(f"base is not absolute: {base!r}")
 
     # Rule 3: no ".." traversal in the literal input. Catches things that
     # would otherwise normalize past the base.
-    for part in path.split("/"):
-        if part == "..":
-            raise UnsafePath(f"worktree path contains '..': {path!r}")
-    for part in base.split("/"):
-        if part == "..":
-            raise UnsafePath(f"base contains '..': {base!r}")
+    if ".." in PurePath(path).parts:
+        raise UnsafePath(f"worktree path contains '..': {path!r}")
+    if ".." in PurePath(base).parts:
+        raise UnsafePath(f"base contains '..': {base!r}")
 
     # Resolve the base: this is what we compare against.
     base_res = os.path.realpath(base)
 
-    # Rule 4: refuse sensitive bases. Compare against three normalizations
-    # so a symlink shenanigan (`$HOME/my-worktrees → /`) AND macOS's
-    # implicit `/tmp → /private/tmp` redirection both fail closed.
+    # Rule 4: refuse sensitive bases. Build ONE normalized candidate set from the
+    # literal input AND the symlink-resolved form (so a symlink like
+    # `$HOME/dreams -> /` can't smuggle a root past us). Normalizing is required
+    # for the (b) set-match and harmless for the (a) root test, so we share it.
     base_norm = os.path.normpath(base)
-    candidates = {base_norm, base_res, _strip_macos_private(base_res)}
-    forbidden = set(_FORBIDDEN_BASES)
-    home = os.path.expanduser("~")
-    if home and home != "~":
-        forbidden.add(home)
-        forbidden.add(_strip_macos_private(os.path.realpath(home)))
-    if candidates & forbidden:
+    candidates = {_normalize_path(base_norm), _normalize_path(base_res)}
+
+    # (a) Refuse a filesystem root (`/`, `C:\`, `\\server\share`): it has no
+    #     parent to sweep under.
+    for candidate in candidates:
+        if _is_filesystem_root(candidate):
+            raise UnsafePath(
+                f"refusing sweep: base is a sensitive root "
+                f"(filesystem root): {base!r}"
+            )
+
+    # (b) Refuse a base that matches a known-sensitive dir.
+    if candidates & _get_forbidden_bases():
         raise UnsafePath(
-            f"refusing sweep: base resolves to a sensitive root: "
-            f"{base!r} (literal={base_norm!r} resolved={base_res!r})"
+            f"refusing sweep: base resolves to a sensitive root: {base!r}"
         )
 
     # Resolve the path's PARENT (not the path itself — the leaf may not
