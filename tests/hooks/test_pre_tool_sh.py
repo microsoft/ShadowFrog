@@ -15,13 +15,14 @@ from pathlib import Path
 
 import pytest
 
-# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
-# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
-# distro installed), not Git Bash, so every invocation fails. The shell scripts
-# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all.
 pytestmark = pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -54,7 +55,7 @@ def _make_failing_git_stub(stub_dir: Path, fail_subcommand: str = "diff") -> Pat
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     """Minimal env isolating from user environment but preserving PATH for python3/git."""
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": str(cwd),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -69,7 +70,7 @@ def run_hook(json_input: dict, cwd: Path, env_extra: dict | None = None) -> subp
     """Run the pre-tool hook with given JSON on stdin."""
     env = _base_env(cwd, env_extra)
     return subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        [BASH, str(HOOK_SCRIPT)],
         input=json.dumps(json_input),
         capture_output=True,
         text=True,
@@ -345,7 +346,7 @@ class TestPreToolFailOpen:
         self._set_stale_state(coupon_demo)
         stub = tmp_path / "stubbin"
         _make_failing_git_stub(stub, "diff")
-        env = {"PATH": f"{stub}:{os.environ.get('PATH', '')}"}
+        env = {"PATH": prepend_path(stub)}
         result = run_hook(
             {"tool_name": "Bash", "tool_input": {"command": "ls"}},
             cwd=coupon_demo, env_extra=env,
@@ -386,7 +387,7 @@ class TestPreToolFailOpen:
         self._set_stale_state(coupon_demo)
         stub = tmp_path / "stubbin"
         _make_failing_git_stub(stub, "rev-parse")
-        env = {"PATH": f"{stub}:{os.environ.get('PATH', '')}"}
+        env = {"PATH": prepend_path(stub)}
         result = run_hook(
             {"tool_name": "edit", "tool_input": {"file_path": "cart.py"}},
             cwd=coupon_demo, env_extra=env,
@@ -457,6 +458,12 @@ class TestPreToolPascalCaseToolNames:
 
 @pytest.mark.slow
 @pytest.mark.integration
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX signal semantics: Windows has no SIGTERM trap — "
+           "send_signal(SIGTERM) calls TerminateProcess (hard kill), so the "
+           "bash `trap 'exit 0' TERM` pyramid cannot run. Validated on Linux.",
+)
 class TestPreToolSigterm:
     """Behavioral verification of `trap 'exit 0' TERM` — distinct from
     static CI checker coverage."""
@@ -472,7 +479,7 @@ class TestPreToolSigterm:
         )
         t0 = time.perf_counter()
         proc = subprocess.Popen(
-            ["bash", str(HOOK_SCRIPT)],
+            [BASH, str(HOOK_SCRIPT)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -559,7 +566,7 @@ class TestPreToolSigterm:
         rc, stdout, stderr, elapsed = self._spawn_and_signal(
             coupon_demo, tmp_path,
             env_extra={
-                "PATH": f"{stub}:{os.environ.get('PATH','')}",
+                "PATH": prepend_path(stub),
                 "SHADOWFROG_TMP_DIR": str(tmp_path / "dedup"),
             },
             signal_delay=0.05,
@@ -606,7 +613,7 @@ class TestPreToolStrictBudget:
         for attempt in range(3):
             t0 = time.perf_counter()
             result = subprocess.run(
-                ["bash", str(HOOK_SCRIPT)],
+                [BASH, str(HOOK_SCRIPT)],
                 input=payload,
                 capture_output=True,
                 text=True,

@@ -10,13 +10,15 @@ from pathlib import Path
 
 import pytest
 
-# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
-# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
-# distro installed), not Git Bash, so every invocation fails. The shell scripts
-# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all (e.g. a Windows box without
+# Git for Windows installed).
 pytestmark = pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -25,7 +27,7 @@ HOOK_SCRIPT = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-check-init
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": str(cwd),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -40,7 +42,7 @@ def run_hook(cwd: Path, env_extra: dict | None = None) -> subprocess.CompletedPr
     """Run the check-init hook (stdin is ignored but must exist)."""
     env = _base_env(cwd, env_extra)
     return subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        [BASH, str(HOOK_SCRIPT)],
         input="{}",
         capture_output=True,
         text=True,
@@ -270,7 +272,7 @@ class TestCheckInitRobustness:
         _make_failing_git_stub(stub, "diff")
         result = run_hook(
             cwd=coupon_demo,
-            env_extra={"PATH": f"{stub}:{os.environ.get('PATH', '')}"},
+            env_extra={"PATH": prepend_path(stub)},
         )
         assert result.returncode == 0, f"stderr={result.stderr}"
         json.loads(result.stdout)

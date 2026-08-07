@@ -10,13 +10,14 @@ from pathlib import Path
 
 import pytest
 
-# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
-# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
-# distro installed), not Git Bash, so every invocation fails. The shell scripts
-# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+from tests._shell import BASH, HAVE_BASH, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all.
 pytestmark = pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -25,7 +26,7 @@ DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.sh"
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": str(cwd),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -57,7 +58,7 @@ def run_dream_setup(
     """Run dream-setup.sh with given args."""
     env = _base_env(cwd, env_extra)
     return subprocess.run(
-        ["bash", str(DREAM_SETUP), *args],
+        [BASH, str(DREAM_SETUP), *args],
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -116,7 +117,9 @@ class TestDreamSetupHappyPath:
             ["git", "worktree", "list"], cwd=repo,
             capture_output=True, text=True, env=env,
         )
-        assert str(wt_dir) in wt_list.stdout
+        # `git worktree list` always prints POSIX-style separators; normalize
+        # so the comparison holds on Windows too.
+        assert wt_dir.as_posix() in wt_list.stdout.replace("\\", "/")
 
     def test_worktree_has_same_head_as_base(self, tmp_path):
         repo = tmp_path / "repo"

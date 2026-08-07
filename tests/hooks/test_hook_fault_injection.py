@@ -41,13 +41,14 @@ from pathlib import Path
 
 import pytest
 
-# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
-# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
-# distro installed), not Git Bash, so every invocation fails. The shell scripts
-# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all.
 pytestmark = pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -78,7 +79,7 @@ WALL_CLOCK_LIMIT_SEC = 7.0
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": str(cwd),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -117,8 +118,9 @@ def _run(hook: Path, cwd: Path, stdin: str, env_extra: dict | None = None,
         extras["SHADOWFROG_TMP_DIR"] = str(cwd / "_sf_dedup")
     t0 = time.perf_counter()
     cp = subprocess.run(
-        ["bash", str(hook)],
+        [BASH, str(hook)],
         input=stdin, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
         cwd=cwd, env=_base_env(cwd, extras), timeout=timeout,
     )
     return cp, time.perf_counter() - t0
@@ -311,7 +313,7 @@ def test_binary_fault_injection(tmp_path, hook, scenario_id, stub_factory):
 
     stub_dir = tmp_path / "stubbin"
     stub_factory(stub_dir)
-    env = {"PATH": f"{stub_dir}:{os.environ.get('PATH', '')}"}
+    env = {"PATH": prepend_path(stub_dir)}
 
     payload = json.dumps({"toolName": "edit",
                           "toolInput": {"file_path": "a.py"}})

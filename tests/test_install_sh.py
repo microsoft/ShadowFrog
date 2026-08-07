@@ -10,13 +10,14 @@ from pathlib import Path
 import json
 import pytest
 
-# POSIX-shell integration tests: these shell out to `bash`. On GitHub's
-# windows-latest runner `bash` resolves to the WSL launcher stub (which has no
-# distro installed), not Git Bash, so every invocation fails. The shell scripts
-# are POSIX-only and fully exercised on Linux CI; skip the whole module on Windows.
+from tests._shell import BASH, HAVE_BASH, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all.
 pytestmark = pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX shell integration test; `bash` on windows-latest is the WSL stub",
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +35,7 @@ EXPECTED_SKILLS = [
 
 def _base_env(extras: dict | None = None) -> dict:
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": "/nonexistent",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -49,7 +50,7 @@ def run_install(*args: str, env_extra: dict | None = None) -> subprocess.Complet
     """Run install.sh with given arguments."""
     env = _base_env(env_extra)
     return subprocess.run(
-        ["bash", str(INSTALL_SCRIPT), *args],
+        [BASH, str(INSTALL_SCRIPT), *args],
         capture_output=True,
         text=True,
         env=env,
