@@ -92,6 +92,7 @@ class TestUsage:
 @pytest.mark.slow
 @pytest.mark.integration
 class TestBaseSafety:
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX sensitive-path semantics")
     @pytest.mark.parametrize("base", [
         "/", "/tmp", "/etc", "/var", "/home", "/Users",
         "/private/tmp", "/private/etc",
@@ -261,6 +262,7 @@ class TestGitdirParserRobust:
     DELETED. New parser must preserve `:` chars after the `gitdir: ` prefix.
     """
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows forbids colons in filenames")
     def test_gitdir_path_with_colon_is_not_orphan(self, tmp_path):
         # Build a fake target the parser will think exists.
         gitdir_real = tmp_path / "container:with:colons" / "worktrees" / "foo"
@@ -569,7 +571,7 @@ class TestTaskComplete:
             ["git", "-C", str(repo_b), "worktree", "list", "--porcelain"],
             capture_output=True, text=True, env=_base_env(),
         )
-        assert str(cand_b) in list_b.stdout
+        assert cand_b.as_posix() in list_b.stdout.replace("\\", "/")
 
     def test_task_complete_refuses_locked_worktree_no_rm_fallback(self, tmp_path):
         """If `git worktree remove --force` refuses (locked), we WARN and skip.
@@ -628,7 +630,7 @@ class TestTaskComplete:
             ["git", "-C", str(repo_owner), "worktree", "list", "--porcelain"],
             capture_output=True, text=True, env=_base_env(),
         )
-        assert str(candidate) in list_owner.stdout
+        assert candidate.as_posix() in list_owner.stdout.replace("\\", "/")
 
     def test_task_complete_dream_namespace_env_works(self, tmp_path):
         """DREAM_NAMESPACE env satisfies the --namespace requirement."""

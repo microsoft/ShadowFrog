@@ -111,7 +111,7 @@ class TestDreamSetupHappyPath:
             ["git", "worktree", "list"], cwd=repo,
             capture_output=True, text=True, env=env,
         )
-        assert shell_path(wt_dir) in wt_list.stdout.replace("\\", "/")
+        assert wt_dir.as_posix() in wt_list.stdout.replace("\\", "/")
 
     def test_worktree_has_same_head_as_base(self, tmp_path):
         repo = tmp_path / "repo"

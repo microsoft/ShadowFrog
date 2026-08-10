@@ -945,8 +945,10 @@ def test_walk_files_lists_all_non_excluded(shadow_init, tmp_path):
 # _load_shadowignore: unreadable file (lines 225-227)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root can read 0o000 files")
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="platform can read 0o000 files",
+)
 def test_load_shadowignore_unreadable_file_warns(shadow_init, tmp_path,
                                                  reset_diagnostics):
     ignore = tmp_path / ".shadowignore"

@@ -227,10 +227,12 @@ while IFS= read -r -d '' candidate; do
             is_orphan=true
         else
             # Relative gitdir paths (rare but legal) resolve relative to the
-            # .git file's directory — NOT the cwd.
-            if [[ "$gitdir_target" != /* ]]; then
-                gitdir_target="$candidate/$gitdir_target"
-            fi
+            # .git file's directory — NOT the cwd. Git for Windows writes
+            # drive-letter paths, which must not be mistaken for relative.
+            case "$gitdir_target" in
+                /*|[A-Za-z]:[\\/]*|\\\\*) ;;
+                *) gitdir_target="$candidate/$gitdir_target" ;;
+            esac
             if [[ ! -e "$gitdir_target" ]]; then
                 is_orphan=true
             fi

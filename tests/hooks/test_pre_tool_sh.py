@@ -452,6 +452,10 @@ class TestPreToolPascalCaseToolNames:
 
 @pytest.mark.slow
 @pytest.mark.integration
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows terminates the process instead of delivering catchable SIGTERM",
+)
 class TestPreToolSigterm:
     """Behavioral verification of `trap 'exit 0' TERM` — distinct from
     static CI checker coverage."""

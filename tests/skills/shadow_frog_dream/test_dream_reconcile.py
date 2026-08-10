@@ -3229,8 +3229,8 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     decoy.mkdir()
     (decoy / "important.txt").write_text("keep me\n", encoding="utf-8")
 
-    # Point DREAM_WORKTREE_BASE at /tmp — gate must refuse.
-    monkeypatch.setenv("DREAM_WORKTREE_BASE", "/tmp")
+    # Point DREAM_WORKTREE_BASE at $HOME — gate must refuse on every OS.
+    monkeypatch.setenv("DREAM_WORKTREE_BASE", str(Path.home()))
 
     deleted, _ = dream_reconcile.cleanup_branches(
         str(tmp_git_repo),
