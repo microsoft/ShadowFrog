@@ -265,6 +265,119 @@ class TestRepairParent:
         # Parent column is a BRANCH NAME (the resolved row's branch), not a dream_id.
         assert parts[6] == f"dream/proj/{parent_did}"
 
+    def test_null_parent_branch_falls_back_to_base_branch(
+        self, meditate_repair, tmp_path
+    ):
+        dreams = tmp_path / "_dreams"
+        parent_did = "20250101-120000Z-base"
+        child_did = "20250102-120000Z-child"
+        make_dream(dreams, parent_did)
+        make_dream(
+            dreams,
+            child_did,
+            manifest={
+                "parent_branch": None,
+                "base_branch": f"dream/proj/{parent_did}",
+            },
+        )
+
+        all_ids = [parent_did, child_did]
+        bmap = {d: f"dream/proj/{d}" for d in all_ids}
+        parts = ["", child_did, "investigation", "useful", "Child",
+                 f"dream/proj/{child_did}", "main", "abc"]
+
+        changed = meditate_repair.repair_parent(
+            parts, str(dreams), all_ids, bmap
+        )
+
+        assert changed
+        assert parts[6] == f"dream/proj/{parent_did}"
+
+    @pytest.mark.parametrize(
+        ("lineage_key", "as_list"),
+        [("parent_dream_id", False), ("builds_on", True)],
+    )
+    def test_manifest_parent_id_fields_resolve_through_index(
+        self, meditate_repair, tmp_path, lineage_key, as_list
+    ):
+        dreams = tmp_path / "_dreams"
+        parent_did = "20250101-120000Z-base"
+        child_did = "20250102-120000Z-child"
+        make_dream(dreams, parent_did)
+        parent_ref = [parent_did] if as_list else parent_did
+        make_dream(
+            dreams, child_did, manifest={lineage_key: parent_ref}
+        )
+
+        all_ids = [parent_did, child_did]
+        bmap = {d: f"dream/proj/{d}" for d in all_ids}
+        parts = ["", child_did, "investigation", "useful", "Child",
+                 f"dream/proj/{child_did}", "main", "abc"]
+
+        changed = meditate_repair.repair_parent(
+            parts, str(dreams), all_ids, bmap
+        )
+
+        assert changed
+        assert parts[6] == f"dream/proj/{parent_did}"
+
+    def test_report_parent_branch_is_last_metadata_fallback(
+        self, meditate_repair, tmp_path
+    ):
+        dreams = tmp_path / "_dreams"
+        parent_did = "20250101-120000Z-base"
+        child_did = "20250102-120000Z-child"
+        make_dream(dreams, parent_did)
+        make_dream(
+            dreams,
+            child_did,
+            manifest={"parent_branch": None},
+            report=(
+                "---\n"
+                f'dream_id: "{child_did}"\n'
+                f'parent_branch: "dream/proj/{parent_did}"\n'
+                "---\n# Child\n"
+            ),
+        )
+
+        all_ids = [parent_did, child_did]
+        bmap = {d: f"dream/proj/{d}" for d in all_ids}
+        parts = ["", child_did, "investigation", "useful", "Child",
+                 f"dream/proj/{child_did}", "main", "abc"]
+
+        changed = meditate_repair.repair_parent(
+            parts, str(dreams), all_ids, bmap
+        )
+
+        assert changed
+        assert parts[6] == f"dream/proj/{parent_did}"
+
+    def test_unconfirmed_manifest_parent_keeps_main(
+        self, meditate_repair, tmp_path
+    ):
+        dreams = tmp_path / "_dreams"
+        child_did = "20250102-120000Z-child"
+        make_dream(
+            dreams,
+            child_did,
+            manifest={
+                "parent_branch": None,
+                "base_branch": "dream/proj/20250101-120000Z-missing",
+            },
+        )
+        parts = ["", child_did, "investigation", "useful", "Child",
+                 f"dream/proj/{child_did}", "main", "abc"]
+
+        changed = meditate_repair.repair_parent(
+            parts,
+            str(dreams),
+            [child_did],
+            {child_did: f"dream/proj/{child_did}"},
+        )
+
+        assert not changed
+        assert parts[6] == "main"
+
     def test_missing_manifest_and_slug_heuristic(self, meditate_repair, tmp_path):
         """Step 11: slug heuristic with compounding suffix."""
         dreams = tmp_path / "_dreams"

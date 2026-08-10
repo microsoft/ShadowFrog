@@ -23,10 +23,10 @@ Logic:
    signals so 'not useful' doesn't match 'useful'.
 4. Title repair: replace generic titles (raw slug, "Dream Report: <slug>",
    "Dream t##: <slug>") with the first H1 or first ## Summary line.
-5. Parent linkage from manifest: for rows where parent is 'main', check
-   manifest.json and report.md frontmatter for a different parent_branch.
-   Validate the parent exists in the index (match by slug if timestamps
-   differ).
+5. Parent linkage from metadata: for rows where parent is 'main', check
+   manifest parent_branch, base_branch, parent_dream_id/builds_on, then
+   report.md frontmatter parent_branch. Validate the parent exists in the
+   index (match by slug if timestamps differ).
 6. Parent linkage from slug heuristics: for rows still parented to 'main'
    with no manifest info, infer from compounding suffixes (-extend, -fix,
    -deeper, -improve, -integration, -cleanup, -metrics, -remaining).
@@ -178,6 +178,28 @@ def resolve_parent_in_index(
     return None
 
 
+def manifest_lineage_values(manifest: dict, key: str) -> list[str]:
+    """Return non-empty string values for one manifest lineage key."""
+    value = manifest.get(key) or ''
+    values = value if isinstance(value, list) else [value]
+    return [item.strip() for item in values
+            if isinstance(item, str) and item.strip()]
+
+
+def report_parent_branch(content: str) -> str:
+    """Read parent_branch from report frontmatter."""
+    frontmatter = re.match(r'^\ufeff?\s*---\r?\n(.*?)\r?\n---', content, re.S)
+    if not frontmatter:
+        return ''
+    match = re.search(
+        r'^parent_branch:\s*["\']?([^"\'\r\n]+)',
+        frontmatter.group(1),
+        re.M,
+    )
+    parent = match.group(1).strip() if match else ''
+    return '' if parent.lower() in ('null', '~') else parent
+
+
 def repair_parent(
     parts: list[str], dreams_dir: str, all_dream_ids: list[str],
     branch_by_dream_id: dict[str, str],
@@ -201,33 +223,43 @@ def repair_parent(
 
     # Step 10: manifest.json lookup
     manifest_path = os.path.join(dream_dir, 'manifest.json')
-    parent_branch_raw: str | None = None
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path, encoding="utf-8") as mf:
                 mdata = json.load(mf)
-            pb = mdata.get('parent_branch', '').strip()
-            if pb and pb != 'main':
-                parent_branch_raw = pb
+            if isinstance(mdata, dict):
+                for key in (
+                    'parent_branch', 'base_branch',
+                    'parent_dream_id', 'builds_on',
+                ):
+                    for parent_ref in manifest_lineage_values(mdata, key):
+                        if parent_ref == 'main':
+                            return False
+                        candidate_id = parent_ref.rsplit('/', 1)[-1]
+                        resolved_did = resolve_parent_in_index(
+                            candidate_id, all_dream_ids
+                        )
+                        if resolved_did is not None:
+                            break
+                    if resolved_did is not None:
+                        break
         except (OSError, json.JSONDecodeError):
             pass
 
     # Fallback: report.md frontmatter
-    if parent_branch_raw is None:
+    if resolved_did is None:
         report_path = os.path.join(dream_dir, 'report.md')
         if os.path.exists(report_path):
             with open(report_path, encoding="utf-8") as rf:
                 rcontent = rf.read()
-            fm_match = re.search(r'parent_branch:\s*["\']?([^"\'\n]+)', rcontent)
-            if fm_match:
-                pb = fm_match.group(1).strip()
-                if pb and pb != 'main':
-                    parent_branch_raw = pb
-
-    if parent_branch_raw:
-        # Extract dream_id from branch path (last /-separated segment)
-        candidate_id = parent_branch_raw.split('/')[-1]
-        resolved_did = resolve_parent_in_index(candidate_id, all_dream_ids)
+            parent_ref = report_parent_branch(rcontent)
+            if parent_ref == 'main':
+                return False
+            if parent_ref:
+                candidate_id = parent_ref.rsplit('/', 1)[-1]
+                resolved_did = resolve_parent_in_index(
+                    candidate_id, all_dream_ids
+                )
 
     # Step 11: slug heuristic (only if step 10 didn't resolve anything)
     if resolved_did is None:
