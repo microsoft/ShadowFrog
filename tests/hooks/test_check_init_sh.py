@@ -9,9 +9,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 HOOK_SCRIPT = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-check-init.sh"
+pytestmark = pytest.mark.skipif(not HAVE_BASH, reason="POSIX bash not available")
 
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
@@ -22,6 +24,7 @@ def _base_env(cwd: Path, extras: dict | None = None) -> dict:
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "LANG": "en_US.UTF-8",
     }
+    env = prepend_path(env)
     if extras:
         env.update(extras)
     return env
@@ -31,7 +34,7 @@ def run_hook(cwd: Path, env_extra: dict | None = None) -> subprocess.CompletedPr
     """Run the check-init hook (stdin is ignored but must exist)."""
     env = _base_env(cwd, env_extra)
     return subprocess.run(
-        ["bash", str(HOOK_SCRIPT)],
+        [BASH, shell_path(HOOK_SCRIPT)],
         input="{}",
         capture_output=True,
         text=True,

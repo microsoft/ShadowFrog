@@ -10,9 +10,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 GC_SH = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-gc.sh"
+pytestmark = pytest.mark.skipif(not HAVE_BASH, reason="POSIX bash not available")
 
 
 def _base_env(extras: dict | None = None) -> dict:
@@ -23,6 +25,7 @@ def _base_env(extras: dict | None = None) -> dict:
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "LANG": "en_US.UTF-8",
     }
+    env = prepend_path(env)
     if extras:
         env.update(extras)
     return env
@@ -55,8 +58,9 @@ def _orphan_worktree(parent: Path, name: str = "dream-orphan", old: bool = True)
 
 
 def _run(args: list[str], env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    shell_args = [shell_path(arg) for arg in args]
     return subprocess.run(
-        ["bash", str(GC_SH), *args],
+        [BASH, shell_path(GC_SH), *shell_args],
         capture_output=True, text=True, env=_base_env(env_extra),
     )
 
@@ -237,7 +241,7 @@ class TestSafetyModuleMissingGc:
         assert wt.exists()
 
         r = subprocess.run(
-            ["bash", str(broken / "dream-gc.sh")],
+            [BASH, shell_path(broken / "dream-gc.sh")],
             capture_output=True, text=True,
             env=_base_env({"DREAM_WORKTREE_BASE": str(base)}),
         )
