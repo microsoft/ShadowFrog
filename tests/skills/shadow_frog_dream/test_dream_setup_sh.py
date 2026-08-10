@@ -9,11 +9,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.sh"
-pytestmark = pytest.mark.skipif(not HAVE_BASH, reason="POSIX bash not available")
 
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
@@ -24,7 +22,6 @@ def _base_env(cwd: Path, extras: dict | None = None) -> dict:
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "LANG": "en_US.UTF-8",
     }
-    env = prepend_path(env)
     if extras:
         env.update(extras)
     return env
@@ -50,9 +47,8 @@ def run_dream_setup(
 ) -> subprocess.CompletedProcess:
     """Run dream-setup.sh with given args."""
     env = _base_env(cwd, env_extra)
-    shell_args = [shell_path(arg) for arg in args]
     return subprocess.run(
-        [BASH, shell_path(DREAM_SETUP), *shell_args],
+        ["bash", str(DREAM_SETUP), *args],
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -111,7 +107,7 @@ class TestDreamSetupHappyPath:
             ["git", "worktree", "list"], cwd=repo,
             capture_output=True, text=True, env=env,
         )
-        assert wt_dir.as_posix() in wt_list.stdout.replace("\\", "/")
+        assert str(wt_dir) in wt_list.stdout
 
     def test_worktree_has_same_head_as_base(self, tmp_path):
         repo = tmp_path / "repo"

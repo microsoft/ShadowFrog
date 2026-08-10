@@ -10,11 +10,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 GC_SH = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-gc.sh"
-pytestmark = pytest.mark.skipif(not HAVE_BASH, reason="POSIX bash not available")
 
 
 def _base_env(extras: dict | None = None) -> dict:
@@ -25,7 +23,6 @@ def _base_env(extras: dict | None = None) -> dict:
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "LANG": "en_US.UTF-8",
     }
-    env = prepend_path(env)
     if extras:
         env.update(extras)
     return env
@@ -58,9 +55,8 @@ def _orphan_worktree(parent: Path, name: str = "dream-orphan", old: bool = True)
 
 
 def _run(args: list[str], env_extra: dict | None = None) -> subprocess.CompletedProcess:
-    shell_args = [shell_path(arg) for arg in args]
     return subprocess.run(
-        [BASH, shell_path(GC_SH), *shell_args],
+        ["bash", str(GC_SH), *args],
         capture_output=True, text=True, env=_base_env(env_extra),
     )
 
@@ -92,7 +88,6 @@ class TestUsage:
 @pytest.mark.slow
 @pytest.mark.integration
 class TestBaseSafety:
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX sensitive-path semantics")
     @pytest.mark.parametrize("base", [
         "/", "/tmp", "/etc", "/var", "/home", "/Users",
         "/private/tmp", "/private/etc",
@@ -242,7 +237,7 @@ class TestSafetyModuleMissingGc:
         assert wt.exists()
 
         r = subprocess.run(
-            [BASH, shell_path(broken / "dream-gc.sh")],
+            ["bash", str(broken / "dream-gc.sh")],
             capture_output=True, text=True,
             env=_base_env({"DREAM_WORKTREE_BASE": str(base)}),
         )
@@ -262,7 +257,6 @@ class TestGitdirParserRobust:
     DELETED. New parser must preserve `:` chars after the `gitdir: ` prefix.
     """
 
-    @pytest.mark.skipif(os.name == "nt", reason="Windows forbids colons in filenames")
     def test_gitdir_path_with_colon_is_not_orphan(self, tmp_path):
         # Build a fake target the parser will think exists.
         gitdir_real = tmp_path / "container:with:colons" / "worktrees" / "foo"
@@ -571,7 +565,7 @@ class TestTaskComplete:
             ["git", "-C", str(repo_b), "worktree", "list", "--porcelain"],
             capture_output=True, text=True, env=_base_env(),
         )
-        assert cand_b.as_posix() in list_b.stdout.replace("\\", "/")
+        assert str(cand_b) in list_b.stdout
 
     def test_task_complete_refuses_locked_worktree_no_rm_fallback(self, tmp_path):
         """If `git worktree remove --force` refuses (locked), we WARN and skip.
@@ -630,7 +624,7 @@ class TestTaskComplete:
             ["git", "-C", str(repo_owner), "worktree", "list", "--porcelain"],
             capture_output=True, text=True, env=_base_env(),
         )
-        assert candidate.as_posix() in list_owner.stdout.replace("\\", "/")
+        assert str(candidate) in list_owner.stdout
 
     def test_task_complete_dream_namespace_env_works(self, tmp_path):
         """DREAM_NAMESPACE env satisfies the --namespace requirement."""

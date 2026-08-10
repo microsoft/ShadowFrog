@@ -175,13 +175,11 @@ class TestUnderBase:
             safe_worktree_path(str(link), str(base))
 
     def test_rejects_symlinked_parent_escaping_base(self, tmp_path):
-        # base/escape-ns is a symlink outside base. base/escape-ns/dream-x must
+        # base/escape-ns is a symlink to /etc. base/escape-ns/dream-x must
         # be refused even though the LITERAL input looks valid.
         base = tmp_path / "b"
         base.mkdir()
-        escape = tmp_path / "escape-target"
-        escape.mkdir()
-        (base / "escape-ns").symlink_to(escape, target_is_directory=True)
+        (base / "escape-ns").symlink_to("/etc")
         with pytest.raises(UnsafePath, match="strictly under base"):
             safe_worktree_path(str(base / "escape-ns" / "dream-x"), str(base))
 
@@ -270,8 +268,7 @@ class TestCLI:
         assert r.returncode == 2
 
     def test_exit_1_when_unsafe(self):
-        home = Path.home()
-        r = self._run(str(home / "proj" / "dream-foo"), str(home))
+        r = self._run("/tmp/proj/dream-foo", "/tmp")
         assert r.returncode == 1
         assert "ERROR" in r.stderr
 

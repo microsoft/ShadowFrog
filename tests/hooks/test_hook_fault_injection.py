@@ -40,12 +40,10 @@ import time
 from pathlib import Path
 
 import pytest
-from tests._shell import BASH, HAVE_BASH, prepend_path, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PRE_TOOL_HOOK = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-pre-tool.sh"
 CHECK_INIT_HOOK = REPO_ROOT / "hook-templates" / "scripts" / "shadow-frog-check-init.sh"
-pytestmark = pytest.mark.skipif(not HAVE_BASH, reason="POSIX bash not available")
 
 # Configured hook timeout in hook-templates/shadow-frog-hooks.json. Tests must complete
 # below this or production would have been killed by the runner.
@@ -77,7 +75,6 @@ def _base_env(cwd: Path, extras: dict | None = None) -> dict:
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "LANG": "en_US.UTF-8",
     }
-    env = prepend_path(env)
     if extras:
         env.update(extras)
     return env
@@ -111,9 +108,8 @@ def _run(hook: Path, cwd: Path, stdin: str, env_extra: dict | None = None,
         extras["SHADOWFROG_TMP_DIR"] = str(cwd / "_sf_dedup")
     t0 = time.perf_counter()
     cp = subprocess.run(
-        [BASH, shell_path(hook)],
+        ["bash", str(hook)],
         input=stdin, capture_output=True, text=True,
-        encoding="utf-8",
         cwd=cwd, env=_base_env(cwd, extras), timeout=timeout,
     )
     return cp, time.perf_counter() - t0
@@ -306,7 +302,7 @@ def test_binary_fault_injection(tmp_path, hook, scenario_id, stub_factory):
 
     stub_dir = tmp_path / "stubbin"
     stub_factory(stub_dir)
-    env = prepend_path({}, str(stub_dir))
+    env = {"PATH": f"{stub_dir}:{os.environ.get('PATH', '')}"}
 
     payload = json.dumps({"toolName": "edit",
                           "toolInput": {"file_path": "a.py"}})
