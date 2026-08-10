@@ -233,7 +233,9 @@ if [[ "$DRY_RUN" == "false" ]]; then
                 # of a tombstone-vs-gc race is one extra GC pass; never a
                 # missed cleanup.
                 touch "$TOMBSTONE" 2>/dev/null || true
-                bash "$GC_SCRIPT" \
+                # Reuse this interpreter: on Windows, PATH may resolve
+                # `bash` to the WSL stub even when this script runs in Git Bash.
+                "$BASH" "$GC_SCRIPT" \
                     --repo-root "$REPO_ROOT" \
                     --quiet \
                     --min-age-min "$GC_AGE_MIN" \
