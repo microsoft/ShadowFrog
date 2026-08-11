@@ -162,7 +162,7 @@ class TestUnderBase:
         with pytest.raises(UnsafePath, match="strictly under base"):
             safe_worktree_path(str(other), str(base))
 
-    def test_rejects_symlinked_leaf_escaping_base(self, tmp_path):
+    def test_rejects_symlinked_leaf_escaping_base(self, tmp_path, make_symlink):
         # base/ns/dream-evil → tmp_path/escape-target (outside base)
         base = tmp_path / "b"
         ns = base / "ns"
@@ -170,16 +170,18 @@ class TestUnderBase:
         escape = tmp_path / "escape-target"
         escape.mkdir()
         link = ns / "dream-evil"
-        link.symlink_to(escape)
+        make_symlink(link, escape)
         with pytest.raises(UnsafePath, match="strictly under base"):
             safe_worktree_path(str(link), str(base))
 
-    def test_rejects_symlinked_parent_escaping_base(self, tmp_path):
+    def test_rejects_symlinked_parent_escaping_base(
+        self, tmp_path, make_symlink
+    ):
         # base/escape-ns is a symlink to /etc. base/escape-ns/dream-x must
         # be refused even though the LITERAL input looks valid.
         base = tmp_path / "b"
         base.mkdir()
-        (base / "escape-ns").symlink_to("/etc")
+        make_symlink(base / "escape-ns", "/etc")
         # On a multi-drive Windows runner (repo on D:, tmp on C:) the escaped
         # target lands on a different mount, so os.path.relpath raises and the
         # gate refuses with "not relatable to base" instead of the same-mount

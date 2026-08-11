@@ -3213,7 +3213,7 @@ class TestRegisteredWorktreeBranch:
 
     @pytest.mark.slow
     def test_matches_through_symlink(
-        self, dream_reconcile, tmp_git_repo, tmp_path
+        self, dream_reconcile, tmp_git_repo, tmp_path, make_symlink
     ):
         """macOS /tmp ↔ /private/tmp scenario: the path we query may
         differ from the path git recorded, but realpath unifies them."""
@@ -3222,7 +3222,7 @@ class TestRegisteredWorktreeBranch:
         link_wt = tmp_path / "link-wt"
         _git("worktree", "add", "-q", "-b", "feature-y", str(real_wt),
              cwd=tmp_git_repo, env=env)
-        link_wt.symlink_to(real_wt)
+        make_symlink(link_wt, real_wt)
         branch_via_link = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(link_wt)
         )
