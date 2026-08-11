@@ -1898,6 +1898,123 @@ def test_update_index_normalizes_category_with_parens(
     assert "(notes" not in row
 
 
+@pytest.mark.slow
+def test_update_index_uses_base_branch_when_parent_branch_is_null(
+    dream_reconcile, tmp_git_repo
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    parent_id = "20260420-030800Z-parent"
+    child_id = "20260420-030900Z-child"
+    parent_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", parent_id, _default_manifest(parent_id)
+    )
+    child_manifest = _default_manifest(child_id)
+    child_manifest["parent_branch"] = None
+    child_manifest["base_branch"] = parent_branch
+    child_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", child_id, child_manifest
+    )
+
+    dream_reconcile.update_index(
+        str(tmp_git_repo), [(child_branch, child_id, child_manifest)]
+    )
+
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    row = [line for line in body.splitlines() if child_id in line][0]
+    assert f"| {child_branch} | {parent_branch} |" in row
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("lineage_key", "as_list"),
+    [("parent_dream_id", False), ("builds_on", True)],
+)
+def test_update_index_resolves_parent_id_from_remote_branch(
+    dream_reconcile, tmp_git_repo, lineage_key, as_list
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    parent_id = "20260420-031000Z-parent"
+    child_id = "20260420-031100Z-child"
+    parent_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", parent_id, _default_manifest(parent_id)
+    )
+    child_manifest = _default_manifest(child_id)
+    del child_manifest["parent_branch"]
+    child_manifest[lineage_key] = [parent_id] if as_list else parent_id
+    child_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", child_id, child_manifest
+    )
+
+    dream_reconcile.update_index(
+        str(tmp_git_repo), [(child_branch, child_id, child_manifest)]
+    )
+
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    row = [line for line in body.splitlines() if child_id in line][0]
+    assert f"| {child_branch} | {parent_branch} |" in row
+
+
+@pytest.mark.slow
+def test_update_index_falls_back_to_report_parent(
+    dream_reconcile, tmp_git_repo
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    parent_id = "20260420-031200Z-parent"
+    child_id = "20260420-031300Z-child"
+    parent_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", parent_id, _default_manifest(parent_id)
+    )
+    child_manifest = _default_manifest(child_id)
+    del child_manifest["parent_branch"]
+    report = _default_report(child_id).replace(
+        "---\n\n", f'parent_branch: "{parent_branch}"\n---\n\n'
+    )
+    child_branch = make_dream_branch(
+        tmp_git_repo, env, "proj", child_id, child_manifest, report=report
+    )
+
+    dream_reconcile.update_index(
+        str(tmp_git_repo), [(child_branch, child_id, child_manifest)]
+    )
+
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    row = [line for line in body.splitlines() if child_id in line][0]
+    assert f"| {child_branch} | {parent_branch} |" in row
+
+
+@pytest.mark.slow
+def test_update_index_without_lineage_records_main(
+    dream_reconcile, tmp_git_repo
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260420-031400Z-root"
+    manifest = _default_manifest(dream_id)
+    del manifest["parent_branch"]
+    branch = make_dream_branch(
+        tmp_git_repo, env, "proj", dream_id, manifest, report=None
+    )
+
+    dream_reconcile.update_index(
+        str(tmp_git_repo), [(branch, dream_id, manifest)]
+    )
+
+    body = (tmp_git_repo / ".shadow" / "_dreams" / "_index.md").read_text(
+        encoding="utf-8"
+    )
+    row = [line for line in body.splitlines() if dream_id in line][0]
+    assert f"| {branch} | main |" in row
+
+
 # ===========================================================================
 # update_state
 # ===========================================================================

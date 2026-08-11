@@ -824,6 +824,67 @@ def _resolve_tip_commit(repo_root, branch):
     return 'unknown'
 
 
+def _manifest_lineage_values(manifest, key):
+    """Return non-empty string values for one manifest lineage key."""
+    value = manifest.get(key) or ''
+    values = value if isinstance(value, list) else [value]
+    return [item.strip() for item in values
+            if isinstance(item, str) and item.strip()]
+
+
+def _resolve_remote_parent_branch(repo_root, parent_ref):
+    """Resolve a dream ID or branch reference to one remote dream branch."""
+    dream_id = parent_ref.rsplit('/', 1)[-1]
+    raw = git(
+        'for-each-ref',
+        '--format=%(refname:strip=3)',
+        f'refs/remotes/origin/dream/*/{dream_id}',
+        cwd=repo_root,
+        check=False,
+    )
+    matches = [line.strip() for line in raw.splitlines() if line.strip()]
+    if parent_ref.startswith('dream/') and parent_ref in matches:
+        return parent_ref
+    return matches[0] if len(matches) == 1 else ''
+
+
+def _report_parent_branch(report):
+    """Read parent_branch from report frontmatter."""
+    if not report:
+        return ''
+    frontmatter = re.match(r'^\ufeff?\s*---\r?\n(.*?)\r?\n---', report, re.S)
+    if not frontmatter:
+        return ''
+    match = re.search(
+        r'^parent_branch:\s*["\']?([^"\'\r\n]+)',
+        frontmatter.group(1),
+        re.M,
+    )
+    parent = match.group(1).strip() if match else ''
+    return '' if parent.lower() in ('null', '~') else parent
+
+
+def _resolve_parent_branch(repo_root, branch, dream_id, manifest):
+    """Resolve manifest/report lineage to the canonical parent branch."""
+    for key in ('parent_branch', 'base_branch'):
+        values = _manifest_lineage_values(manifest, key)
+        if values:
+            return values[0]
+
+    for key in ('parent_dream_id', 'builds_on'):
+        for parent_ref in _manifest_lineage_values(manifest, key):
+            parent = _resolve_remote_parent_branch(repo_root, parent_ref)
+            if parent:
+                return parent
+
+    report = git_show(
+        f'origin/{branch}',
+        f'.shadow/_dreams/{dream_id}/report.md',
+        cwd=repo_root,
+    )
+    return _report_parent_branch(report) or 'main'
+
+
 def update_index(repo_root, manifests, dry_run=False):
     """Add entries to _dreams/_index.md for reconciled branches."""
     index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
@@ -845,12 +906,18 @@ def update_index(repo_root, manifests, dry_run=False):
     with open(index_path, 'a', encoding="utf-8") as f:
         for branch, dream_id, manifest in manifests:
             tip = _resolve_tip_commit(repo_root, branch)
-            cat = re.sub(r'\s*\(.*\)\s*$', '', manifest.get('category', 'unknown').lower().strip())
-            verdict = manifest.get('verdict', 'unknown').lower().strip()
-            parent = manifest.get('parent_branch', 'main').strip()
+            cat = re.sub(
+                r'\s*\(.*\)\s*$',
+                '',
+                (manifest.get('category') or 'unknown').lower().strip(),
+            )
+            verdict = (manifest.get('verdict') or 'unknown').lower().strip()
+            parent = _resolve_parent_branch(
+                repo_root, branch, dream_id, manifest
+            )
 
             # Get title from manifest or report heading
-            title = manifest.get('title', '')
+            title = manifest.get('title') or ''
             if not title:
                 report = git_show(f'origin/{branch}',
                                   f'.shadow/_dreams/{dream_id}/report.md', cwd=repo_root)
