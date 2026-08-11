@@ -9,6 +9,7 @@ at least one integration test, since the importable view of a script
 bypasses the argument parser.
 """
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -78,6 +79,23 @@ def meditate_repair(repo_root):
 
 
 # --- Filesystem fixtures ---
+
+@pytest.fixture
+def make_symlink():
+    """Create a symlink, skipping only when Windows denies the privilege."""
+    def create(link, target):
+        try:
+            link.symlink_to(target)
+        except OSError as exc:
+            if os.name == "nt" and exc.winerror == 1314:
+                pytest.skip(
+                    "Windows symlink privilege is unavailable; enable "
+                    "Developer Mode or run elevated"
+                )
+            raise
+
+    return create
+
 
 @pytest.fixture(scope="session")
 def coupon_demo_src(repo_root):

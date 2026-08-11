@@ -938,13 +938,15 @@ def test_walk_files_lists_all_non_excluded(shadow_init, tmp_path):
     result = shadow_init._walk_files(tmp_path)
     # Note: walk does NOT filter by extension — that's discover_files's job
     assert "a.py" in result
-    assert os.path.join("sub", "b.txt") in result
+    assert "sub/b.txt" in result
 
 
 # ---------------------------------------------------------------------------
 # _load_shadowignore: unreadable file (lines 225-227)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="chmod(0o000) does not remove read access on Windows")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root can read 0o000 files")
 def test_load_shadowignore_unreadable_file_warns(shadow_init, tmp_path,

@@ -125,8 +125,12 @@ if git check-ignore -q .shadow/_dreams/__shadowfrog_probe__/manifest.json 2>/dev
 fi
 
 # --- Detect default branch ---
+# `git symbolic-ref` exits non-zero when origin/HEAD is unset (git < 2.48 does
+# not auto-create it on fetch). Guard with `|| true` so `set -euo pipefail`
+# does not abort here — an empty result is expected and handled by the
+# origin/main / origin/master fallback below.
 DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-    | sed 's|refs/remotes/origin/||')
+    | sed 's|refs/remotes/origin/||') || true
 if [[ -z "$DEFAULT_BRANCH" ]]; then
     if git show-ref --verify refs/remotes/origin/main >/dev/null 2>&1; then
         DEFAULT_BRANCH="main"
