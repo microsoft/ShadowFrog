@@ -3229,8 +3229,15 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     decoy.mkdir()
     (decoy / "important.txt").write_text("keep me\n", encoding="utf-8")
 
-    # Point DREAM_WORKTREE_BASE at /tmp — gate must refuse.
-    monkeypatch.setenv("DREAM_WORKTREE_BASE", "/tmp")
+    # Point DREAM_WORKTREE_BASE at a sensitive base the gate must refuse.
+    # "/tmp" is sensitive only on POSIX; on Windows a filesystem root is the
+    # portable equivalent (refused as a sensitive root on every platform).
+    if os.name == "nt":
+        drive = os.path.splitdrive(os.getcwd())[0] or "C:"
+        unsafe_base = drive + os.sep
+    else:
+        unsafe_base = "/tmp"
+    monkeypatch.setenv("DREAM_WORKTREE_BASE", unsafe_base)
 
     deleted, _ = dream_reconcile.cleanup_branches(
         str(tmp_git_repo),
@@ -3323,7 +3330,7 @@ class TestRegisteredWorktreeBranch:
 
     @pytest.mark.slow
     def test_matches_through_symlink(
-        self, dream_reconcile, tmp_git_repo, tmp_path
+        self, dream_reconcile, tmp_git_repo, tmp_path, make_symlink
     ):
         """macOS /tmp ↔ /private/tmp scenario: the path we query may
         differ from the path git recorded, but realpath unifies them."""
@@ -3332,7 +3339,7 @@ class TestRegisteredWorktreeBranch:
         link_wt = tmp_path / "link-wt"
         _git("worktree", "add", "-q", "-b", "feature-y", str(real_wt),
              cwd=tmp_git_repo, env=env)
-        link_wt.symlink_to(real_wt)
+        make_symlink(link_wt, real_wt)
         branch_via_link = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(link_wt)
         )

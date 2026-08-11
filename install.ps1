@@ -38,9 +38,19 @@ param(
 # covered and are handled explicitly where it matters.
 $ErrorActionPreference = 'Stop'
 
-# Windows PowerShell 5.1 writes UTF-8 *with* BOM by default, which can break
-# JSON parsers and leave invisible bytes in markdown. Write BOM-free UTF-8 via
-# the .NET API so output is identical on PS 5.1 and PS 7+.
+# Windows PowerShell 5.1 can read BOM-free UTF-8 as ANSI and writes UTF-8 *with*
+# BOM by default. Use the .NET API for explicit UTF-8 reads and BOM-free writes
+# so behavior is identical on PS 5.1 and PS 7+.
+function Read-Utf8File {
+    param([string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $offset = 3
+    }
+    [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes, $offset, $bytes.Length - $offset)
+}
+
 function Write-Utf8File {
     param([string]$Path, [string]$Content)
     [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
@@ -151,11 +161,11 @@ if (-not $NoHooks) {
         $claudeSettingsPath = [System.IO.Path]::Combine($Project, '.claude', 'settings.json')
         $templatePath = [System.IO.Path]::Combine($HooksDir, 'claude-settings.json')
 
-        $template = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json
+        $template = Read-Utf8File -Path $templatePath | ConvertFrom-Json
 
         if (Test-Path -LiteralPath $claudeSettingsPath) {
             try {
-                $settings = Get-Content -LiteralPath $claudeSettingsPath -Raw | ConvertFrom-Json
+                $settings = Read-Utf8File -Path $claudeSettingsPath | ConvertFrom-Json
             } catch {
                 Write-Host "  x Existing $claudeSettingsPath is not valid JSON; refusing to overwrite." -ForegroundColor Red
                 exit 1
@@ -277,14 +287,14 @@ if ((-not $NoContext) -and (Test-Path -LiteralPath $ContextFile)) {
     $markerStart = '<!-- shadowfrog:agent-context -->'
     $markerEnd = '<!-- /shadowfrog:agent-context -->'
     # TrimEnd to match bash, where $(cat file) strips trailing newlines.
-    $contextContent = (Get-Content -LiteralPath $ContextFile -Raw).TrimEnd("`r", "`n")
+    $contextContent = (Read-Utf8File -Path $ContextFile).TrimEnd("`r", "`n")
 
     # Remove any existing block (idempotent re-apply), then build the final
     # content in memory for a single atomic write. (?s) = DOTALL; (?:\r?\n)*
     # tolerates both LF and CRLF line endings.
     $cleaned = ''
     if (Test-Path -LiteralPath $ContextTarget) {
-        $existing = Get-Content -LiteralPath $ContextTarget -Raw
+        $existing = Read-Utf8File -Path $ContextTarget
         $pattern = '(?s)(?:\r?\n)*<!-- shadowfrog:agent-context -->.*?<!-- /shadowfrog:agent-context -->(?:\r?\n)*'
         $cleaned = [regex]::Replace($existing, $pattern, "`n").Trim()
     }
