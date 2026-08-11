@@ -10,13 +10,34 @@ from pathlib import Path
 
 import pytest
 
+from tests._shell import BASH, HAVE_BASH, shell_path
+
+# POSIX-shell integration tests: these shell out to a POSIX `bash`. On Windows
+# that is Git Bash (resolved via BASH — never the System32 WSL launcher stub).
+# Skip only when no POSIX shell is available at all.
+pytestmark = pytest.mark.skipif(
+    not HAVE_BASH,
+    reason="no POSIX bash (Git Bash) available for shell integration tests",
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.sh"
+
+# dream-gc.sh sweeps orphan worktrees using POSIX absolute-path/realpath
+# semantics (it detects an orphan gitdir via the `/*` glob and resolves paths
+# with `realpath`). On the Windows CI runner the repo and the temp worktree
+# base live on different drives (D: vs C:), so the cross-drive sweep is a
+# no-op and the orphan survives. Dream-mode Windows support is out of scope;
+# skip only the two tests that assert an actual sweep occurred.
+_skip_win_gc_sweep = pytest.mark.skipif(
+    os.name == "nt",
+    reason="dream-gc worktree sweep relies on POSIX path/realpath semantics",
+)
 
 
 def _base_env(cwd: Path, extras: dict | None = None) -> dict:
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/local/bin"),
+        "PATH": shell_path(),
         "HOME": str(cwd),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -48,7 +69,7 @@ def run_dream_setup(
     """Run dream-setup.sh with given args."""
     env = _base_env(cwd, env_extra)
     return subprocess.run(
-        ["bash", str(DREAM_SETUP), *args],
+        [BASH, str(DREAM_SETUP), *args],
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -107,7 +128,9 @@ class TestDreamSetupHappyPath:
             ["git", "worktree", "list"], cwd=repo,
             capture_output=True, text=True, env=env,
         )
-        assert str(wt_dir) in wt_list.stdout
+        # `git worktree list` always prints POSIX-style separators; normalize
+        # so the comparison holds on Windows too.
+        assert wt_dir.as_posix() in wt_list.stdout.replace("\\", "/")
 
     def test_worktree_has_same_head_as_base(self, tmp_path):
         repo = tmp_path / "repo"
@@ -389,6 +412,7 @@ class TestDreamSetupAutoGC:
         os.utime(d, (ancient, ancient))
         return d
 
+    @_skip_win_gc_sweep
     def test_auto_gc_runs_when_no_tombstone(self, tmp_path):
         """First invocation sweeps orphans (no tombstone yet)."""
         repo = tmp_path / "repo"
@@ -528,6 +552,7 @@ class TestDreamSetupAutoGC:
                 f"Full stdout:\n{result.stdout}"
             )
 
+    @_skip_win_gc_sweep
     def test_auto_gc_sweeps_other_namespace_orphans_too(self, tmp_path):
         """The auto-trigger sweeps the whole base, not just its own ns.
 

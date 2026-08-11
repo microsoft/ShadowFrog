@@ -162,7 +162,7 @@ class TestUnderBase:
         with pytest.raises(UnsafePath, match="strictly under base"):
             safe_worktree_path(str(other), str(base))
 
-    def test_rejects_symlinked_leaf_escaping_base(self, tmp_path):
+    def test_rejects_symlinked_leaf_escaping_base(self, tmp_path, make_symlink):
         # base/ns/dream-evil → tmp_path/escape-target (outside base)
         base = tmp_path / "b"
         ns = base / "ns"
@@ -170,17 +170,25 @@ class TestUnderBase:
         escape = tmp_path / "escape-target"
         escape.mkdir()
         link = ns / "dream-evil"
-        link.symlink_to(escape)
+        make_symlink(link, escape)
         with pytest.raises(UnsafePath, match="strictly under base"):
             safe_worktree_path(str(link), str(base))
 
-    def test_rejects_symlinked_parent_escaping_base(self, tmp_path):
+    def test_rejects_symlinked_parent_escaping_base(
+        self, tmp_path, make_symlink
+    ):
         # base/escape-ns is a symlink to /etc. base/escape-ns/dream-x must
         # be refused even though the LITERAL input looks valid.
         base = tmp_path / "b"
         base.mkdir()
-        (base / "escape-ns").symlink_to("/etc")
-        with pytest.raises(UnsafePath, match="strictly under base"):
+        make_symlink(base / "escape-ns", "/etc")
+        # On a multi-drive Windows runner (repo on D:, tmp on C:) the escaped
+        # target lands on a different mount, so os.path.relpath raises and the
+        # gate refuses with "not relatable to base" instead of the same-mount
+        # "strictly under base" message. Both mean the escape was refused.
+        with pytest.raises(
+            UnsafePath, match="strictly under base|not relatable to base"
+        ):
             safe_worktree_path(str(base / "escape-ns" / "dream-x"), str(base))
 
 
@@ -268,7 +276,18 @@ class TestCLI:
         assert r.returncode == 2
 
     def test_exit_1_when_unsafe(self):
-        r = self._run("/tmp/proj/dream-foo", "/tmp")
+        # "/tmp" is a sensitive base only on POSIX. On Windows it is neither a
+        # forbidden base nor a filesystem root (and Python <3.13 even treats
+        # "/tmp" as absolute), so the gate would classify it as a valid but
+        # missing worktree (exit 2). Use a genuinely-unsafe base per platform:
+        # a filesystem root is refused everywhere.
+        if os.name == "nt":
+            drive = os.path.splitdrive(os.getcwd())[0] or "C:"
+            base = drive + os.sep            # e.g. "C:\\"
+            path = os.path.join(base, "proj", "dream-foo")
+        else:
+            base, path = "/tmp", "/tmp/proj/dream-foo"
+        r = self._run(path, base)
         assert r.returncode == 1
         assert "ERROR" in r.stderr
 
