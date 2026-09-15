@@ -320,7 +320,7 @@ the repo.
 > git: experiment branches carry `.shadow/_dreams/` reports, manifests, and
 > diffs, then reconciliation commits the accumulated `.shadow/` updates back
 > to the default branch. If you chose "local only" (gitignored `.shadow/`)
-> during init, dream is disabled. `dream-setup.sh` will tell you. The other
+> during init, dream is disabled. `dream-setup.py` will tell you. The other
 > skills (update, meditate, viewer) work either way.
 
 #### Remote requirements

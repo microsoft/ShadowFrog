@@ -10,6 +10,7 @@ auto-GC tests that assert an orphan is actually *swept* still need the bash
 every other test runs on all OSes.
 """
 import json
+import importlib.util
 import os
 import subprocess
 import sys
@@ -68,6 +69,14 @@ def run_dream_setup(
         [sys.executable, str(DREAM_SETUP), *args],
         capture_output=True, text=True, cwd=cwd, env=env, encoding="utf-8",
     )
+
+
+def _load_dream_setup_module():
+    spec = importlib.util.spec_from_file_location("dream_setup", DREAM_SETUP)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _plant_orphan(base: Path, ns: str, name: str = "dream-orphan") -> Path:
@@ -155,6 +164,24 @@ class TestDreamSetupHappyPath:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
         assert data["base_commit"] == main_head
+
+    def test_repo_root_subdir_is_canonicalized_for_isolation(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        subdir = repo / "subdir"
+        subdir.mkdir()
+        worktree_base = repo / ".dream-worktrees"
+
+        result = run_dream_setup(
+            ["--slug", "t02-subdir", "--repo-root", str(subdir),
+             "--dry-run", "--print-json"],
+            cwd=subdir,
+            env_extra={"DREAM_WORKTREE_BASE": str(worktree_base)},
+        )
+
+        assert result.returncode != 0
+        assert "Worktree would be inside project" in result.stderr
 
 
 @pytest.mark.slow
@@ -273,6 +300,23 @@ class TestDreamSetupNamespace:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
         assert data["dream_ns"] == "env-ns-test"
+
+    def test_task_info_namespace_must_be_string(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        (repo / "TASK_INFO.json").write_text(
+            '{"dream_namespace": 123}\n', encoding="utf-8",
+        )
+
+        result = run_dream_setup(
+            ["--slug", "t08-taskns", "--repo-root", str(repo),
+             "--dry-run", "--print-json"],
+            cwd=repo,
+        )
+
+        assert result.returncode != 0
+        assert "dream_namespace must be a string" in result.stderr
 
 
 @pytest.mark.slow
@@ -500,6 +544,25 @@ class TestDreamSetupAutoGCThrottle:
         # onto stdout would break json.loads.
         data = json.loads(result.stdout)
         assert data["slug"] == "t05-stdout"
+
+    def test_auto_gc_launch_failure_does_not_touch_tombstone(self, tmp_path, monkeypatch):
+        dream_setup = _load_dream_setup_module()
+        script_dir = tmp_path / "skill"
+        script_dir.mkdir()
+        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        worktree_base = tmp_path / "worktrees" / "repo"
+        worktree_base.mkdir(parents=True)
+        tombstone = worktree_base / ".last-gc"
+
+        def fail_to_launch(*args, **kwargs):
+            raise FileNotFoundError("bash")
+
+        monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
+        monkeypatch.setattr(dream_setup.subprocess, "run", fail_to_launch)
+
+        dream_setup._maybe_auto_gc(str(tmp_path), str(worktree_base))
+
+        assert not tombstone.exists()
 
 
 @pytest.mark.slow

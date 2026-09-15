@@ -256,7 +256,7 @@ Before they decide, make the trade-off explicit:
 - **`shadow-frog-dream` will NOT work.** Dreams move `.shadow/` through git
   (commit → push → reconcile from the remote); a gitignored `.shadow/` is
   silently skipped by `git add`, so discoveries never reach the remote and
-  are lost. `dream-setup.sh` detects this and refuses to start with a clear
+  are lost. `dream-setup.py` detects this and refuses to start with a clear
   error rather than failing silently.
 
 - If gitignored: add `.shadow/` to `.gitignore`.

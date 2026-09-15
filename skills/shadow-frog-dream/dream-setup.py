@@ -44,7 +44,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-# Same regex `_worktree_safety.py` validates ns/slug against — keep in lockstep.
+# Setup is stricter than the cleanup safety gate: it rejects leading ".".
 SAFE_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 SAFE_INT_RE = re.compile(r"^[0-9]+$")
 
@@ -61,6 +61,24 @@ def _git(args, cwd=None):
         ["git", *args], cwd=cwd,
         capture_output=True, text=True, encoding="utf-8",
     )
+
+
+def _touch(path):
+    try:
+        with open(path, "a", encoding="utf-8"):
+            pass
+        os.utime(path, None)
+    except OSError:
+        pass
+
+
+def _resolve_repo_root(path):
+    candidate = os.path.abspath(path) if path else None
+    r = _git(["rev-parse", "--show-toplevel"], cwd=candidate)
+    if r.returncode != 0:
+        _err("ERROR: Not in a git repository")
+        sys.exit(1)
+    return os.path.abspath(r.stdout.strip())
 
 
 def _import_safety():
@@ -173,20 +191,12 @@ def _maybe_auto_gc(repo_root, worktree_base):
     if not should_run:
         return
 
-    # Touch BEFORE running so a parallel setup for the same ns sees a fresh
-    # tombstone and skips. Worst case is one extra sweep, never a missed one.
-    try:
-        with open(tombstone, "a", encoding="utf-8"):
-            pass
-        os.utime(tombstone, None)
-    except OSError:
-        pass
-
     try:
         r = subprocess.run(
             gc_cmd, cwd=repo_root,
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
+        _touch(tombstone)
         if r.stdout:
             sys.stderr.write(r.stdout)
         if r.stderr:
@@ -241,13 +251,9 @@ def main():
 
     # --- Resolve repo root ---
     if opts["repo_root"]:
-        repo_root = os.path.abspath(opts["repo_root"])
+        repo_root = _resolve_repo_root(opts["repo_root"])
     else:
-        r = _git(["rev-parse", "--show-toplevel"])
-        if r.returncode != 0:
-            _err("ERROR: Not in a git repository")
-            sys.exit(1)
-        repo_root = os.path.abspath(r.stdout.strip())
+        repo_root = _resolve_repo_root("")
     os.chdir(repo_root)
 
     # --- Guard: .shadow/ must be tracked by git (not gitignored) ---
@@ -295,7 +301,12 @@ def main():
     elif os.path.isfile("TASK_INFO.json"):
         try:
             with open("TASK_INFO.json", encoding="utf-8") as f:
-                dream_ns = json.load(f).get("dream_namespace", "") or ""
+                task_ns = json.load(f).get("dream_namespace", "")
+                if task_ns:
+                    if not isinstance(task_ns, str):
+                        _err("ERROR: TASK_INFO.json dream_namespace must be a string")
+                        sys.exit(1)
+                    dream_ns = task_ns
         except (OSError, ValueError):
             dream_ns = ""
     elif os.path.isfile(".env"):
@@ -319,9 +330,13 @@ def main():
     worktree_base = os.path.join(gate_base, dream_ns)
     worktree_dir = os.path.join(worktree_base, f"dream-{slug}")
 
-    rr = os.path.abspath(repo_root)
-    wd = os.path.abspath(worktree_dir)
-    if wd == rr or wd.startswith(rr + os.sep):
+    rr = os.path.normcase(os.path.realpath(repo_root))
+    wd = os.path.normcase(os.path.realpath(worktree_dir))
+    try:
+        inside_repo = os.path.commonpath([rr, wd]) == rr
+    except ValueError:
+        inside_repo = False
+    if inside_repo:
         _err(f"ERROR: Worktree would be inside project: {worktree_dir}")
         _err("MUST use external path (default: <tempdir>/shadowfrog-dreams/)")
         sys.exit(1)

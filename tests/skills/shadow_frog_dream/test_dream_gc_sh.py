@@ -182,7 +182,7 @@ class TestSweep:
 
     def test_min_age_skips_fresh_orphan(self, tmp_path):
         """A fresh orphan (mtime = now) gets skipped — protects races
-        with `dream-setup.sh` that just created the dir but hasn't
+        with `dream-setup.py` that just created the dir but hasn't
         finished registering the worktree yet."""
         repo = _make_repo(tmp_path / "repo")
         base = tmp_path / "wt-base"

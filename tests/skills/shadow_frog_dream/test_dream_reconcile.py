@@ -3293,7 +3293,7 @@ def test_cleanup_branches_worktree_gc_skips_unparseable_dream_id(
 # ===========================================================================
 # Cross-deletion guard for slug-collision (S2 from 5-model review panel)
 # ===========================================================================
-# Worktree paths are slug-only (see dream-setup.sh:165), but dream_ids
+# Worktree paths are slug-only (see dream-setup.py), but dream_ids
 # include a timestamp. So two dreams with the same slug at different
 # times share a worktree path. If dream A is reconciled AFTER dream B has
 # reclaimed the shared path, A's GC must NOT delete B's live worktree.
@@ -3384,7 +3384,7 @@ def test_cleanup_branches_does_not_clobber_concurrent_slug_collision(
     _git("commit", "-q", "-m", "reconcile A", cwd=tmp_git_repo, env=env)
     _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
 
-    # Dream B claims the shared path. (In production, dream-setup.sh's
+    # Dream B claims the shared path. (In production, dream-setup.py's
     # idempotent pre-clean would have already wiped any stale A worktree.)
     shared_path = base / "proj" / "dream-same"
     shared_path.parent.mkdir(parents=True)

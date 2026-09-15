@@ -38,22 +38,24 @@ the dream branch, pushed to the remote, then read back by the reconciler via
 "local only" option in `shadow-frog-init`), `git add -A` silently skips those
 files, nothing reaches the remote, and the reconciler finds no manifest —
 **every discovery is lost without warning**. `dream-setup.py` runs
-`git check-ignore .shadow` up front and refuses to start if it's ignored.
+`git check-ignore` on a new `.shadow/_dreams/` child path up front and refuses
+to start if it's ignored.
 Use `shadow-frog-update` instead for local-only shadows.
 
 ### Path Isolation
 
 ```
-WORKTREE_BASE = /tmp/shadowfrog-dreams/<DREAM_NS>/
+WORKTREE_BASE = <system-temp>/shadowfrog-dreams/<DREAM_NS>/
 WORKTREE_DIR  = $WORKTREE_BASE/dream-<SLUG>
 ```
 
-- Worktrees are ALWAYS in `/tmp/shadowfrog-dreams/<DREAM_NS>/`, NEVER in
-  the project directory. This prevents conflicts between parallel agents
-  and keeps the main repo clean.
+- Worktrees are ALWAYS in the system temp directory under
+  `shadowfrog-dreams/<DREAM_NS>/`, NEVER in the project directory. This
+  prevents conflicts between parallel agents and keeps the main repo clean.
 - `DREAM_NS` (namespace) isolates branches per task/instance. Resolved
   from: `DREAM_NAMESPACE` env → `TASK_INFO.json` → `.env` → repo basename.
-- Override only with `DREAM_WORKTREE_BASE` env var if `/tmp` is too small.
+- Override only with `DREAM_WORKTREE_BASE` env var if the system temp volume is
+  too small.
 - `dream-setup.py` computes and enforces all paths. Use it.
 
 ### Branch Naming
@@ -153,26 +155,52 @@ done
 **Usage patterns:**
 
 ```bash
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
+[ -n "$PYTHON_BIN" ] || { echo "ERROR: python3/python not found"; exit 1; }
+
 # Setup: creates the worktree and prints its context as JSON on stdout.
-# Run it, check the exit code, then parse the JSON object it prints.
-SETUP_JSON="$("$SKILL_DIR/dream-setup.py" --slug t01-my-experiment)" || exit 1
-# SETUP_JSON keys: repo_root, default_branch, dream_ns, dream_id, branch_name,
-#   parent_branch, worktree_dir, worktree_base, base_commit, run_prefix, slug.
-# The steps below use values parsed from that JSON (e.g. $DREAM_ID = .dream_id).
+SETUP_JSON="$("$PYTHON_BIN" "$SKILL_DIR/dream-setup.py" --slug t01-my-experiment)" || exit 1
+
+# Parse setup JSON into the shell variables used by the steps below.
+while IFS=$'\t' read -r key value; do
+    case "$key" in
+        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
+            printf -v "$key" '%s' "$value"
+            export "$key"
+            ;;
+    esac
+done < <(printf '%s' "$SETUP_JSON" | "$PYTHON_BIN" -c '
+import json, sys
+data = json.load(sys.stdin)
+for env_key, json_key in (
+    ("REPO_ROOT", "repo_root"),
+    ("DEFAULT_BRANCH", "default_branch"),
+    ("DREAM_NS", "dream_ns"),
+    ("DREAM_ID", "dream_id"),
+    ("BRANCH_NAME", "branch_name"),
+    ("PARENT_BRANCH", "parent_branch"),
+    ("WORKTREE_DIR", "worktree_dir"),
+    ("WORKTREE_BASE", "worktree_base"),
+    ("BASE_COMMIT", "base_commit"),
+    ("RUN_PREFIX", "run_prefix"),
+    ("SLUG", "slug"),
+):
+    print(f"{env_key}\t{data[json_key]}")
+')
 
 # Validate: hard gate before push
-python3 "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
+"$PYTHON_BIN" "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
 
 # Reconcile: merge all dream branches into main
-python3 "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT"
+"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT"
 # After `git push` succeeds, optionally clean up reconciled branches.
 # Cleanup REFUSES to run if `.shadow/` has uncommitted changes, or unless
 # HEAD is already on origin/<default-branch> — so the canonical flow is:
 #   reconcile → git add .shadow/ && git commit && git push → re-run --cleanup-branches
-python3 "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" --cleanup-branches
+"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" --cleanup-branches
 
 # Coverage: show which files still need exploration
-python3 "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
+"$PYTHON_BIN" "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
 
 # All scripts support --help.
 ```
@@ -497,21 +525,51 @@ Use `dream-setup.py` to create worktrees (handles all path computation,
 namespace resolution, worktree creation, and validation):
 
 ```bash
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
+[ -n "$PYTHON_BIN" ] || { echo "ERROR: python3/python not found"; exit 1; }
+
 # Find the setup script
 SETUP_SCRIPT=""
 for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
     [ -f "$DIR/dream-setup.py" ] && SETUP_SCRIPT="$DIR/dream-setup.py" && break
 done
 
-# Fresh experiment from main (prints JSON — parse it, don't eval):
-SETUP_JSON="$(python "$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
+# Fresh experiment from main:
+SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
 
 # Compounding from prior dream:
-SETUP_JSON="$(python "$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
+SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
+
+# Parse setup JSON into shell variables used below.
+while IFS=$'\t' read -r key value; do
+    case "$key" in
+        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
+            printf -v "$key" '%s' "$value"
+            export "$key"
+            ;;
+    esac
+done < <(printf '%s' "$SETUP_JSON" | "$PYTHON_BIN" -c '
+import json, sys
+data = json.load(sys.stdin)
+for env_key, json_key in (
+    ("REPO_ROOT", "repo_root"),
+    ("DEFAULT_BRANCH", "default_branch"),
+    ("DREAM_NS", "dream_ns"),
+    ("DREAM_ID", "dream_id"),
+    ("BRANCH_NAME", "branch_name"),
+    ("PARENT_BRANCH", "parent_branch"),
+    ("WORKTREE_DIR", "worktree_dir"),
+    ("WORKTREE_BASE", "worktree_base"),
+    ("BASE_COMMIT", "base_commit"),
+    ("RUN_PREFIX", "run_prefix"),
+    ("SLUG", "slug"),
+):
+    print(f"{env_key}\t{data[json_key]}")
+')
 ```
 
 Capture the JSON into `SETUP_JSON` and check the exit code (`|| exit 1`),
-then parse it for the values below.
+then parse it into the exported variables above before using later steps.
 
 This prints a JSON object with keys: `repo_root`, `default_branch`,
 `dream_ns`, `dream_id`, `branch_name`, `parent_branch`, `worktree_dir`,
@@ -519,7 +577,7 @@ This prints a JSON object with keys: `repo_root`, `default_branch`,
 
 **If `dream-setup.py` fails or is not found:** Apply the Script Failure
 Recovery rule (read the script source, adapt its logic). Common causes:
-missing git remote, branch already exists, `/tmp` permissions.
+missing git remote, branch already exists, or temp-directory permissions.
 
 **Note:** Shell variables don't persist across tool calls. Either run
 multi-step setup in a single shell, or re-derive values. From inside a
@@ -842,7 +900,7 @@ followed by `git worktree prune`, but ALSO falls back to a safety-gated
 `rm -rf` if `git worktree remove` silently fails — the failure mode that
 leaked tens of dream worktrees per AFK session under the previous inline
 snippet (see bug-worktree-leak.md). The rm fallback ONLY fires for paths
-that match `${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
+that match `${DREAM_WORKTREE_BASE:-<system-temp>/shadowfrog-dreams}/<ns>/dream-<slug>`
 exactly; any other path is refused.
 
 Remove as you go. If push failed, keep the worktree.
@@ -1063,7 +1121,7 @@ set), apply the rules in Phase 6 → Post-Reconciliation Branch Cleanup
 ### Worktree Pruning
 
 Dream worktrees live OUTSIDE the repo at
-`${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>/`. There
+`${DREAM_WORKTREE_BASE:-<system-temp>/shadowfrog-dreams}/<ns>/dream-<slug>/`. There
 are four places they get cleaned up:
 
 1. **`dream-cleanup.sh`** — called by the agent after each `git push` (see

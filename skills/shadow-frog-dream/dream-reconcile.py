@@ -1464,7 +1464,7 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
     return deleted, kept
 
 
-# Compiled here so the error message is consistent with `dream-setup.sh`.
+# Compiled here so the error message is consistent with `dream-setup.py`.
 # DREAM_ID format: YYYYMMDD-HHMMSSZ-<slug>. The leading timestamp is
 # fixed-width (8 digits + '-' + 6 digits + 'Z' + '-' = 17 chars), but we
 # anchor on the regex to be robust against drift.
@@ -1545,7 +1545,7 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
     NEVER `rm -rf` a path outside `$DREAM_WORKTREE_BASE/<ns>/dream-<slug>`.
 
     Cross-deletion guard: worktree paths are keyed on slug only (see
-    `dream-setup.sh`: `WORKTREE_DIR=<base>/<ns>/dream-<slug>`), but
+    `dream-setup.py`: `WORKTREE_DIR=<base>/<ns>/dream-<slug>`), but
     `dream_id` includes a timestamp. So two dreams that re-use the same
     slug at different times share a worktree path. If the path we're
     about to GC is currently registered to a DIFFERENT branch — i.e. a

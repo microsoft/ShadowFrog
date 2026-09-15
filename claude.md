@@ -16,7 +16,7 @@ ShadowFrog/
     shadow-frog-update/SKILL.md  Incremental update (after changes)
     shadow-frog-dream/           Autonomous exploration + experimentation (AFK mode)
       SKILL.md                   Dream instructions + pipeline phases
-      dream-setup.sh             Worktree + branch creation
+      dream-setup.py             Worktree + branch creation
       dream-validate.py          Pre-push artifact validation
       dream-reconcile.py         Merge dream branches into main's shadow
       dream-coverage.py          Exploration coverage map
@@ -239,7 +239,7 @@ Two agent platforms, two hook-config shapes, **one set of shared scripts**:
 - **Fail-open — the hooks are advisory and MUST always exit 0.** Copilot CLI
   ≥ 1.0.57 denies the tool call when a `preToolUse` command hook exits
   non-zero. The scripts therefore use a **multi-layer defense** (interactive
-  scripts like `install.sh` and `dream-setup.sh` are the opposite — they
+  scripts like `install.sh` and `dream-setup.py` are the opposite — they
   fail-fast):
 
   1. **No `set -e`/`-u`/`pipefail`** — failing sub-steps don't abort the script.
