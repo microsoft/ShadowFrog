@@ -2233,6 +2233,47 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
 
 
 @pytest.mark.slow
+def test_cleanup_branches_keeps_branch_when_local_delete_fails(
+    dream_reconcile, tmp_git_repo, monkeypatch, capsys
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260420-050050Z-local-failure"
+    branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
+                               _default_manifest(dream_id))
+    _seed_dream_artifacts(tmp_git_repo, dream_id)
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    original_run = dream_reconcile.subprocess.run
+
+    def reject_local_delete(args, **kwargs):
+        if args == ["git", "branch", "-D", branch]:
+            return subprocess.CompletedProcess(args, 1, "", "branch is in use")
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(dream_reconcile.subprocess, "run", reject_local_delete)
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo),
+        [(branch, dream_id, _default_manifest(dream_id))],
+        "proj",
+        dry_run=False,
+    )
+
+    assert deleted == 0
+    assert kept == 1
+    assert f"Failed to delete local {branch}: branch is in use" in capsys.readouterr().out
+
+
+@pytest.mark.slow
 def test_cleanup_branches_refuses_when_head_not_pushed(
     dream_reconcile, tmp_git_repo
 ):

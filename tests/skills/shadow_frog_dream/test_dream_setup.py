@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._shell import BASH, HAVE_BASH, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.py"
@@ -88,6 +89,58 @@ def _plant_orphan(base: Path, ns: str, name: str = "dream-orphan") -> Path:
     ancient = 946684800
     os.utime(d, (ancient, ancient))
     return d
+
+
+@pytest.mark.skipif(not HAVE_BASH, reason="requires a POSIX shell")
+def test_documented_json_bridge_preserves_tabs_and_newlines(tmp_path):
+    """The NUL-delimited bridge must not corrupt valid POSIX path characters."""
+    worktree_dir = (tmp_path / "tab\tand\nnewline").as_posix()
+    setup_json = json.dumps({
+        "repo_root": "/repo",
+        "default_branch": "main",
+        "dream_ns": "namespace",
+        "dream_id": "20260915-000000Z-bridge",
+        "branch_name": "dream/namespace/20260915-000000Z-bridge",
+        "parent_branch": "main",
+        "worktree_dir": worktree_dir,
+        "worktree_root": "/tmp/shadowfrog-dreams",
+        "worktree_base": "/tmp/shadowfrog-dreams/namespace",
+        "base_commit": "abc123",
+        "run_prefix": "",
+        "slug": "bridge",
+    })
+    bridge = r'''
+while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    case "$key" in
+        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_ROOT|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
+            printf -v "$key" '%s' "$value"
+            export "$key"
+            ;;
+    esac
+done < <(python3 -c '
+import json, sys
+data = json.loads(sys.argv[1])
+out = sys.stdout.buffer
+for env_key, json_key in (
+    ("REPO_ROOT", "repo_root"), ("DEFAULT_BRANCH", "default_branch"),
+    ("DREAM_NS", "dream_ns"), ("DREAM_ID", "dream_id"),
+    ("BRANCH_NAME", "branch_name"), ("PARENT_BRANCH", "parent_branch"),
+    ("WORKTREE_DIR", "worktree_dir"), ("WORKTREE_ROOT", "worktree_root"),
+    ("WORKTREE_BASE", "worktree_base"), ("BASE_COMMIT", "base_commit"),
+    ("RUN_PREFIX", "run_prefix"), ("SLUG", "slug"),
+):
+    out.write(env_key.encode() + b"\0" + data[json_key].encode() + b"\0")
+' "$1")
+printf '%s' "$WORKTREE_DIR"
+'''
+    result = subprocess.run(
+        [BASH, "-c", bridge, "--", setup_json],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**_base_env(tmp_path), "PATH": shell_path()},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == worktree_dir
 
 
 @pytest.mark.slow
@@ -164,6 +217,30 @@ class TestDreamSetupHappyPath:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
         assert data["base_commit"] == main_head
+
+    def test_uses_system_temp_root_without_override(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        system_temp = tmp_path / "system-temp"
+        system_temp.mkdir()
+
+        result = run_dream_setup(
+            ["--slug", "t02-default-root", "--repo-root", str(repo), "--print-json"],
+            cwd=repo,
+            env_extra={
+                "DREAM_GC_AUTO": "0",
+                "TEMP": str(system_temp),
+                "TMP": str(system_temp),
+            },
+        )
+
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        data = json.loads(result.stdout)
+        expected_root = system_temp / "shadowfrog-dreams"
+        assert Path(data["worktree_root"]) == expected_root
+        assert Path(data["worktree_base"]) == expected_root / repo.name
+        assert Path(data["worktree_dir"]) == expected_root / repo.name / "dream-t02-default-root"
 
     def test_repo_root_subdir_is_canonicalized_for_isolation(self, tmp_path):
         repo = tmp_path / "repo"
@@ -317,6 +394,22 @@ class TestDreamSetupNamespace:
 
         assert result.returncode != 0
         assert "dream_namespace must be a string" in result.stderr
+
+    @pytest.mark.parametrize("task_info", ["[]", '"not an object"'])
+    def test_task_info_must_be_object(self, tmp_path, task_info):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        (repo / "TASK_INFO.json").write_text(task_info, encoding="utf-8")
+
+        result = run_dream_setup(
+            ["--slug", "t08-taskinfo-object", "--repo-root", str(repo),
+             "--dry-run", "--print-json"],
+            cwd=repo,
+        )
+
+        assert result.returncode != 0
+        assert "TASK_INFO.json must contain a JSON object" in result.stderr
 
 
 @pytest.mark.slow
@@ -564,6 +657,30 @@ class TestDreamSetupAutoGCThrottle:
 
         assert not tombstone.exists()
 
+    def test_auto_gc_nonzero_result_does_not_touch_tombstone(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        dream_setup = _load_dream_setup_module()
+        script_dir = tmp_path / "skill"
+        script_dir.mkdir()
+        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        worktree_base = tmp_path / "worktrees" / "repo"
+        worktree_base.mkdir(parents=True)
+        tombstone = worktree_base / ".last-gc"
+
+        monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
+        monkeypatch.setattr(
+            dream_setup.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1),
+        )
+
+        dream_setup._maybe_auto_gc(
+            str(tmp_path), str(worktree_base), str(tmp_path / "worktrees")
+        )
+
+        assert not tombstone.exists()
+        assert "auto-GC exited with code 1" in capsys.readouterr().err
 
 @pytest.mark.slow
 @pytest.mark.integration
