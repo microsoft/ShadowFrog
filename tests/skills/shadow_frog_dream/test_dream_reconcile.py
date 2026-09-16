@@ -3476,10 +3476,12 @@ class TestRegisteredWorktreeBranch:
         wt = tmp_path / "wt"
         _git("worktree", "add", "-q", "-b", "feature-x", str(wt),
              cwd=tmp_git_repo, env=env)
-        branch = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(wt)
         )
-        assert branch == "feature-x"
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "feature-x"
+        )
 
     @pytest.mark.slow
     def test_returns_none_for_unregistered_path(
@@ -3487,10 +3489,10 @@ class TestRegisteredWorktreeBranch:
     ):
         _seed_repo(tmp_git_repo)
         # A path that's not registered as a worktree at all.
-        branch = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(tmp_path / "nope")
         )
-        assert branch is None
+        assert registration == dream_reconcile.WorktreeRegistration("unregistered")
 
     @pytest.mark.slow
     def test_matches_through_symlink(
@@ -3504,10 +3506,100 @@ class TestRegisteredWorktreeBranch:
         _git("worktree", "add", "-q", "-b", "feature-y", str(real_wt),
              cwd=tmp_git_repo, env=env)
         make_symlink(link_wt, real_wt)
-        branch_via_link = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(link_wt)
         )
-        assert branch_via_link == "feature-y"
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "feature-y"
+        )
+
+    @pytest.mark.slow
+    def test_returns_detached_for_detached_worktree(
+        self, dream_reconcile, tmp_git_repo, tmp_path
+    ):
+        env = _seed_repo(tmp_git_repo)
+        wt = tmp_path / "detached-wt"
+        _git("worktree", "add", "-q", "-b", "feature-detached", str(wt),
+             cwd=tmp_git_repo, env=env)
+        _git("checkout", "-q", "--detach", cwd=wt, env=env)
+
+        registration = dream_reconcile._registered_worktree_branch(
+            str(tmp_git_repo), str(wt)
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration("detached")
+
+    @pytest.mark.slow
+    def test_gc_preserves_detached_worktree(self, dream_reconcile, tmp_git_repo,
+                                            tmp_path, monkeypatch, capsys):
+        """Review 02: detached ownership must fail closed, not force-remove."""
+        env = _seed_repo(tmp_git_repo)
+        base = tmp_path / "wt-base"
+        worktree = base / "proj" / "dream-same"
+        worktree.parent.mkdir(parents=True)
+        branch = "dream/proj/20260420-110000Z-same"
+        _git("worktree", "add", "-q", "-b", branch, str(worktree),
+             cwd=tmp_git_repo, env=env)
+        _git("checkout", "-q", "--detach", cwd=worktree, env=env)
+        marker = worktree / "uncommitted-work.txt"
+        marker.write_text("preserve me\n", encoding="utf-8")
+        monkeypatch.setenv("DREAM_WORKTREE_BASE", str(base))
+
+        dream_reconcile._gc_worktree_after_merge(
+            str(tmp_git_repo),
+            "proj",
+            "20260420-100000Z-same",
+            "dream/proj/20260420-100000Z-same",
+        )
+
+        assert marker.read_text(encoding="utf-8") == "preserve me\n"
+        assert "detached ownership" in capsys.readouterr().out
+
+    def test_returns_indeterminate_when_git_query_fails(
+        self, dream_reconcile, tmp_git_repo, tmp_path, monkeypatch
+    ):
+        _seed_repo(tmp_git_repo)
+        original_run = dream_reconcile.subprocess.run
+
+        def failed_query(args, **kwargs):
+            if args == ["git", "worktree", "list", "--porcelain"]:
+                return subprocess.CompletedProcess(args, 1, "", "git failed")
+            return original_run(args, **kwargs)
+
+        monkeypatch.setattr(dream_reconcile.subprocess, "run", failed_query)
+        registration = dream_reconcile._registered_worktree_branch(
+            str(tmp_git_repo), str(tmp_path / "candidate")
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration("indeterminate")
+
+    def test_matches_case_insensitively_when_platform_requires_it(
+        self, dream_reconcile, monkeypatch
+    ):
+        result = subprocess.CompletedProcess(
+            ["git", "worktree", "list", "--porcelain"],
+            0,
+            "worktree C:\\Dreams\\Dream-Same\n"
+            "HEAD deadbeef\n"
+            "branch refs/heads/dream/proj/20260420-110000Z-same\n",
+            "",
+        )
+        monkeypatch.setattr(
+            dream_reconcile.subprocess, "run", lambda *args, **kwargs: result
+        )
+        monkeypatch.setattr(dream_reconcile.os.path, "abspath", lambda path: path)
+        monkeypatch.setattr(dream_reconcile.os.path, "realpath", lambda path: path)
+        monkeypatch.setattr(
+            dream_reconcile.os.path, "normcase", lambda path: path.lower()
+        )
+
+        registration = dream_reconcile._registered_worktree_branch(
+            "repo", "c:\\dreams\\dream-same"
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "dream/proj/20260420-110000Z-same"
+        )
 
 
 @pytest.mark.slow

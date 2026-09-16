@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1513,28 +1514,37 @@ def _registered_worktree_branch(repo_root, candidate_path):
         HEAD <sha>
         detached
 
-    Paths are compared after `realpath` so macOS `/tmp` ↔ `/private/tmp` and
-    other symlinked-base setups don't break the match.
+    Paths are compared after normalized realpath resolution so macOS
+    `/tmp` ↔ `/private/tmp` and Windows case-only differences do not break
+    the match. Detached and indeterminate results are intentionally distinct
+    from an unregistered path so deletion can fail closed.
     """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     try:
+        sys.path.insert(0, script_dir)
+        try:
+            from _worktree_paths import canonical_worktree_path
+        finally:
+            if sys.path and sys.path[0] == script_dir:
+                sys.path.pop(0)
         result = subprocess.run(
             ['git', 'worktree', 'list', '--porcelain'],
             capture_output=True, text=True, cwd=repo_root, timeout=10,
             encoding="utf-8",
         )
     except (OSError, subprocess.SubprocessError):
-        return None
+        return WorktreeRegistration("indeterminate")
     if result.returncode != 0:
-        return None
+        return WorktreeRegistration("indeterminate")
 
     try:
-        target = os.path.realpath(candidate_path)
+        target = canonical_worktree_path(candidate_path)
     except (OSError, ValueError):
-        return None
+        return WorktreeRegistration("indeterminate")
 
     def _matches(p):
         try:
-            return os.path.realpath(p) == target
+            return canonical_worktree_path(p) == target
         except (OSError, ValueError):
             return False
 
@@ -1544,15 +1554,19 @@ def _registered_worktree_branch(repo_root, candidate_path):
         if line.startswith('worktree '):
             # Flush previous entry if it matched.
             if cur_path is not None and _matches(cur_path):
-                return cur_branch
+                return WorktreeRegistration(
+                    "attached" if cur_branch else "detached", cur_branch
+                )
             cur_path = line[len('worktree '):]
             cur_branch = None
         elif line.startswith('branch '):
             ref = line[len('branch '):]
             cur_branch = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else ref
     if cur_path is not None and _matches(cur_path):
-        return cur_branch
-    return None
+        return WorktreeRegistration(
+            "attached" if cur_branch else "detached", cur_branch
+        )
+    return WorktreeRegistration("unregistered")
 
 
 def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None,
@@ -1614,10 +1628,18 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None,
         # the original behavior — still gated by the safety check above.
         if deleted_branch:
             registered = _registered_worktree_branch(repo_root, str(resolved))
-            if registered is not None and registered != deleted_branch:
+            if registered.state == "attached" and registered.branch == deleted_branch:
+                pass
+            elif registered.state == "unregistered":
+                pass
+            else:
+                if registered.state == "attached":
+                    detail = f"now belongs to {registered.branch}"
+                else:
+                    detail = f"has {registered.state} ownership"
                 print(
                     f"  ↳ Skipping worktree GC for {dream_id}: "
-                    f"path {resolved} now belongs to {registered}"
+                    f"path {resolved} {detail}"
                 )
                 return
 
@@ -1708,25 +1730,22 @@ def main():
         print("ERROR: Not in a git repository", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve namespace
-    dream_ns = namespace_override or os.environ.get('DREAM_NAMESPACE', '')
-    if not dream_ns:
-        task_info = os.path.join(repo_root, 'TASK_INFO.json')
-        if os.path.isfile(task_info):
-            try:
-                dream_ns = json.load(open(task_info, encoding="utf-8")).get('dream_namespace', '')
-            except (json.JSONDecodeError, OSError):
-                pass
-    if not dream_ns:
-        env_file = os.path.join(repo_root, '.env')
-        if os.path.isfile(env_file):
-            with open(env_file, encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith('DREAM_NAMESPACE='):
-                        dream_ns = line.split('=', 1)[1].strip()
-                        break
-    if not dream_ns:
-        dream_ns = os.path.basename(repo_root)
+    # Resolve namespace using the same precedence and parsing as setup.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        sys.path.insert(0, script_dir)
+        try:
+            from _dream_namespace import (
+                NamespaceConfigurationError,
+                resolve_dream_namespace,
+            )
+        finally:
+            if sys.path and sys.path[0] == script_dir:
+                sys.path.pop(0)
+        dream_ns = resolve_dream_namespace(repo_root, namespace_override)
+    except (ImportError, NamespaceConfigurationError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"=== Dream Reconciliation ===")
     print(f"Repo: {repo_root}")
@@ -1778,7 +1797,7 @@ def main():
         # the branches already in the index. This is the canonical post-push
         # flow: reconcile → push → re-run with --cleanup-branches.
         if cleanup:
-            indexed = _read_indexed_branches(repo_root)
+            indexed = _read_indexed_branches(repo_root, dream_ns)
             if not indexed:
                 print("  Nothing in _index.md to clean up either.")
                 sys.exit(0)
