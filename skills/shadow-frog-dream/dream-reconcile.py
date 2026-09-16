@@ -10,6 +10,7 @@ Options:
     --verify-only        Only run post-reconciliation verification (checks
                          all dreams already in _index.md, not just unreconciled)
     --namespace NS       Override DREAM_NAMESPACE
+    --worktree-base DIR  Override the dream worktree root used for cleanup
     --cleanup-branches   Delete reconciled branches after verification.
                          REFUSES to run unless the reconciliation commit is
                          already on origin/<default-branch>. Run AFTER push.
@@ -30,6 +31,7 @@ Exits 0 on success, 1 on any verification failure.
 """
 
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -1285,7 +1287,8 @@ def verify_reconciliation(repo_root, manifests):
 
 # --- Step 9: Cleanup branches ---
 
-def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
+def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False,
+                     worktree_root=None):
     """Delete reconciled dream branches (local and remote).
 
     Only deletes a branch if:
@@ -1424,6 +1427,12 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
             deleted += 1
             continue
 
+        # Remove the registered worktree before deleting its branch. Git
+        # refuses to delete a branch that remains checked out in a worktree.
+        _gc_worktree_after_merge(
+            repo_root, dream_ns, dream_id, branch, worktree_root,
+        )
+
         # Delete remote first (network op that can fail)
         result = subprocess.run(
             ['git', 'push', 'origin', '--delete', branch],
@@ -1443,21 +1452,15 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
         )
         if result.returncode == 0:
             print(f"  🗑  Deleted local: {branch}")
+        else:
+            print(f"  ⚠️  Failed to delete local {branch}: {result.stderr.strip()}")
+            kept += 1
+            continue
         # Also delete the remote-tracking ref
         subprocess.run(
             ['git', 'branch', '-dr', f'origin/{branch}'],
             capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
-
-        # Best-effort worktree GC — the directory at
-        # `${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
-        # is now orphaned (its branch is gone). Removing it here closes the
-        # leak documented in bug-worktree-leak.md.
-        #
-        # `branch` is the branch we just deleted; passing it lets the GC
-        # refuse to remove a path that another dream (sharing the same
-        # slug) has reclaimed for its own live worktree.
-        _gc_worktree_after_merge(repo_root, dream_ns, dream_id, branch)
 
         deleted += 1
 
@@ -1539,7 +1542,8 @@ def _registered_worktree_branch(repo_root, candidate_path):
     return None
 
 
-def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None):
+def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None,
+                             worktree_root=None):
     """Remove the dream worktree directory after its branch has been
     deleted. Safety-gated by `_worktree_safety.safe_worktree_path` — will
     NEVER `rm -rf` a path outside `$DREAM_WORKTREE_BASE/<ns>/dream-<slug>`.
@@ -1560,7 +1564,18 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
         slug = _slug_from_dream_id(dream_id)
         if not slug:
             return  # Can't derive worktree path — bail silently.
-        base = os.environ.get('DREAM_WORKTREE_BASE', '/tmp/shadowfrog-dreams')
+        paths_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "_worktree_paths.py"
+        )
+        paths_spec = importlib.util.spec_from_file_location(
+            "_worktree_paths", paths_path
+        )
+        if paths_spec is None or paths_spec.loader is None:
+            raise ImportError(f"cannot load worktree path helper: {paths_path}")
+        paths_module = importlib.util.module_from_spec(paths_spec)
+        paths_spec.loader.exec_module(paths_module)
+        resolve_worktree_root = paths_module.resolve_worktree_root
+        base = resolve_worktree_root(worktree_root)
         candidate = os.path.join(base, dream_ns, f'dream-{slug}')
 
         # Import lazily so this module remains importable for tests that
@@ -1636,6 +1651,7 @@ def main():
     verify_only = False
     cleanup = False
     namespace_override = None
+    worktree_base_override = None
 
     args = sys.argv[1:]
     i = 0
@@ -1655,6 +1671,12 @@ def main():
                 print("ERROR: --namespace requires a value", file=sys.stderr)
                 sys.exit(1)
             namespace_override = args[i]
+        elif args[i] == '--worktree-base':
+            i += 1
+            if i >= len(args):
+                print("ERROR: --worktree-base requires a value", file=sys.stderr)
+                sys.exit(1)
+            worktree_base_override = args[i]
         elif not args[i].startswith('-'):
             repo_root = args[i]
         else:
@@ -1765,7 +1787,8 @@ def main():
             print()
             print("Step 9: Cleaning up reconciled branches...")
             deleted, kept = cleanup_branches(
-                repo_root, cleanup_manifests, dream_ns, dry_run=dry_run
+                repo_root, cleanup_manifests, dream_ns, dry_run=dry_run,
+                worktree_root=worktree_base_override,
             )
             print(f"  Deleted: {deleted}, Kept: {kept}")
         sys.exit(0)
@@ -1849,7 +1872,8 @@ def main():
             print("  ⚠️  Run this AFTER 'git push' succeeds on main.")
             print("  Checking artifacts on main...")
         deleted, kept = cleanup_branches(
-            repo_root, manifests, dream_ns, dry_run=dry_run
+            repo_root, manifests, dream_ns, dry_run=dry_run,
+            worktree_root=worktree_base_override,
         )
         print(f"  Deleted: {deleted}, Kept: {kept}")
 

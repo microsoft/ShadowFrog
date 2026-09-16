@@ -7,7 +7,7 @@ Usage:
 
 Prints a JSON object to stdout with keys:
     repo_root, default_branch, dream_ns, dream_id, branch_name, parent_branch,
-    worktree_dir, worktree_base, base_commit, run_prefix, slug
+    worktree_dir, worktree_root, worktree_base, base_commit, run_prefix, slug
 
 Exits non-zero (message on stderr) on any failure — always check the exit code.
 
@@ -40,7 +40,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -88,6 +87,17 @@ def _import_safety():
     try:
         from _worktree_safety import safe_worktree_path, UnsafePath
         return safe_worktree_path, UnsafePath
+    finally:
+        if sys.path and sys.path[0] == SCRIPT_DIR:
+            sys.path.pop(0)
+
+
+def _import_paths():
+    """Lazily import the shared worktree-root resolver."""
+    sys.path.insert(0, SCRIPT_DIR)
+    try:
+        from _worktree_paths import resolve_worktree_root
+        return resolve_worktree_root
     finally:
         if sys.path and sys.path[0] == SCRIPT_DIR:
             sys.path.pop(0)
@@ -145,7 +155,7 @@ def _parse_args(argv):
     return opts
 
 
-def _maybe_auto_gc(repo_root, worktree_base):
+def _maybe_auto_gc(repo_root, worktree_base, worktree_root=None):
     """Periodic, throttled, best-effort orphan sweep. NEVER breaks setup.
 
     Prefers a `dream-gc.py` sibling if present, else falls back to the bash
@@ -192,15 +202,22 @@ def _maybe_auto_gc(repo_root, worktree_base):
         return
 
     try:
+        env = os.environ.copy()
+        if worktree_root:
+            env["DREAM_WORKTREE_BASE"] = worktree_root
         r = subprocess.run(
             gc_cmd, cwd=repo_root,
             capture_output=True, text=True, encoding="utf-8", timeout=120,
+            env=env,
         )
-        _touch(tombstone)
         if r.stdout:
             sys.stderr.write(r.stdout)
         if r.stderr:
             sys.stderr.write(r.stderr)
+        if r.returncode == 0:
+            _touch(tombstone)
+        else:
+            _err(f"WARN: auto-GC exited with code {r.returncode}; will retry later")
     except Exception:  # noqa: BLE001 — auto-GC must never break setup
         pass
 
@@ -301,12 +318,16 @@ def main():
     elif os.path.isfile("TASK_INFO.json"):
         try:
             with open("TASK_INFO.json", encoding="utf-8") as f:
-                task_ns = json.load(f).get("dream_namespace", "")
-                if task_ns:
-                    if not isinstance(task_ns, str):
-                        _err("ERROR: TASK_INFO.json dream_namespace must be a string")
-                        sys.exit(1)
-                    dream_ns = task_ns
+                task_info = json.load(f)
+            if not isinstance(task_info, dict):
+                _err("ERROR: TASK_INFO.json must contain a JSON object")
+                sys.exit(1)
+            task_ns = task_info.get("dream_namespace", "")
+            if task_ns:
+                if not isinstance(task_ns, str):
+                    _err("ERROR: TASK_INFO.json dream_namespace must be a string")
+                    sys.exit(1)
+                dream_ns = task_ns
         except (OSError, ValueError):
             dream_ns = ""
     elif os.path.isfile(".env"):
@@ -325,9 +346,9 @@ def main():
     branch_name = f"dream/{dream_ns}/{dream_id}"
 
     # --- Compute worktree path (ALWAYS external, NEVER in project) ---
-    gate_base = os.environ.get("DREAM_WORKTREE_BASE") or os.path.join(
-        tempfile.gettempdir(), "shadowfrog-dreams")
-    worktree_base = os.path.join(gate_base, dream_ns)
+    resolve_worktree_root = _import_paths()
+    worktree_root = resolve_worktree_root()
+    worktree_base = os.path.join(worktree_root, dream_ns)
     worktree_dir = os.path.join(worktree_base, f"dream-{slug}")
 
     rr = os.path.normcase(os.path.realpath(repo_root))
@@ -357,8 +378,8 @@ def main():
     base_commit = ""
     if not opts["dry_run"]:
         os.makedirs(worktree_base, exist_ok=True)
-        _maybe_auto_gc(repo_root, worktree_base)
-        _preclean_worktree(repo_root, worktree_dir, gate_base)
+        _maybe_auto_gc(repo_root, worktree_base, worktree_root)
+        _preclean_worktree(repo_root, worktree_dir, worktree_root)
 
         def _add():
             return _git(["worktree", "add", worktree_dir, "-b", branch_name,
@@ -394,6 +415,7 @@ def main():
         "branch_name": branch_name,
         "parent_branch": parent_branch,
         "worktree_dir": worktree_dir,
+        "worktree_root": worktree_root,
         "worktree_base": worktree_base,
         "base_commit": base_commit,
         "run_prefix": run_prefix,
