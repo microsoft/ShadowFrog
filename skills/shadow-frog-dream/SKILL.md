@@ -161,10 +161,12 @@ PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
 # Setup: creates the worktree and prints its context as JSON on stdout.
 SETUP_JSON="$("$PYTHON_BIN" "$SKILL_DIR/dream-setup.py" --slug t01-my-experiment)" || exit 1
 
-# Parse setup JSON into the shell variables used by the steps below.
-while IFS=$'\t' read -r key value; do
+# Consume setup JSON into the shell variables used by the steps below.
+# The NUL-delimited stream preserves every valid filesystem path byte without
+# evaluating JSON as shell code.
+while IFS= read -r -d '' key && IFS= read -r -d '' value; do
     case "$key" in
-        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
+        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_ROOT|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
             printf -v "$key" '%s' "$value"
             export "$key"
             ;;
@@ -172,6 +174,7 @@ while IFS=$'\t' read -r key value; do
 done < <(printf '%s' "$SETUP_JSON" | "$PYTHON_BIN" -c '
 import json, sys
 data = json.load(sys.stdin)
+out = sys.stdout.buffer
 for env_key, json_key in (
     ("REPO_ROOT", "repo_root"),
     ("DEFAULT_BRANCH", "default_branch"),
@@ -180,24 +183,27 @@ for env_key, json_key in (
     ("BRANCH_NAME", "branch_name"),
     ("PARENT_BRANCH", "parent_branch"),
     ("WORKTREE_DIR", "worktree_dir"),
+    ("WORKTREE_ROOT", "worktree_root"),
     ("WORKTREE_BASE", "worktree_base"),
     ("BASE_COMMIT", "base_commit"),
     ("RUN_PREFIX", "run_prefix"),
     ("SLUG", "slug"),
 ):
-    print(f"{env_key}\t{data[json_key]}")
+    out.write(env_key.encode() + b"\0" + data[json_key].encode() + b"\0")
 ')
 
 # Validate: hard gate before push
 "$PYTHON_BIN" "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
 
 # Reconcile: merge all dream branches into main
-"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT"
+"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
+    --worktree-base "$WORKTREE_ROOT"
 # After `git push` succeeds, optionally clean up reconciled branches.
 # Cleanup REFUSES to run if `.shadow/` has uncommitted changes, or unless
 # HEAD is already on origin/<default-branch> — so the canonical flow is:
 #   reconcile → git add .shadow/ && git commit && git push → re-run --cleanup-branches
-"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" --cleanup-branches
+"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
+    --worktree-base "$WORKTREE_ROOT" --cleanup-branches
 
 # Coverage: show which files still need exploration
 "$PYTHON_BIN" "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
@@ -540,32 +546,10 @@ SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
 # Compounding from prior dream:
 SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
 
-# Parse setup JSON into shell variables used below.
-while IFS=$'\t' read -r key value; do
-    case "$key" in
-        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
-            printf -v "$key" '%s' "$value"
-            export "$key"
-            ;;
-    esac
-done < <(printf '%s' "$SETUP_JSON" | "$PYTHON_BIN" -c '
-import json, sys
-data = json.load(sys.stdin)
-for env_key, json_key in (
-    ("REPO_ROOT", "repo_root"),
-    ("DEFAULT_BRANCH", "default_branch"),
-    ("DREAM_NS", "dream_ns"),
-    ("DREAM_ID", "dream_id"),
-    ("BRANCH_NAME", "branch_name"),
-    ("PARENT_BRANCH", "parent_branch"),
-    ("WORKTREE_DIR", "worktree_dir"),
-    ("WORKTREE_BASE", "worktree_base"),
-    ("BASE_COMMIT", "base_commit"),
-    ("RUN_PREFIX", "run_prefix"),
-    ("SLUG", "slug"),
-):
-    print(f"{env_key}\t{data[json_key]}")
-')
+# Use the canonical NUL-safe JSON bridge in "Helper Scripts" above.
+# It exports REPO_ROOT, DEFAULT_BRANCH, DREAM_NS, DREAM_ID, BRANCH_NAME,
+# PARENT_BRANCH, WORKTREE_DIR, WORKTREE_ROOT, WORKTREE_BASE, BASE_COMMIT,
+# RUN_PREFIX, and SLUG.
 ```
 
 Capture the JSON into `SETUP_JSON` and check the exit code (`|| exit 1`),
@@ -573,7 +557,7 @@ then parse it into the exported variables above before using later steps.
 
 This prints a JSON object with keys: `repo_root`, `default_branch`,
 `dream_ns`, `dream_id`, `branch_name`, `parent_branch`, `worktree_dir`,
-`worktree_base`, `base_commit`, `run_prefix`, `slug`.
+`worktree_root`, `worktree_base`, `base_commit`, `run_prefix`, `slug`.
 
 **If `dream-setup.py` fails or is not found:** Apply the Script Failure
 Recovery rule (read the script source, adapt its logic). Common causes:
@@ -892,7 +876,8 @@ the orchestrator discovers pushed branches from the remote.
 ### Worktree Cleanup
 
 ```bash
-bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
+DREAM_WORKTREE_BASE="$WORKTREE_ROOT" \
+    bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
 ```
 
 `dream-cleanup.sh` does the equivalent of `git worktree remove --force`
@@ -969,7 +954,8 @@ for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
 done
 
 if [ -n "$RECONCILE_SCRIPT" ]; then
-    python3 "$RECONCILE_SCRIPT" "$REPO_ROOT"
+    python3 "$RECONCILE_SCRIPT" "$REPO_ROOT" \
+        --worktree-base "$WORKTREE_ROOT"
 else
     echo "WARNING: dream-reconcile.py not found. Apply Script Failure Recovery: read dream-reconcile.py source, adapt its 9 steps manually."
 fi
@@ -1078,7 +1064,7 @@ exited). Only run this once the agent has asserted no more dreams are
 starting **in this namespace**:
 
 ```bash
-bash "$SKILL_DIR/dream-gc.sh" \
+DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
     --task-complete --namespace "$DREAM_NS" \
     --repo-root "$REPO_ROOT" --min-age-min 0
 ```
@@ -1162,7 +1148,7 @@ are four places they get cleaned up:
 
    ```bash
    # At the end of the dream loop, before the final summary:
-   bash "$SKILL_DIR/dream-gc.sh" \
+   DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
        --task-complete \
        --namespace "$DREAM_NS" \
        --repo-root "$REPO_ROOT" \
