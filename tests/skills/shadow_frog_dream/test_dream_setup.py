@@ -251,6 +251,89 @@ class TestDreamSetupHappyPath:
         assert Path(data["worktree_base"]) == expected_root / repo.name
         assert Path(data["worktree_dir"]) == expected_root / repo.name / "dream-t02-default-root"
 
+    def test_relative_worktree_root_is_emitted_as_absolute(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+
+        result = run_dream_setup(
+            ["--slug", "t02-relative-root", "--repo-root", str(repo), "--print-json"],
+            cwd=repo,
+            env_extra={
+                "DREAM_GC_AUTO": "0",
+                "DREAM_WORKTREE_BASE": "../dream-worktrees",
+            },
+        )
+
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        data = json.loads(result.stdout)
+        expected_root = (repo / ".." / "dream-worktrees").resolve()
+        assert Path(data["worktree_root"]) == expected_root
+        assert Path(data["worktree_dir"]) == expected_root / repo.name / "dream-t02-relative-root"
+
+    def test_setup_context_drives_reconciler_cleanup_at_same_root(self, tmp_path):
+        """Review 01: setup JSON must identify the exact worktree cleanup removes."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        setup = run_dream_setup(
+            ["--slug", "t02-lifecycle", "--repo-root", str(repo), "--print-json"],
+            cwd=repo,
+            env_extra={
+                "DREAM_GC_AUTO": "0",
+                "DREAM_WORKTREE_BASE": "../dream-worktrees",
+            },
+        )
+        assert setup.returncode == 0, f"stderr: {setup.stderr}"
+        context = json.loads(setup.stdout)
+        worktree_dir = Path(context["worktree_dir"])
+        assert worktree_dir.is_dir()
+
+        dream_dir = repo / ".shadow" / "_dreams" / context["dream_id"]
+        dream_dir.mkdir(parents=True)
+        for name in ("report.md", "manifest.json", "patch.diff"):
+            (dream_dir / name).write_text("{}\n", encoding="utf-8")
+        index = repo / ".shadow" / "_dreams" / "_index.md"
+        index.write_text(
+            "# Dream Experiments\n\n"
+            "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+            "|----------|----------|---------|-------|--------|--------|------------|\n"
+            f"| {context['dream_id']} | test | useful | Test | "
+            f"{context['branch_name']} | main | deadbeef |\n",
+            encoding="utf-8",
+        )
+        env = _base_env(repo)
+        subprocess.run(["git", "add", ".shadow"], cwd=repo, check=True, env=env)
+        subprocess.run(
+            ["git", "commit", "-qm", "reconcile"], cwd=repo, check=True, env=env,
+        )
+        bare_remote = repo.parent / "remote.git"
+        subprocess.run(
+            ["git", "init", "--bare", "-q", str(bare_remote)],
+            cwd=repo.parent, check=True, env=env,
+        )
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", f"file://{bare_remote}"],
+            cwd=repo, check=True, env=env,
+        )
+        subprocess.run(["git", "push", "-qu", "origin", "main"],
+                       cwd=repo, check=True, env=env)
+        subprocess.run(
+            ["git", "push", "-q", "origin", context["branch_name"]],
+            cwd=repo, check=True, env=env,
+        )
+
+        reconcile = _load_dream_reconcile_module()
+        deleted, kept = reconcile.cleanup_branches(
+            str(repo),
+            [(context["branch_name"], context["dream_id"], {})],
+            context["dream_ns"],
+            worktree_root=context["worktree_root"],
+        )
+
+        assert (deleted, kept) == (1, 0)
+        assert not worktree_dir.exists()
+
     def test_repo_root_subdir_is_canonicalized_for_isolation(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -740,6 +823,29 @@ class TestDreamSetupAutoGCThrottle:
 
         assert not tombstone.exists()
         assert "auto-GC exited with code 1" in capsys.readouterr().err
+
+    def test_auto_gc_does_not_launch_bash_fallback_on_windows(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        dream_setup = _load_dream_setup_module()
+        script_dir = tmp_path / "skill"
+        script_dir.mkdir()
+        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        worktree_base = tmp_path / "worktrees" / "repo"
+        worktree_base.mkdir(parents=True)
+
+        monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
+        monkeypatch.setattr(dream_setup.os, "name", "nt")
+        monkeypatch.setattr(
+            dream_setup.subprocess,
+            "run",
+            lambda *args, **kwargs: pytest.fail("Bash GC must not run on Windows"),
+        )
+
+        dream_setup._maybe_auto_gc(str(tmp_path), str(worktree_base))
+
+        assert not (worktree_base / ".last-gc").exists()
+        assert "auto-GC skipped on Windows" in capsys.readouterr().err
 
 @pytest.mark.slow
 @pytest.mark.integration
