@@ -55,7 +55,8 @@ WORKTREE_DIR  = $WORKTREE_BASE/dream-<SLUG>
 - `DREAM_NS` (namespace) isolates branches per task/instance. Resolved
   from: `DREAM_NAMESPACE` env → `TASK_INFO.json` → `.env` → repo basename.
 - Override only with `DREAM_WORKTREE_BASE` env var if the system temp volume is
-  too small.
+  too small. Relative overrides are resolved to an absolute path before setup
+  emits the lifecycle context.
 - `dream-setup.py` computes and enforces all paths. Use it.
 
 ### Branch Naming
@@ -150,7 +151,7 @@ done
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
 | `dream-coverage.py` | Computes exploration coverage map | **Phase 2** — task planning for diversity |
 | `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
-| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs |
+| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs. On Windows, automatic sweeping remains disabled until `dream-gc.py` replaces the POSIX-only helper. |
 
 **Usage patterns:**
 

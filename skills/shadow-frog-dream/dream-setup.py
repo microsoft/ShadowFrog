@@ -179,6 +179,9 @@ def _maybe_auto_gc(repo_root, worktree_base, worktree_root=None):
         gc_cmd = [sys.executable, gc_py, "--repo-root", repo_root,
                   "--quiet", "--min-age-min", age_raw]
     elif os.path.isfile(gc_sh):
+        if os.name == "nt":
+            _err("WARN: auto-GC skipped on Windows until dream-gc.py is available")
+            return
         gc_cmd = ["bash", gc_sh, "--repo-root", repo_root,
                   "--quiet", "--min-age-min", age_raw]
     else:

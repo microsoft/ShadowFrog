@@ -21,6 +21,7 @@ from tests._shell import BASH, HAVE_BASH, shell_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DREAM_SETUP = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-setup.py"
+DREAM_RECONCILE = REPO_ROOT / "skills" / "shadow-frog-dream" / "dream-reconcile.py"
 
 # Cleared from the base env so a developer's shell can't leak into namespace /
 # worktree resolution; each test sets exactly what it needs via `extras`.
@@ -74,6 +75,14 @@ def run_dream_setup(
 
 def _load_dream_setup_module():
     spec = importlib.util.spec_from_file_location("dream_setup", DREAM_SETUP)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_dream_reconcile_module():
+    spec = importlib.util.spec_from_file_location("dream_reconcile", DREAM_RECONCILE)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -378,6 +387,55 @@ class TestDreamSetupNamespace:
         data = json.loads(result.stdout)
         assert data["dream_ns"] == "env-ns-test"
 
+    def test_quoted_dotenv_namespace_used(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        (repo / ".env").write_text(
+            'DREAM_NAMESPACE="quoted-ns"\n', encoding="utf-8",
+        )
+
+        result = run_dream_setup(
+            ["--slug", "t08-quoted-dotenv", "--repo-root", str(repo),
+             "--dry-run", "--print-json"],
+            cwd=repo,
+        )
+
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert json.loads(result.stdout)["dream_ns"] == "quoted-ns"
+
+    def test_setup_namespace_is_explicitly_usable_by_reconciliation(self, tmp_path):
+        """The namespace emitted by setup must select its remote dream branch."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        setup = run_dream_setup(
+            ["--slug", "t08-reconcile", "--namespace", "setup-ns",
+             "--repo-root", str(repo), "--print-json"],
+            cwd=repo,
+            env_extra={"DREAM_WORKTREE_BASE": str(tmp_path / "worktrees")},
+        )
+        assert setup.returncode == 0, f"stderr: {setup.stderr}"
+        context = json.loads(setup.stdout)
+
+        env = _base_env(repo)
+        subprocess.run(
+            ["git", "push", "-q", "origin", context["branch_name"]],
+            cwd=repo, check=True, env=env,
+        )
+        reconcile = subprocess.run(
+            [
+                sys.executable, str(DREAM_RECONCILE), str(repo),
+                "--namespace", context["dream_ns"], "--dry-run",
+            ],
+            capture_output=True, text=True, encoding="utf-8",
+            cwd=repo,
+            env=_base_env(repo, {"DREAM_NAMESPACE": "wrong-ns"}),
+        )
+
+        assert reconcile.returncode == 0, reconcile.stdout + reconcile.stderr
+        assert context["branch_name"] in reconcile.stdout
+
     def test_task_info_namespace_must_be_string(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -669,6 +727,7 @@ class TestDreamSetupAutoGCThrottle:
         tombstone = worktree_base / ".last-gc"
 
         monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
+        monkeypatch.setattr(dream_setup.os, "name", "posix")
         monkeypatch.setattr(
             dream_setup.subprocess,
             "run",
