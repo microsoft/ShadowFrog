@@ -218,8 +218,8 @@ def _read_indexed_dream_ids(repo_root):
     return existing
 
 
-def _read_indexed_branches(repo_root):
-    """Return list of (branch, dream_id) tuples from _index.md (column 5)."""
+def _read_indexed_branches(repo_root, dream_ns=None):
+    """Return indexed (branch, dream_id) tuples, optionally namespace-filtered."""
     index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
     rows = []
     if not os.path.isfile(index_path):
@@ -232,7 +232,9 @@ def _read_indexed_branches(repo_root):
                 if len(parts) >= 6 and parts[1]:
                     dream_id = parts[1]
                     branch = parts[5]
-                    if branch:
+                    if branch and (
+                        dream_ns is None or branch.startswith(f"dream/{dream_ns}/")
+                    ):
                         rows.append((branch, dream_id))
     return rows
 
@@ -1368,8 +1370,13 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False,
 
     deleted = 0
     kept = 0
+    namespace_prefix = f"dream/{dream_ns}/"
 
     for branch, dream_id, manifest in manifests:
+        if not branch.startswith(namespace_prefix):
+            print(f"  ⚠️  KEEPING {branch} — outside namespace {dream_ns}")
+            kept += 1
+            continue
         dream_dir = os.path.join(repo_root, '.shadow', '_dreams', dream_id)
 
         # Safety check 1: all artifacts on main
@@ -1486,10 +1493,16 @@ def _slug_from_dream_id(dream_id):
     return m.group(2) if m else None
 
 
+@dataclass(frozen=True)
+class WorktreeRegistration:
+    """The registration state for one candidate worktree path."""
+
+    state: str
+    branch: str | None = None
+
+
 def _registered_worktree_branch(repo_root, candidate_path):
-    """Return the branch name (without `refs/heads/` prefix) that git has
-    registered at `candidate_path`, or `None` if no worktree is registered
-    at that path (or git can't tell). Detached-HEAD worktrees return `None`.
+    """Return a registration result for `candidate_path`.
 
     Parses `git worktree list --porcelain` output:
         worktree /abs/path

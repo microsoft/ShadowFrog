@@ -198,13 +198,13 @@ for env_key, json_key in (
 
 # Reconcile: merge all dream branches into main
 "$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
-    --worktree-base "$WORKTREE_ROOT"
+    --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT"
 # After `git push` succeeds, optionally clean up reconciled branches.
 # Cleanup REFUSES to run if `.shadow/` has uncommitted changes, or unless
 # HEAD is already on origin/<default-branch> — so the canonical flow is:
 #   reconcile → git add .shadow/ && git commit && git push → re-run --cleanup-branches
 "$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
-    --worktree-base "$WORKTREE_ROOT" --cleanup-branches
+    --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT" --cleanup-branches
 
 # Coverage: show which files still need exploration
 "$PYTHON_BIN" "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
@@ -224,17 +224,15 @@ inline fallback instructions).
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-# 0. Auto-detect DREAM_NAMESPACE
-if [ -z "${DREAM_NAMESPACE:-}" ]; then
-    if [ -f TASK_INFO.json ]; then
-        DREAM_NAMESPACE=$(python3 -c "import json; print(json.load(open('TASK_INFO.json')).get('dream_namespace',''))" 2>/dev/null)
-        export DREAM_NAMESPACE
-    elif [ -f .env ]; then
-        DREAM_NAMESPACE=$(grep '^DREAM_NAMESPACE=' .env | head -1 | cut -d'=' -f2-)
-        export DREAM_NAMESPACE
-    fi
-fi
-[ -n "${DREAM_NAMESPACE:-}" ] && echo "Dream namespace: $DREAM_NAMESPACE"
+# 0. Resolve DREAM_NAMESPACE with the same parser setup/reconciliation use.
+DREAM_NAMESPACE="$("$PYTHON_BIN" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from _dream_namespace import resolve_dream_namespace
+print(resolve_dream_namespace(sys.argv[2]))
+' "$SKILL_DIR" "$REPO_ROOT")" || exit 1
+export DREAM_NAMESPACE
+echo "Dream namespace: $DREAM_NAMESPACE"
 
 # 1. Detect default branch
 DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
@@ -956,7 +954,7 @@ done
 
 if [ -n "$RECONCILE_SCRIPT" ]; then
     python3 "$RECONCILE_SCRIPT" "$REPO_ROOT" \
-        --worktree-base "$WORKTREE_ROOT"
+        --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT"
 else
     echo "WARNING: dream-reconcile.py not found. Apply Script Failure Recovery: read dream-reconcile.py source, adapt its 9 steps manually."
 fi

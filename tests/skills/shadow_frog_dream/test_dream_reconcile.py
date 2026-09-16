@@ -642,6 +642,21 @@ def test_read_indexed_branches_parses_table(dream_reconcile, tmp_path):
     assert len(rows) == 3
 
 
+def test_read_indexed_branches_filters_namespace(dream_reconcile, tmp_path):
+    _write_index(
+        tmp_path,
+        INDEX_FIXTURE.replace(
+            "dream/p/20260103-000000Z-gamma",
+            "dream/other/20260103-000000Z-gamma",
+        ),
+    )
+
+    rows = dream_reconcile._read_indexed_branches(str(tmp_path), "p")
+
+    assert len(rows) == 2
+    assert all(branch.startswith("dream/p/") for branch, _ in rows)
+
+
 # ===========================================================================
 # verify_reconciliation — PREFIX FALSE-PASS regression
 # ===========================================================================
@@ -2274,6 +2289,27 @@ def test_cleanup_branches_keeps_branch_when_local_delete_fails(
 
 
 @pytest.mark.slow
+def test_cleanup_branches_keeps_manifest_outside_namespace(
+    dream_reconcile, tmp_git_repo, capsys
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260420-050075Z-outside"
+    branch = f"dream/other/{dream_id}"
+
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo),
+        [(branch, dream_id, _default_manifest(dream_id))],
+        "proj",
+        dry_run=True,
+    )
+
+    assert deleted == 0
+    assert kept == 1
+    assert f"KEEPING {branch} — outside namespace proj" in capsys.readouterr().out
+
+
+@pytest.mark.slow
 def test_cleanup_branches_refuses_when_head_not_pushed(
     dream_reconcile, tmp_git_repo
 ):
@@ -2729,6 +2765,47 @@ def test_cli_namespace_from_dotenv_file(tmp_git_repo):
 
 @pytest.mark.slow
 @pytest.mark.integration
+def test_cli_namespace_strips_dotenv_quotes(tmp_git_repo):
+    """Setup and reconciliation must resolve quoted .env values identically."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    (tmp_git_repo / ".env").write_text(
+        'DREAM_NAMESPACE="fromdotenv"\n', encoding="utf-8"
+    )
+    full_env = _cli_env()
+    full_env.pop("DREAM_NAMESPACE", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
+        capture_output=True, text=True, env=full_env, encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Namespace: fromdotenv" in result.stdout
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize("task_info", ["[]", '"not an object"', '{"dream_namespace": 1}'])
+def test_cli_rejects_invalid_task_info_namespace(tmp_git_repo, task_info):
+    """Setup and reconciliation must reject invalid task configuration alike."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    (tmp_git_repo / "TASK_INFO.json").write_text(task_info, encoding="utf-8")
+    full_env = _cli_env()
+    full_env.pop("DREAM_NAMESPACE", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
+        capture_output=True, text=True, env=full_env, encoding="utf-8",
+    )
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.integration
 def test_cli_namespace_from_task_info_json(tmp_git_repo):
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
@@ -2865,6 +2942,54 @@ def test_cli_cleanup_branches_after_reconcile(tmp_git_repo):
     post = _git("ls-remote", "--heads", "origin", branch,
                 cwd=tmp_git_repo, env=env).stdout
     assert branch not in post
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+def test_cli_cleanup_branches_never_deletes_other_namespace(tmp_git_repo):
+    """Review 02: post-push cleanup is scoped to the requested namespace."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    inside_id = "20260420-065100Z-inside"
+    outside_id = "20260420-065200Z-outside"
+    inside_branch = make_dream_branch(
+        tmp_git_repo, env, "inside", inside_id, _default_manifest(inside_id)
+    )
+    outside_branch = make_dream_branch(
+        tmp_git_repo, env, "outside", outside_id, _default_manifest(outside_id)
+    )
+    _seed_dream_artifacts(tmp_git_repo, inside_id)
+    _seed_dream_artifacts(tmp_git_repo, outside_id)
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {inside_id} | test | useful | Inside | {inside_branch} | main | deadbeef |\n"
+        f"| {outside_id} | test | useful | Outside | {outside_branch} | main | deadbeef |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), str(tmp_git_repo),
+            "--namespace", "inside", "--cleanup-branches",
+        ],
+        capture_output=True, text=True, env=_cli_env(), encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Deleted: 1, Kept: 0" in result.stdout
+    assert not _git(
+        "ls-remote", "--heads", "origin", inside_branch,
+        cwd=tmp_git_repo, env=env,
+    ).stdout.strip()
+    assert outside_branch in _git(
+        "ls-remote", "--heads", "origin", outside_branch,
+        cwd=tmp_git_repo, env=env,
+    ).stdout
 
 
 @pytest.mark.slow
@@ -3341,9 +3466,7 @@ def test_cleanup_branches_worktree_gc_skips_unparseable_dream_id(
 
 
 class TestRegisteredWorktreeBranch:
-    """Unit-level coverage of _registered_worktree_branch — the helper
-    that lets the GC distinguish 'our worktree' from 'someone else's
-    worktree at the same shared path'."""
+    """Coverage of registration states used by fail-closed worktree cleanup."""
 
     @pytest.mark.slow
     def test_returns_branch_for_registered_path(

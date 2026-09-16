@@ -103,22 +103,6 @@ def _import_paths():
             sys.path.pop(0)
 
 
-def _read_env_namespace(path):
-    """Extract DREAM_NAMESPACE from a `.env` file (first match), stripping
-    surrounding whitespace and one layer of matching quotes."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("DREAM_NAMESPACE="):
-                    val = line.split("=", 1)[1].strip()
-                    if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
-                        val = val[1:-1]
-                    return val.strip()
-    except OSError:
-        return ""
-    return ""
-
-
 def _val(argv, i, flag):
     if i + 1 >= len(argv):
         _err(f"ERROR: {flag} requires a value")
@@ -313,30 +297,20 @@ def main():
             sys.exit(1)
 
     # --- Resolve namespace ---
-    dream_ns = ""
-    if opts["namespace"]:
-        dream_ns = opts["namespace"]
-    elif os.environ.get("DREAM_NAMESPACE"):
-        dream_ns = os.environ["DREAM_NAMESPACE"]
-    elif os.path.isfile("TASK_INFO.json"):
-        try:
-            with open("TASK_INFO.json", encoding="utf-8") as f:
-                task_info = json.load(f)
-            if not isinstance(task_info, dict):
-                _err("ERROR: TASK_INFO.json must contain a JSON object")
-                sys.exit(1)
-            task_ns = task_info.get("dream_namespace", "")
-            if task_ns:
-                if not isinstance(task_ns, str):
-                    _err("ERROR: TASK_INFO.json dream_namespace must be a string")
-                    sys.exit(1)
-                dream_ns = task_ns
-        except (OSError, ValueError):
-            dream_ns = ""
-    elif os.path.isfile(".env"):
-        dream_ns = _read_env_namespace(".env")
-    if not dream_ns:
-        dream_ns = os.path.basename(repo_root)
+    sys.path.insert(0, SCRIPT_DIR)
+    try:
+        from _dream_namespace import (
+            NamespaceConfigurationError,
+            resolve_dream_namespace,
+        )
+    finally:
+        if sys.path and sys.path[0] == SCRIPT_DIR:
+            sys.path.pop(0)
+    try:
+        dream_ns = resolve_dream_namespace(repo_root, opts["namespace"])
+    except NamespaceConfigurationError as exc:
+        _err(f"ERROR: {exc}")
+        sys.exit(1)
 
     if not SAFE_RE.match(dream_ns):
         _err(f"ERROR: Resolved DREAM_NS contains unsafe characters: {dream_ns}")

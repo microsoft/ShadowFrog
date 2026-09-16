@@ -22,6 +22,8 @@ ShadowFrog/
       dream-coverage.py          Exploration coverage map
       dream-cleanup.sh           Safe per-worktree cleanup (replaces inline snippet)
       dream-gc.sh                Orphan-worktree sweep (defense-in-depth)
+      _dream_namespace.py        Shared setup/reconcile namespace resolution
+      _worktree_paths.py         Shared worktree-root and path identity helpers
       _worktree_safety.py        Shared safety gate for rm-rf paths
     shadow-frog-meditate/SKILL.md Dedup, merge, and resolve conflicting discoveries
     shadow-frog-viewer/          Browse and query the shadow knowledge base
