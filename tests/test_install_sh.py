@@ -28,6 +28,7 @@ EXPECTED_SKILLS = [
     "shadow-frog-init",
     "shadow-frog-update",
     "shadow-frog-dream",
+    "shadow-frog-nap",
     "shadow-frog-meditate",
     "shadow-frog-viewer",
 ]

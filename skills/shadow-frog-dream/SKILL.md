@@ -8,7 +8,8 @@ description: >-
   to persistent dream branches, and push to the configured remote. Dreams compound
   across sessions: future experiments branch from prior dream branches,
   building a tree of progressively deeper work. Invoke when the user is
-  AFK or asks for a dream run.
+  AFK or asks for a dream run. Use mode=coherent to ground each child in
+  its parent while encouraging diverse siblings, challenges, and alternatives.
 scripts:
   - dream-coverage.py
   - dream-validate.py
@@ -24,6 +25,61 @@ Autonomous experimentation while the user is away. Every task is an
 **experiment** — implement real code in a worktree, run it, persist as a
 **named git branch** pushed to a remote the user can write to. Dream's unique value is
 implementation experience that **compounds across sessions**.
+
+## Modes: Broad or Coherent
+
+Accept `mode=broad` (default) or `mode=coherent`, for example
+`/shadow-frog-dream mode=coherent`. Resolve the requested mode before planning.
+Carry it into every task/subagent prompt, manifest, report, and validation
+invocation. Use `/shadow-frog-nap` instead when the desired deliverable is a
+lightweight feature-task brief rather than an executed experiment.
+
+**Broad mode** keeps the category, coverage, and breadth rules below.
+
+**Coherent mode regularizes parent-child edges, not siblings or a whole tree.**
+Each child has its own `goal` and identifies a parent capability, finding,
+limitation, or design decision motivating its work. It can extend, integrate,
+challenge, replace, simplify, or offer an alternative. The shared
+`parent_connection` format is defined in `/shadow-frog`.
+
+- Ten children of one parent may pursue ten different worthwhile directions.
+  Sibling summaries help avoid duplicates; they do not impose a common goal,
+  file-disjointness requirement, or fixed diversity quota.
+- Technical independence is not an automatic rejection. A justified alternative
+  can be coherent even without calling the parent's modules. Shared keywords,
+  a parent ID, or merely touching the same file are not enough.
+- A challenge needs a reason or evidence; do not manufacture flaws to lengthen
+  a chain. Preserve unchanged user requirements and name superseded decisions.
+- There is no fixed tree-wide feature objective. Direction can evolve through
+  substantive local transitions. Stop a path when no useful continuation exists.
+- Descendants wait for their actual parent implementation. Siblings may run in
+  parallel in separate worktrees, including on the same files. Refresh the
+  selected parent branch/tip after each accepted step rather than relying on
+  the session-start branch snapshot for newly created parents.
+
+**Precedence:** in coherent mode, skip category minimums, uncovered-file quotas,
+saturation-driven parent rejection, unique-file/directory checks, mid-session
+breadth replanning, disjoint-file assignments, and the "breadth over depth"
+preference below. Follow the user's total work budget; absent one, use 12
+experiments as a ceiling, not a quota. All execution, artifact, reconciliation,
+and worktree safety requirements still apply.
+
+Before launching each child, record its parent branch and resolved commit,
+own goal, and intended connection. Give it the parent's report, manifest,
+relevant source/evidence, and short sibling summaries. Do not claim sibling
+features are inherited code. Seeds from the base branch have no parent
+connection; importing a prior dream uses that dream's actual branch.
+
+**Completion review:** explain what the parent made possible or revealed to be
+inadequate, the child's concrete delta, and why the result is useful. For a
+replacement, compare the old/new behavior against the relevant constraints.
+Structural validation cannot judge semantic coherence.
+
+Coherent branches and their ancestors are retained by reconciler cleanup for
+continued exploration and reproducible task baselines. Do not use the inline
+branch-pruning recipe below for a coherent run. Explicit later curation may
+remove branches only after checking references and preserving required commits.
+Worktrees can still be cleaned up normally after successful pushes.
 
 ## Critical Invariants
 
@@ -182,6 +238,18 @@ python3 "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
 # All scripts support --help.
 ```
 
+The validation examples above and below use broad mode. **For a coherent
+task, replace the validation invocation with the explicit coherent form**:
+
+```text
+python PATH/TO/dream-validate.py DREAM_ID WORKTREE_DIR --mode coherent
+```
+
+Use the host's Python 3 interpreter and the repository's runner as appropriate.
+`--mode coherent` must match `manifest.json` and the report's mode; never fix a
+mismatch by silently downgrading the requested mode. The shared
+`shadow-frog/_coherence.py` ships with the core skill through both installers.
+
 If a script is not found or fails, read its source — they are
 self-documenting. Adapt the steps manually if needed (see each phase for
 inline fallback instructions).
@@ -338,6 +406,10 @@ predictor of useful discoveries.
 
 ### Review Past Dreams (Required)
 
+In coherent mode, use the index to select parents, then read the selected
+parent reports/manifests and relevant ancestor evidence. Do not reread every
+report or reject a useful parent merely because its files are well covered.
+
 When compoundable experiments exist (preflight step 9):
 - Read each report: `cat .shadow/_dreams/<dream_id>/report.md`
 - Choose which to continue (extending, fixing, integrating)
@@ -361,7 +433,7 @@ branch from main.
 
 ## Phase 2: Plan
 
-Generate a concrete plan. **Target 12 tasks (2 per category).** On small
+In broad mode, generate a concrete plan. **Target 12 tasks (2 per category).** On small
 codebases (<30 source files), minimum 6 tasks across 4+ categories.
 
 ### The 6 Investigation Categories
@@ -408,7 +480,7 @@ Tasks (by category):
 
 ### Diversity Rules
 
-Prevent fixation (exploring the same files while leaving most untouched):
+In broad mode, prevent fixation (exploring the same files while leaving most untouched):
 
 1. **Max 2 tasks per source file** (unless prior dream left concrete follow-up)
 2. **≥30% of tasks on uncovered files** (from coverage map)
@@ -427,6 +499,10 @@ codebase has <20 source files.
 Each task needs: **category**, **hypothesis**, **what to implement**,
 **base branch**, **primary target** (with coverage status), **why this
 target**, **scope** (hours, not days), and **success criteria**.
+
+Also include the selected **mode**. Coherent tasks additionally carry their
+own **goal** and **parent_connection**, not a shared sibling/tree objective.
+Category still describes the experiment, but coherent mode has no category quota.
 
 Good examples (one per category):
 - **Investigation**: "Write assertion harness for request lifecycle —
@@ -480,6 +556,10 @@ Work through the plan. **Launch 3-4 experiments in parallel** via
 sub-agents. Each handles the full lifecycle: create worktree → implement
 → test → write shadow + manifest + report → commit → push → clean up.
 If sub-agents are unavailable, fall back to sequential execution.
+
+In coherent mode, a parallel batch can contain diverse siblings of an already
+available parent. Never launch a descendant before its parent exists. Include
+the mode, goal, connection, and expected parent commit in each child prompt.
 
 **Each experiment runs in a separate git worktree.** The worktree IS the
 dream branch (created with `-b`). After pushing, the worktree is removed
@@ -538,7 +618,7 @@ worktree, get main repo with:
 
 ### What Meaningful Compounding Looks Like
 
-Compounding means **actively engaging with the parent's code**, not just
+In broad mode, compounding means **actively engaging with the parent's code**, not just
 sitting on its branch. Valid compounding approaches:
 - **Extend**: import or call the parent's modules and build on them
 - **Modify**: edit the parent's code to fix limitations noted in its report
@@ -550,9 +630,13 @@ Don't assume the parent dream's code is complete or frozen — iterative
 improvement is the whole point. If you can't find anything meaningful to
 build on, start fresh from main instead.
 
-Compounding that only adds a new standalone module beside the parent's
+In broad mode, compounding that only adds a new standalone module beside the parent's
 code (with no imports, edits, or integration) is NOT compounding — it's
 a fresh experiment on the wrong branch.
+
+In coherent mode, apply the parent-connection review instead: a standalone
+alternative is allowed if it substantively responds to the parent's findings
+or design, rather than being unrelated work parked on the same branch.
 
 ### Run
 
@@ -687,6 +771,7 @@ After shadow writes, create `.shadow/_dreams/$DREAM_ID/manifest.json`:
   "dream_id": "<DREAM_ID>",
   "branch": "<BRANCH_NAME>",
   "parent_branch": "main",
+  "mode": "broad",
   "category": "bug hunting",
   "verdict": "useful",
   "title": "CSV Parser Edge Cases",
@@ -708,6 +793,13 @@ After shadow writes, create `.shadow/_dreams/$DREAM_ID/manifest.json`:
 
 **Anchor format:** `file::symbol` with bare names (no backticks). The
 reconciler handles normalization.
+
+For coherent experiments, set `"mode": "coherent"`, add a nonempty `"goal"`
+for this experiment, and include `"parent_connection"` in the shared
+`/shadow-frog` format when `parent_branch` is a prior `dream/...` branch.
+Seeds use null or omit the connection. `parent_branch` is the authoritative
+parent reference; siblings need not share goals or modify different files.
+These fields survive reconciliation in the archived manifest.
 
 Manifest `op` values: only `add` is supported by the reconciler today.
 `update` and `refute` are reserved keywords — `dream-validate.py` will
@@ -737,6 +829,7 @@ verdict: useful
 base_commit: "<BASE_COMMIT>"
 branch: "<BRANCH_NAME>"
 parent_branch: "main"
+mode: broad
 remote: "origin"
 related_symbols:
   - "src/parsers/csv.py::parse_row"
@@ -749,7 +842,11 @@ builds_on: []
 <cite specific existing files/symbols where gap was identified>
 
 ## Compounding Delta
-<ONLY if parent_branch != main — what parent code was modified/extended>
+<ONLY for a prior-dream parent — what parent code or design was engaged and changed>
+
+## Parent Connection
+<coherent mode: own goal, relation, parent basis, delta, preserved constraints,
+and superseded decisions; explain alternatives even when technically independent>
 
 ## Hypothesis
 <what we expected to learn>
@@ -778,6 +875,7 @@ builds_on: []
 | `base_commit` | yes | SHA branched from |
 | `branch` | yes | full branch name |
 | `parent_branch` | yes | `main` or prior branch path |
+| `mode` | coherent runs | `broad` (default) or `coherent`; must match manifest and validator |
 | `related_symbols` | yes | `file::symbol` refs |
 
 **`tip_commit` is NOT in the report.** Including the final commit SHA
@@ -790,6 +888,9 @@ it in `_dreams/_index.md`.
 - `dead_end` — approach doesn't work; documented why so future dreams skip
 
 ### Validate, Commit, Push
+
+**Coherent mode:** append `--mode coherent` to the validator command in step 2.
+The selected mode is an input from the plan, not inferred after authoring.
 
 ```bash
 cd "$WORKTREE_DIR"
@@ -857,6 +958,10 @@ Remove as you go. If push failed, keep the worktree.
 
 ### Mid-Session Diversity Check
 
+This breadth check applies to broad mode. In coherent mode, review edge quality
+and sibling duplication instead; do not swap out a relevant continuation just
+to increase unique-file counts.
+
 After completing roughly half of your planned tasks, pause and review:
 
 1. **Count unique primary target files** explored so far. If fewer than
@@ -883,7 +988,7 @@ rich area and the second half keeps digging there instead of spreading.
 
 ## Phase 5: Parallel Agent Rules
 
-1. Each agent targets different files (orchestrator assigns non-overlapping sets)
+1. Broad mode targets different files. Coherent siblings may target the same files in their separate worktrees.
 2. Each agent gets its own branch (inherently isolated)
 3. Each agent writes its own manifest in its `$DREAM_ID/` directory
 4. Do NOT write to main or shared files (`_index.md`, `state.json`)
@@ -894,6 +999,9 @@ rich area and the second half keeps digging there instead of spreading.
 9. Include `WORKTREE_BASE` and `DREAM_NS` in every subagent prompt
 10. Dream artifacts MUST use subdirectory format — flat files are a
     completion criteria violation (see Critical Invariants → Artifact Format)
+11. Thread the selected mode into every prompt. For coherent children, include
+    their own goal, parent packet, connection, and expected parent commit;
+    validation must use `--mode coherent`.
 
 ## Phase 6: Reconcile to Main
 
@@ -943,7 +1051,7 @@ Adapt based on the error message.
 6. **Updates** `_meta/state.json`
 7. **Rebuilds** top-level `.shadow/_index.md` (per-file discovery counts)
 8. **Verifies** all artifacts present (hard gate)
-9. **(Optional)** Deletes reconciled branches — only with `--cleanup-branches`, and only after the reconciliation has been committed and pushed (refuses on a dirty `.shadow/` or when HEAD is not yet on `origin/<default-branch>`)
+9. **(Optional)** Deletes reconciled broad branches — only with `--cleanup-branches`, and only after the reconciliation has been committed and pushed (refuses on a dirty `.shadow/` or when HEAD is not yet on `origin/<default-branch>`). Coherent branches and their ancestors are retained; unreadable indexed manifests prevent cleanup rather than risking task baselines.
 
 ### After Reconciliation: Commit, Push, and Cleanup
 
@@ -966,6 +1074,10 @@ fi
 ```
 
 ### Post-Reconciliation Branch Cleanup
+
+**Broad-only recipe.** Coherent runs retain their lineage branches and must
+not execute the inline deletion loop below. The reconciler's cleanup performs
+the retention check even when coherent descendants were reconciled earlier.
 
 After reconciliation is **committed AND pushed**, clean up dream branches
 to prevent repo pollution. Only delete branches whose artifacts are safely
@@ -1063,7 +1175,8 @@ Wait for user confirmation before deleting any remote branch.
 
 ### Branch Pruning
 
-Reconciled branches are cleaned up automatically after push. For
+Reconciled broad branches are cleaned up automatically after push; coherent
+lineages require explicit later curation. For
 branches not auto-cleaned (push failed, or `SHADOWFROG_KEEP_BRANCHES=1`
 set), apply the rules in Phase 6 → Post-Reconciliation Branch Cleanup
 (above).
@@ -1144,7 +1257,7 @@ git show <tip_commit> | git apply
 - **Always experiment.** Implementation reveals what reading cannot.
 - **Small tasks, big lessons.** 30-minute experiment > 3 hours reading.
 - **Fail forward.** "Tried X, broke because Y" is extremely valuable.
-- **Breadth over depth.** More files with 2-3 discoveries > one file with 20.
+- **Broad mode: breadth over depth.** More files with 2-3 discoveries > one file with 20.
 - **No descriptions.** "Catches all exceptions including OOM" yes.
   "This function authenticates users" no.
 - **Compound deliberately.** Read parent's report. Build on findings.
@@ -1166,7 +1279,10 @@ A task is complete ONLY when ALL of these hold:
 
 Additional gates:
 - **Feature design:** `## Motivation` cites specific existing code
-- **Compounding:** `## Compounding Delta` explains what parent code was modified
+- **Broad compounding:** `## Compounding Delta` explains what parent code was modified
+- **Coherent mode:** mode is threaded through validation and artifacts; each
+  child has a substantive parent connection and its own goal. Siblings remain
+  free to differ. A validated schema is not a substitute for this review.
 
 A task that fails these criteria is **not completed**. If setup fails or
 the experiment produces nothing, mark it `blocked` in the summary and
@@ -1175,6 +1291,16 @@ category minimum.
 
 > **After reconciliation:** run `/shadow-frog-meditate` to consolidate
 > discoveries and repair the index.
+
+### Exporting Coherent Work as SWE Tasks
+
+Select a root-to-leaf trajectory, not a concatenation of independent siblings.
+Combining siblings requires an explicit integration experiment. Each task's
+code baseline must be an actual retained commit, separate from conceptual
+provenance. For sequential tasks, state which earlier requirements change.
+For one combined task, use the final active behavioral contract: replacing
+design A with B does not require implementing both. Do not rewrite historical
+reports or use unsupported manifest `refute` operations to supersede a design.
 
 ## Curating Dream Experiments for Upstream PRs
 

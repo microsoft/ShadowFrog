@@ -2233,6 +2233,92 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("child_in_batch", [False, True])
+def test_cleanup_keeps_coherent_child_and_its_broad_parent(
+    dream_reconcile, tmp_git_repo, child_in_batch,
+):
+    """Indexed coherent descendants protect parents even after reconciliation."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    parent_id = "20260420-060000Z-coherent-parent"
+    child_id = "20260420-060100Z-coherent-child"
+    parent_manifest = _default_manifest(parent_id)
+    parent = make_dream_branch(tmp_git_repo, env, "proj", parent_id, parent_manifest)
+    child_manifest = _default_manifest(child_id)
+    child_manifest.update(mode="coherent", parent_branch=parent)
+    child = make_dream_branch(tmp_git_repo, env, "proj", child_id, child_manifest)
+    for dream_id, manifest in ((parent_id, parent_manifest), (child_id, child_manifest)):
+        _seed_dream_artifacts(tmp_git_repo, dream_id)
+        (tmp_git_repo / ".shadow" / "_dreams" / dream_id / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8",
+        )
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {parent_id} | feature design | useful | Parent | {parent} | main | abc1234 |\n"
+        f"| {child_id} | feature design | useful | Child | {child} | {parent} | abc1234 |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconciled coherent tree", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+    batch = [(parent, parent_id, parent_manifest)]
+    if child_in_batch:
+        batch.append((child, child_id, {}))
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo), batch, "proj",
+    )
+    assert (deleted, kept) == (0, len(batch))
+    remaining = _git("ls-remote", "--heads", "origin", cwd=tmp_git_repo, env=env).stdout
+    assert parent in remaining
+    assert child in remaining
+
+
+def test_coherent_retention_traverses_ancestors_without_fixing_sibling_goals(
+    dream_reconcile, tmp_path,
+):
+    manifests = [
+        ("dream/p/root", "root", {"parent_branch": "main"}),
+        ("dream/p/middle", "middle", {"parent_branch": "dream/p/root"}),
+        ("dream/p/child", "child", {
+            "mode": "coherent", "goal": "A distinct direction",
+            "parent_branch": "dream/p/middle",
+        }),
+        ("dream/p/other", "other", {"parent_branch": "main"}),
+    ]
+    retained = dream_reconcile.coherent_branch_refs(str(tmp_path), manifests)
+    assert retained == {"dream/p/root", "dream/p/middle", "dream/p/child"}
+
+
+def test_cleanup_refuses_when_indexed_manifest_cannot_be_read(
+    dream_reconcile, tmp_path, capsys,
+):
+    _write_index(
+        tmp_path,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        "| missing | feature design | useful | Missing | dream/p/missing | main | abc1234 |\n",
+    )
+    result = dream_reconcile.cleanup_branches(
+        str(tmp_path), [("dream/p/missing", "missing", {})], "p", dry_run=True,
+    )
+    assert result == (0, 1)
+    assert "cannot check coherent lineage" in capsys.readouterr().err
+
+
+def test_indexed_dream_id_cannot_escape_archive(dream_reconcile, tmp_path):
+    _write_index(
+        tmp_path,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        "| ../escape | feature design | useful | Bad | dream/p/bad | main | abc1234 |\n",
+    )
+    with pytest.raises(ValueError, match="Invalid indexed dream_id"):
+        dream_reconcile.coherent_branch_refs(str(tmp_path), [])
+
+
+@pytest.mark.slow
 def test_cleanup_branches_refuses_when_head_not_pushed(
     dream_reconcile, tmp_git_repo
 ):

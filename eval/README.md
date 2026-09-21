@@ -1,5 +1,8 @@
 # ShadowFrog Evaluation Suite
 
+The reported campaigns predate `shadow-frog-nap` and the explicit
+`mode=coherent` workflow. They do not measure these additions' cost or quality.
+
 This folder is the view-time entry point for the ShadowFrog evaluation.
 It contains exactly two things:
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ShadowFrog is a suite of AI coding agent skills that build and maintain shadow knowledge bases for any codebase. It consists of 6 skills (`shadow-frog`, `shadow-frog-init`, `shadow-frog-update`, `shadow-frog-dream`, `shadow-frog-meditate`, `shadow-frog-viewer`) and associated hooks, all sharing a common `.shadow/` filesystem. This is a **distributable skills package** — users install it into their own projects via `install.sh`.
+ShadowFrog is a suite of AI coding agent skills that build and maintain shadow knowledge bases for any codebase. It consists of 7 skills (`shadow-frog`, `shadow-frog-init`, `shadow-frog-update`, `shadow-frog-dream`, `shadow-frog-nap`, `shadow-frog-meditate`, `shadow-frog-viewer`) and associated hooks. Nap's proposals remain separate from `.shadow/` discoveries. This is a **distributable skills package** — users install it into their own projects via `install.sh` or `install.ps1`.
 
 ## Repository Structure
 
@@ -10,6 +10,7 @@ ShadowFrog is a suite of AI coding agent skills that build and maintain shadow k
 ShadowFrog/
   skills/
     shadow-frog/SKILL.md         Main entrypoint (docs, reference system, search)
+    shadow-frog/_coherence.py    Shared structural parent-connection validation
     shadow-frog-init/            First-time setup (create .shadow/)
       SKILL.md                   Init instructions + fallback steps
       shadow-init.py             Python helper script
@@ -23,6 +24,9 @@ ShadowFrog/
       dream-cleanup.sh           Safe per-worktree cleanup (replaces inline snippet)
       dream-gc.sh                Orphan-worktree sweep (defense-in-depth)
       _worktree_safety.py        Shared safety gate for rm-rf paths
+    shadow-frog-nap/             Lightweight feature-task ideation (no mandatory implementation)
+      SKILL.md                   Bounded ideation, evidence, and task export instructions
+      nap.py                     Portable record validator, parent context, and exporter
     shadow-frog-meditate/SKILL.md Dedup, merge, and resolve conflicting discoveries
     shadow-frog-viewer/          Browse and query the shadow knowledge base
       SKILL.md                   Query instructions + shell fallbacks
@@ -184,6 +188,30 @@ it in `_dreams/_index.md`.
 - `_dreams/` is excluded from discovery counts and viewer file listings
 
 ## SKILL.md Format
+
+### Dream/Nap Modes and Proposal Records
+
+- `broad` remains the default. `coherent` regularizes parent-child connections,
+  not a whole tree's goal. Children have their own goals; diverse siblings may
+  work on the same files. Do not add sibling-similarity or file-disjointness gates.
+- The canonical `parent_connection` schema is in `skills/shadow-frog/SKILL.md`
+  and checked by `_coherence.py`. Structure is not proof of semantic relevance.
+- Dream mode must reach planning, child prompts, artifacts, and
+  `dream-validate.py --mode coherent`. Cleanup retains coherent branches and
+  their ancestors for continued work and reproducible task baselines.
+- Nap has a single JSON run record with pinned source, limits, nodes, and
+  selected ready tasks. Its Python helper checks recorded budgets, acyclic
+  lineage, task shape, and commit/file existence; it never executes probes.
+- Store nap artifacts outside `.shadow/`, or in an initialized
+  `.shadow/_meta/naps/`. Never initialize a partial shadow just to store a nap,
+  increment dream counters for naps, or treat proposals as verified discoveries.
+- Export final active requirements, not superseded ancestor designs or unrelated
+  siblings. Idea lineage is separate from actual implementation dependencies.
+- New helpers must be cross-platform Python: no Bash/Unix-only dependencies,
+  shell-export/eval handoffs, or hard-coded temporary roots. Use native paths,
+  explicit UTF-8, argument-list subprocesses, and the shared cleanup safety gate.
+
+### Skill Frontmatter
 
 Each skill has a `SKILL.md` with YAML frontmatter:
 

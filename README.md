@@ -56,6 +56,7 @@ Then open the target repo in your AI agent session:
 | `/shadow-frog-init` | Create the shadow |
 | `/shadow-frog-update` | Refresh after code changes |
 | `/shadow-frog-dream` | Explore and experiment while you're away |
+| `/shadow-frog-nap` | Generate grounded feature-task briefs with a bounded budget |
 | `/shadow-frog-meditate` | Deduplicate and resolve conflicts |
 | `/shadow-frog-viewer` | Browse what's in the shadow |
 
@@ -159,6 +160,7 @@ function is named. Prefer "silently returns `None` on expired tokens" over
 | **shadow-frog-init** | Creates `.shadow/` with structural templates for every file | Once per repo |
 | **shadow-frog-update** | Refreshes shadows after code changes; captures knowledge from conversations | After commits, or when you share context |
 | **shadow-frog-dream** | Autonomous exploration and experimentation while you're away | When you want the agent to explore on its own |
+| **shadow-frog-nap** | Lightweight feature-task ideation with selective probes, parent context, and task exports | When you need ideas or SWE task briefs without implementing every candidate |
 | **shadow-frog-meditate** | Deduplicates, merges, and resolves conflicting discoveries | Periodically, to keep the shadow clean |
 | **shadow-frog-viewer** | Browse, search, inspect preferences and labels, render dream lineage, and check invariants | When you want to see what's in the shadow, or audit its integrity |
 
@@ -196,6 +198,67 @@ up where it left off.
 > The experiment code is not merged automatically. Turning a dream branch into
 > a PR is a manual curation step; the dream skill includes guidance for deciding
 > which experiments are worth proposing upstream.
+
+### Lightweight Ideation with Nap
+
+Nap reads focused source and optional shadow/dream evidence, refines a small
+shortlist, and runs only probes that can change a decision. It produces task
+briefs, not completed implementations. It does not require a remote, a
+git-tracked shadow, or full shadow initialization.
+
+```
+/shadow-frog-nap
+/shadow-frog-nap mode=coherent
+```
+
+Default limits are 7 recorded nodes, depth 2, 2 probes, and 2 selected tasks.
+These are configurable ceilings, not quotas; rejected attempts and failed
+probes count. The record validator does not enforce the host agent's actual
+API spending. Store records outside `.shadow/`, or under an already initialized
+`.shadow/_meta/naps/`, so proposals never become verified discoveries by accident.
+
+The bundled `nap.py` uses Python's standard library and Git, with no Bash
+dependency. It validates the record and pinned source files, returns compact
+parent context, exports selected task briefs, or emits one idea trajectory:
+
+```text
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --context n1
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export TASKS.md
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --trajectory n3
+```
+
+For Claude Code use `.claude/skills/`; on Windows, `py -3` can be used in
+place of `python`. See the [Nap skill](skills/shadow-frog-nap/SKILL.md) for
+the canonical record and readiness requirements.
+
+### Coherent Parent-Child Exploration
+
+Both Dream and Nap support `mode=coherent`; the default remains `broad`.
+Coherence applies to **each parent-child edge**, not a fixed tree-wide goal.
+Children may extend, integrate, challenge, replace, simplify, or offer
+alternatives to a parent's work. Ten children of one parent can pursue ten
+different worthwhile directions; sibling diversity is encouraged, not forced
+into a quota or a common feature.
+
+```
+/shadow-frog-dream mode=coherent
+/shadow-frog-nap mode=coherent
+```
+
+Each coherent child records its own goal and an explicit parent connection.
+Dream relaxes its breadth/category rules for this mode, while preserving real
+execution and artifact requirements. Descendants wait for their parent;
+siblings can run in parallel in separate worktrees. Dream validation uses
+`--mode coherent`, and reconciler cleanup retains coherent branches and their
+ancestors until explicit curation so task baselines remain available.
+
+Nap compounds ideas and evidence, not implemented APIs. A task must stand
+alone at its pinned commit or be regenerated against a real implemented parent.
+Export a root-to-leaf trajectory rather than stacking siblings. A final brief
+contains the **active** requirements, not both a discarded design and its
+replacement. Structural validation cannot establish semantic coherence or
+feature feasibility; those still require agent review and appropriate evidence.
 
 ---
 
@@ -423,7 +486,7 @@ For contributors, the main directories are:
 
 | Path | Purpose |
 |------|---------|
-| `skills/` | The six ShadowFrog skills and their helper scripts |
+| `skills/` | The seven ShadowFrog skills and their helper scripts |
 | `hook-templates/` | Copilot CLI and Claude Code hook configs plus shared hook scripts |
 | `examples/coupon-demo/` | Tiny worked example with a real `.shadow/` |
 | `eval/` | Evaluation methodology and results dashboard |
@@ -433,16 +496,17 @@ For contributors, the main directories are:
 
 ## Tests
 
-ShadowFrog ships with a comprehensive test suite: **1,063 tests, 76% line
-coverage with the declared dev dependencies, and no mocked helper layers**.
-Tests exercise the real Python scripts and shell hooks against temporary
-shadow trees and git repositories.
+ShadowFrog's test suite exercises the real Python scripts and shell hooks
+against temporary shadow trees and git repositories, without mocked helper
+layers. Nap and coherence coverage includes diverse siblings, parent cycles,
+recorded budgets, final-contract exports, installed layouts, and operation
+without Bash on PATH.
 
 Run the suite locally:
 
 ```bash
 pip install -r requirements-dev.txt  # pytest, pytest-cov, pathspec
-python3 -m pytest                    # all 1,063 tests
+python3 -m pytest                   # all tests
 python3 -m pytest tests/skills/      # just the skill-script tests
 python3 -m pytest -k viewer          # everything matching "viewer"
 python3 -m pytest --cov=skills       # coverage report

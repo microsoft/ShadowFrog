@@ -78,6 +78,16 @@ def meditate_repair(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-meditate/meditate-repair.py")
 
 
+@pytest.fixture(scope="session")
+def coherence(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog/_coherence.py")
+
+
+@pytest.fixture(scope="session")
+def nap(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-nap/nap.py")
+
+
 # --- Filesystem fixtures ---
 
 @pytest.fixture

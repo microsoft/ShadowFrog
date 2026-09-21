@@ -12,6 +12,14 @@ ShadowFrog was developed to give AI coding agents a persistent, compounding memo
 
 The system is designed for a research audience studying how AI agents can build and leverage long-term understanding of software. It operates entirely within the user's local repository and git workflow, producing human-readable Markdown artifacts. During autonomous exploration ShadowFrog may write and run throwaway experiments in isolated, disposable git branches, but it does not merge or ship that experimental code into your production branches on its own — only the resulting behavioral discoveries (not the experiment code) are integrated into the knowledge base; it builds a knowledge layer that the host agent can consult when performing downstream tasks such as bug fixing, code review, or feature planning.
 
+The lightweight Nap skill proposes feature-task briefs from focused source
+inspection, optional prior knowledge, and selective probes. Its proposals are
+not verified implementations and are stored separately from shadow discoveries.
+Dream and Nap can use coherent mode to ground parent-child transitions while
+allowing diverse siblings and alternatives. Schema checks do not establish
+semantic coherence, feasibility, or user value. Nap's recorded-work limits
+also do not enforce the host model's actual token or financial spending.
+
 A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
 ### Intended Uses
@@ -39,6 +47,10 @@ We do not recommend using ShadowFrog in the context of high-risk decision making
 To begin using ShadowFrog, follow the installation and usage instructions in the repository [README.md](https://github.com/microsoft/ShadowFrog/blob/main/README.md).
 
 ## Evaluation
+
+The evaluations below predate Nap and the explicit coherent mode. Their
+results must not be interpreted as measurements of these additions' cost,
+task quality, or implementation success.
 
 ShadowFrog was evaluated on its ability to: (1) navigate and retrieve relevant shadow knowledge given a file path (read-path recall); (2) independently discover known real-world bugs through autonomous exploration without being given a problem statement (blind bug hunting on SWE-Bench Verified and at scale on SWE-Smith); (3) improve bug-fix success rates by providing pre-built shadow context to a coding agent (bug fixing on SWE-Bench Verified); and (4) generate higher-quality, more architecturally grounded feature ideas compared to a no-shadow baseline (feature ideation across 8 open-source repositories, blind-judged by an ensemble of three LLMs).
 

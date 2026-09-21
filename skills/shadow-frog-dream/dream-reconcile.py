@@ -1285,6 +1285,39 @@ def verify_reconciliation(repo_root, manifests):
 
 # --- Step 9: Cleanup branches ---
 
+def coherent_branch_refs(repo_root, manifests):
+    """Retain coherent branches and their ancestors for later task baselines."""
+    records = {branch: manifest for branch, _, manifest in manifests}
+    archive = Path(repo_root, '.shadow', '_dreams').resolve()
+    for branch, dream_id in _read_indexed_branches(repo_root):
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', dream_id):
+            raise ValueError(f"Invalid indexed dream_id: {dream_id}")
+        path = (archive / dream_id / 'manifest.json').resolve()
+        if not path.is_relative_to(archive):
+            raise ValueError(f"Manifest is outside the dream archive: {dream_id}")
+        with path.open(encoding="utf-8") as stream:
+            records[branch] = json.load(stream)
+    for branch, manifest in records.items():
+        if not isinstance(manifest, dict):
+            raise ValueError(f"Manifest for {branch} must be an object")
+        if manifest.get('mode', 'broad') not in ('broad', 'coherent'):
+            raise ValueError(f"Unknown dream mode in manifest for {branch}")
+    pending = [
+        branch for branch, manifest in records.items()
+        if manifest.get('mode') == 'coherent'
+    ]
+    retained = set()
+    while pending:
+        branch = pending.pop()
+        if branch in retained:
+            continue
+        retained.add(branch)
+        parent = records.get(branch, {}).get('parent_branch')
+        if isinstance(parent, str) and parent.startswith('dream/'):
+            pending.append(parent)
+    return retained
+
+
 def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
     """Delete reconciled dream branches (local and remote).
 
@@ -1294,6 +1327,7 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
     - All 3 artifacts exist on main (report.md, manifest.json, patch.diff)
     - The dream_id appears in _index.md
     - No un-reconciled branches list this branch as parent
+    - The branch is not part of a coherent lineage retained for task baselines
 
     Returns (deleted, kept) counts.
     """
@@ -1303,6 +1337,12 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
     # Check if SHADOWFROG_KEEP_BRANCHES is set
     if os.environ.get('SHADOWFROG_KEEP_BRANCHES', '').strip() in ('1', 'true', 'yes'):
         print("  SHADOWFROG_KEEP_BRANCHES is set — skipping cleanup.")
+        return 0, len(manifests)
+
+    try:
+        retained = coherent_branch_refs(repo_root, manifests)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"  ERROR: Refusing cleanup; cannot check coherent lineage: {exc}", file=sys.stderr)
         return 0, len(manifests)
 
     # Safety check 0: refuse cleanup unless reconciliation commit is on
@@ -1368,6 +1408,11 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
 
     for branch, dream_id, manifest in manifests:
         dream_dir = os.path.join(repo_root, '.shadow', '_dreams', dream_id)
+
+        if branch in retained:
+            print(f"  KEEPING {branch} - coherent lineage; prune only after explicit curation")
+            kept += 1
+            continue
 
         # Safety check 1: all artifacts on main
         artifacts_ok = all(

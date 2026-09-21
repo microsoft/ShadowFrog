@@ -7,6 +7,32 @@ shadow knowledge bases for any codebase.
 
 ---
 
+## Unreleased
+
+### Added
+- **`shadow-frog-nap`** — bounded, source-grounded feature-task ideation with
+  optional probes, compact parent context, and a Python-only record
+  validator/exporter. Records pin a code baseline and keep proposals separate
+  from verified discoveries. Task exports use selected nodes' active contracts;
+  trajectory output follows one root-to-node idea path rather than stacking
+  siblings or inventing implemented dependencies.
+- **Optional coherent mode for Dream and Nap** — regularizes parent-child
+  connections while encouraging diverse siblings, independent child goals,
+  challenges, replacements, and alternatives. Shared structural validation
+  checks the connection contract without pretending to judge semantic quality.
+  Dream's mode is checked against the requested validator mode and report
+  metadata; its broad exploration behavior remains the default.
+- **Coherent branch retention** — reconciler cleanup preserves coherent
+  branches and their ancestors, including previously indexed descendants, for
+  future exploration and reproducible task baselines. Unreadable indexed
+  manifests stop cleanup rather than risking those references.
+- **Feature regression coverage** — real records and Git repositories cover
+  sibling diversity, lineage cycles, recorded limits, final-contract exports,
+  native Python operation without Bash, installed skill layouts, and branch
+  retention. New helpers require only the Python standard library and Git.
+
+---
+
 ## 2026-06-23
 
 ### Added
