@@ -31,6 +31,25 @@ shadow knowledge bases for any codebase.
   native Python operation without Bash, installed skill layouts, and branch
   retention. New helpers require only the Python standard library and Git.
 
+### Fixed
+- **Canonical ancestor retention** — cleanup now follows the same resolved
+  index parent edges as reconciliation and index repair, rather than reading
+  only a string `parent_branch`. List-valued and fallback lineage can no longer
+  leave a coherent experiment's named ancestors unprotected.
+- **Historical helper downgrades** — `dream-tools.py` pins current helpers and
+  instructions in an external host-local snapshot, checks its manifest/file
+  hashes, and dispatches Python tools with the selected validation mode. Parent
+  worktrees and later controller checkouts cannot silently replace those tools.
+- **One automatic pruning path** — removed the duplicate inline deletion recipe
+  and Phase 7 misrouting. Both modes use the guarded Python reconciler, including
+  mixed-mode recovery. Invalid lineage metadata exits nonzero with repair
+  guidance, while retained coherent refs remain an intentional success case.
+- **Mode/snapshot guidance** — coherent descendants refresh parent refs through
+  the orchestrator instead of reusing the initial branch map; broad-only
+  saturation/modify-file gates are now explicitly qualified. Nap's expected
+  CLI mode defaults to broad, matching Dream rather than inferring intent from
+  the record when `--mode` is omitted.
+
 ---
 
 ## 2026-06-23

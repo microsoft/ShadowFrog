@@ -17,6 +17,7 @@ ShadowFrog/
     shadow-frog-update/SKILL.md  Incremental update (after changes)
     shadow-frog-dream/           Autonomous exploration + experimentation (AFK mode)
       SKILL.md                   Dream instructions + pipeline phases
+      dream-tools.py            Pins current tooling outside historical code checkouts
       dream-setup.sh             Worktree + branch creation
       dream-validate.py          Pre-push artifact validation
       dream-reconcile.py         Merge dream branches into main's shadow
@@ -196,12 +197,20 @@ it in `_dreams/_index.md`.
   work on the same files. Do not add sibling-similarity or file-disjointness gates.
 - The canonical `parent_connection` schema is in `skills/shadow-frog/SKILL.md`
   and checked by `_coherence.py`. Structure is not proof of semantic relevance.
-- Dream mode must reach planning, child prompts, artifacts, and
-  `dream-validate.py --mode coherent`. Cleanup retains coherent branches and
-  their ancestors for continued work and reproducible task baselines.
+- Dream mode must reach planning, child prompts, artifacts, and the pinned
+  validation command. `dream-tools.py` snapshots current helpers/instructions
+  outside code repositories and verifies hashes before dispatch; never use a
+  historical worktree's installed helpers or manually bypass cleanup checks.
+- Cleanup retains coherent branches through canonical index parent edges,
+  including repaired/fallback lineage. Unreadable metadata raises an actionable
+  error and the CLI exits nonzero before deleting branches.
+- Broad exploration uses its initial snapshot; coherent descendants receive
+  an orchestrator-refreshed parent ref/tip after the parent is pushed. Siblings
+  share that refreshed snapshot, without independent fetches.
 - Nap has a single JSON run record with pinned source, limits, nodes, and
   selected ready tasks. Its Python helper checks recorded budgets, acyclic
   lineage, task shape, and commit/file existence; it never executes probes.
+  Its expected mode defaults to broad; coherent runs must pass `--mode coherent`.
 - Store nap artifacts outside `.shadow/`, or in an initialized
   `.shadow/_meta/naps/`. Never initialize a partial shadow just to store a nap,
   increment dream counters for naps, or treat proposals as verified discoveries.

@@ -10,7 +10,9 @@ Options:
     --verify-only        Only run post-reconciliation verification (checks
                          all dreams already in _index.md, not just unreconciled)
     --namespace NS       Override DREAM_NAMESPACE
-    --cleanup-branches   Delete reconciled branches after verification.
+    --cleanup-branches   Prune only unprotected reconciled branches.
+                         Retains coherent lineages and their canonical
+                         index ancestors, including repaired/fallback parents.
                          REFUSES to run unless the reconciliation commit is
                          already on origin/<default-branch>. Run AFTER push.
     --help, -h           Show this help message
@@ -24,9 +26,11 @@ Steps (idempotent, safe to rerun):
     6. Update _meta/state.json
     7. Rebuild top-level .shadow/_index.md (per-file discovery counts)
     8. Verify all artifacts present
-    9. (Optional) Delete reconciled branches — only after push
+    9. (Optional) Prune unprotected reconciled branches — only after push
 
-Exits 0 on success, 1 on any verification failure.
+Exits 0 on success, 1 on verification or coherent-lineage read failure.
+On a lineage read failure, restore the indexed manifest or repair its stale
+index entry after checking descendants; no branches are deleted.
 """
 
 import json
@@ -217,7 +221,7 @@ def _read_indexed_dream_ids(repo_root):
 
 
 def _read_indexed_branches(repo_root):
-    """Return list of (branch, dream_id) tuples from _index.md (column 5)."""
+    """Return (branch, dream_id, resolved parent) rows from the canonical index."""
     index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
     rows = []
     if not os.path.isfile(index_path):
@@ -231,7 +235,8 @@ def _read_indexed_branches(repo_root):
                     dream_id = parts[1]
                     branch = parts[5]
                     if branch:
-                        rows.append((branch, dream_id))
+                        parent = parts[6] if len(parts) >= 7 else ''
+                        rows.append((branch, dream_id, parent))
     return rows
 
 
@@ -1288,8 +1293,10 @@ def verify_reconciliation(repo_root, manifests):
 def coherent_branch_refs(repo_root, manifests):
     """Retain coherent branches and their ancestors for later task baselines."""
     records = {branch: manifest for branch, _, manifest in manifests}
+    dream_ids = {branch: dream_id for branch, dream_id, _ in manifests}
+    indexed_parents = {}
     archive = Path(repo_root, '.shadow', '_dreams').resolve()
-    for branch, dream_id in _read_indexed_branches(repo_root):
+    for branch, dream_id, parent in _read_indexed_branches(repo_root):
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', dream_id):
             raise ValueError(f"Invalid indexed dream_id: {dream_id}")
         path = (archive / dream_id / 'manifest.json').resolve()
@@ -1297,6 +1304,8 @@ def coherent_branch_refs(repo_root, manifests):
             raise ValueError(f"Manifest is outside the dream archive: {dream_id}")
         with path.open(encoding="utf-8") as stream:
             records[branch] = json.load(stream)
+        dream_ids[branch] = dream_id
+        indexed_parents[branch] = parent
     for branch, manifest in records.items():
         if not isinstance(manifest, dict):
             raise ValueError(f"Manifest for {branch} must be an object")
@@ -1312,10 +1321,23 @@ def coherent_branch_refs(repo_root, manifests):
         if branch in retained:
             continue
         retained.add(branch)
-        parent = records.get(branch, {}).get('parent_branch')
-        if isinstance(parent, str) and parent.startswith('dream/'):
+        if branch in indexed_parents:
+            parent = indexed_parents[branch]
+            if not parent:
+                raise ValueError(f"Missing canonical index parent for {branch}")
+        elif branch in records:
+            parent = _resolve_parent_branch(
+                repo_root, branch, dream_ids[branch], records[branch],
+            )
+        else:
+            raise ValueError(f"Missing lineage metadata for retained parent {branch}")
+        if parent.startswith('dream/'):
             pending.append(parent)
     return retained
+
+
+class CoherentLineageError(RuntimeError):
+    """Cleanup cannot safely determine which baseline refs must be retained."""
 
 
 def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
@@ -1341,9 +1363,12 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
 
     try:
         retained = coherent_branch_refs(repo_root, manifests)
-    except (OSError, UnicodeError, ValueError) as exc:
-        print(f"  ERROR: Refusing cleanup; cannot check coherent lineage: {exc}", file=sys.stderr)
-        return 0, len(manifests)
+    except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
+        raise CoherentLineageError(
+            f"Refusing cleanup; cannot check coherent lineage: {exc}. "
+            "Restore the indexed manifest or repair the stale _dreams/_index.md "
+            "entry after checking its descendants, then retry. No branches were deleted."
+        ) from exc
 
     # Safety check 0: refuse cleanup unless reconciliation commit is on
     # origin/<default-branch>. Otherwise a single failed `git push` would
@@ -1756,7 +1781,7 @@ def main():
             print("No reconciled dreams found in _index.md.")
             sys.exit(0)
         manifests = []
-        for branch, dream_id in indexed:
+        for branch, dream_id, _ in indexed:
             # Reconstruct minimal manifest from local mirrored copy
             local_manifest = os.path.join(
                 repo_root, '.shadow', '_dreams', dream_id, 'manifest.json'
@@ -1795,7 +1820,7 @@ def main():
             # Synthesize minimal manifests from the local mirrored copies so
             # cleanup_branches can do its safety checks.
             cleanup_manifests = []
-            for branch, dream_id in indexed:
+            for branch, dream_id, _ in indexed:
                 local_manifest = os.path.join(
                     repo_root, '.shadow', '_dreams', dream_id, 'manifest.json'
                 )
@@ -1900,4 +1925,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except CoherentLineageError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

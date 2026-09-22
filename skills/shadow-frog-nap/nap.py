@@ -351,7 +351,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record", type=Path, help="Canonical nap JSON record")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Source repository")
-    parser.add_argument("--mode", choices=MODES, help="Require the requested mode")
+    parser.add_argument("--mode", choices=MODES, default="broad",
+                        help="Require the requested mode (default: broad)")
     views = parser.add_mutually_exclusive_group()
     views.add_argument("--context", metavar="NODE", help="Compact context for proposing children")
     views.add_argument("--trajectory", metavar="NODE", help="One root-to-node idea path as JSON")
@@ -360,7 +361,7 @@ def main() -> int:
     try:
         run = json.loads(args.record.read_text(encoding="utf-8-sig"))
         validate_record(run)
-        if args.mode is not None and run["mode"] != args.mode:
+        if run["mode"] != args.mode:
             raise ValueError(f"Requested mode {args.mode} does not match record mode {run['mode']}")
         repo = Path(_git(args.repo, "rev-parse", "--show-toplevel").rstrip("\r\n")).resolve()
         _check_archive_path(args.record.resolve(), repo)

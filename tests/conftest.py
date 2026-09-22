@@ -64,6 +64,11 @@ def dream_validate(repo_root):
 
 
 @pytest.fixture(scope="session")
+def dream_tools(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-dream/dream-tools.py")
+
+
+@pytest.fixture(scope="session")
 def dream_coverage(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-dream/dream-coverage.py")
 

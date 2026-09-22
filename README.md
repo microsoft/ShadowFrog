@@ -250,8 +250,20 @@ Each coherent child records its own goal and an explicit parent connection.
 Dream relaxes its breadth/category rules for this mode, while preserving real
 execution and artifact requirements. Descendants wait for their parent;
 siblings can run in parallel in separate worktrees. Dream validation uses
-`--mode coherent`, and reconciler cleanup retains coherent branches and their
-ancestors until explicit curation so task baselines remain available.
+the selected mode, and reconciler cleanup retains coherent branches and their
+canonical index ancestors until explicit curation so task baselines remain
+available, including ancestors represented through supported lineage fallbacks.
+
+Before worktrees or branch switches, `dream-tools.py` pins the current helper
+bundle and instructions into a new external run directory. Its returned command
+arrays verify that snapshot before execution and supply the selected validation
+mode. Continuing an older dream therefore cannot silently select its older
+installed validator. The snapshot is host-local run state, not committed task
+data, and remains available while children or resumed work use it.
+
+All automatic branch pruning uses the pinned Python reconciler, including broad
+runs that recover pending coherent branches. If lineage metadata cannot be
+read, cleanup exits nonzero with repair guidance before deleting any branches.
 
 Nap compounds ideas and evidence, not implemented APIs. A task must stand
 alone at its pinned commit or be regenerated against a real implemented parent.

@@ -50,6 +50,8 @@ Examples: `/shadow-frog-nap` or `/shadow-frog-nap mode=coherent`.
 Resolve the requested mode once and carry it through planning, child context,
 the run's `mode`, and every helper invocation's `--mode` argument. Do not
 silently fall back to broad mode.
+The CLI's expected mode defaults to `broad`, just like Dream validation;
+a coherent record requires an explicit `--mode coherent`.
 
 **Broad:** propose a few distinct, code-grounded opportunities. With defaults,
 start with up to three candidates, retain at most two promising directions,

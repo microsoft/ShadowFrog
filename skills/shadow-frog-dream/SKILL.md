@@ -11,6 +11,7 @@ description: >-
   AFK or asks for a dream run. Use mode=coherent to ground each child in
   its parent while encouraging diverse siblings, challenges, and alternatives.
 scripts:
+  - dream-tools.py
   - dream-coverage.py
   - dream-validate.py
   - dream-reconcile.py
@@ -75,9 +76,9 @@ inadequate, the child's concrete delta, and why the result is useful. For a
 replacement, compare the old/new behavior against the relevant constraints.
 Structural validation cannot judge semantic coherence.
 
-Coherent branches and their ancestors are retained by reconciler cleanup for
-continued exploration and reproducible task baselines. Do not use the inline
-branch-pruning recipe below for a coherent run. Explicit later curation may
+Coherent branches and their canonical index ancestors are retained by the
+pinned reconciler for continued exploration and reproducible task baselines.
+Every mode uses that same guarded pruning path. Explicit later curation may
 remove branches only after checking references and preserving required commits.
 Worktrees can still be cleaned up normally after successful pushes.
 
@@ -131,9 +132,11 @@ NEVER flat files (`_dreams/<DREAM_ID>.md`). Flat files break the pipeline.
 
 ### RUN_PREFIX
 
-All python/pytest commands MUST use the `RUN_PREFIX` resolved during
-preflight. When `RUN_PREFIX="uv run"`, use `$RUN_PREFIX python3 ...`.
-Bare `python3` or `pytest` without prefix is a violation when non-empty.
+Repository code and tests MUST use the `RUN_PREFIX` resolved during preflight.
+When `RUN_PREFIX="uv run"`, use it for the repository's Python/pytest commands.
+ShadowFrog's standard-library helpers instead use the interpreter and absolute
+command arguments captured by `dream-tools.py`; their tooling version must not
+come from the historical experiment checkout.
 
 ### Reconciliation is Mandatory
 
@@ -143,7 +146,7 @@ reconciling — losing all discoveries.
 
 **Two modes:**
 - **Parallel mode (default):** Launch a batch of 3-4 sub-agents → wait
-  for all to push → run `dream-reconcile.py "$REPO_ROOT"` ONCE at the end
+  for all to push → run the pinned `commands.reconcile` ONCE at the end
   of the batch. The reconciler auto-discovers every un-reconciled dream
   branch in the namespace — you do NOT pass branch names. One call merges
   every pushed branch.
@@ -157,11 +160,14 @@ each batch or each individual dream.
 
 ### Script Failure Recovery
 
-All helper scripts (`dream-setup.sh`, `dream-reconcile.py`,
-`dream-validate.py`) are **self-documenting**. If a script fails or is
-unavailable: **read the script source**, understand what it does, and adapt
-its logic manually for your situation. Never skip steps just because a
-script errored — the steps still need to happen.
+The pinned helpers are self-documenting. Diagnose errors by reading their
+current sources, fix the reported prerequisite or artifact, and retry the same
+checked command. Never substitute worktree-local helpers, downgrade the mode,
+skip validation, or imitate branch deletion manually.
+
+If the tooling snapshot is missing or changed, stop. Restore or pin a fresh
+complete bundle from the current installation in the controller checkout, not
+from a historical dream. Do not edit a snapshot to make its hash checks pass.
 
 ```
 Pushable remote
@@ -188,17 +194,55 @@ dream run; the user must configure one first.
 
 ## Helper Scripts
 
-This skill bundles 6 helper scripts. Find them in the skill directory:
+This skill bundles 7 helper scripts. **Pin current tooling before creating or
+entering an experiment worktree, or switching the controller's code branch.**
+Historical branches can contain older helpers that silently ignore new flags.
 
-```bash
-SKILL_DIR=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -d "$DIR" ] && SKILL_DIR="$DIR" && break
-done
+Locate `dream-tools.py` beside this currently loaded skill in the controller's
+`.github/skills/shadow-frog-dream/` or `.claude/skills/shadow-frog-dream/`.
+Choose a new directory in the host's run/session workspace, **outside both the
+target repository and the skill-source repository**:
+
+```text
+python CURRENT_SKILL/dream-tools.py pin --repo-root REPO_ROOT --output EXTERNAL_RUN_TOOLS --mode coherent
 ```
+
+Use `--mode broad` for a broad run. The command copies the current Dream and
+core helpers/instructions, atomically writes `tooling.json` after copying, and
+prints a JSON control packet. Save the packet in the external run workspace
+and pass it unchanged to every child. This is host-local tooling, not a shadow
+discovery or task artifact; never commit it into the target repository.
+
+The packet contains:
+- `commands.validate`, `commands.reconcile`, `commands.coverage`: absolute
+  argument arrays, including the captured interpreter, snapshot runner, and
+  manifest digest. Reconcile/coverage already include `REPO_ROOT`.
+- `helper_paths`: absolute paths to the bundled lifecycle scripts/modules.
+- `instructions`: current core/Dream skill copies children must use for the
+  workflow, rather than the old copies in their code worktrees.
+- `mode`, `repo_root`, and the absolute pinned `skill_dir` (`SKILL_DIR` below).
+
+Execute command arrays as arguments, not shell code. Append only the operation's
+arguments: `[DREAM_ID, WORKTREE_DIR]` for validation, `["--namespace", DREAM_NS]`
+for reconciliation, and optionally `["--cleanup-branches"]` after committing and
+pushing reconciliation. The dispatcher supplies the pinned validation mode and
+rejects mode overrides. It checks the manifest digest and all captured file
+hashes before executing the helper, preserving its output and exit status.
+
+For example, the equivalent native command shape for validation is:
+
+```text
+python PINNED_SKILL/dream-tools.py run --digest PIN_DIGEST validate DREAM_ID WORKTREE_DIR
+```
+
+`PINNED_SKILL` and `PIN_DIGEST` come from the packet; do not fabricate them.
+Keep the snapshot while children or resumed work reference it. The run workspace
+owns its eventual cleanup; this helper never recursively deletes directories.
+Re-pin on a different host rather than reusing host-specific interpreter paths.
 
 | Script | Purpose | When to use |
 |--------|---------|-------------|
+| `dream-tools.py` | Pins current tooling and dispatches checked Python helpers | **Before worktrees** and for every validation/reconciliation/coverage call |
 | `dream-setup.sh` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
 | `dream-validate.py` | Validates artifacts before push (hard gate) | **Phase 5** — before `git push` |
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
@@ -206,53 +250,11 @@ done
 | `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
 | `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.sh` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs |
 
-**Usage patterns:**
-
-```bash
-# Setup: creates worktree, prints export vars.
-# IMPORTANT: capture the output FIRST, then eval it. Writing
-# `eval "$(dream-setup.sh ...)" || exit 1` does NOT catch failures: if the
-# command substitution exits non-zero and prints nothing, `eval ""` still
-# succeeds (exit 0) and the agent silently proceeds with empty env vars.
-# Assigning to a variable makes `|| exit 1` fire on the script's real exit code.
-SETUP_OUT="$("$SKILL_DIR/dream-setup.sh" --slug t01-my-experiment)" || exit 1
-eval "$SETUP_OUT"
-# → exports (keep in sync with dream-setup.sh emit_export block):
-#   REPO_ROOT, DEFAULT_BRANCH, DREAM_NS, DREAM_ID, BRANCH_NAME, PARENT_BRANCH,
-#   WORKTREE_DIR, WORKTREE_BASE, BASE_COMMIT, RUN_PREFIX, SLUG
-
-# Validate: hard gate before push
-python3 "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
-
-# Reconcile: merge all dream branches into main
-python3 "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT"
-# After `git push` succeeds, optionally clean up reconciled branches.
-# Cleanup REFUSES to run if `.shadow/` has uncommitted changes, or unless
-# HEAD is already on origin/<default-branch> — so the canonical flow is:
-#   reconcile → git add .shadow/ && git commit && git push → re-run --cleanup-branches
-python3 "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" --cleanup-branches
-
-# Coverage: show which files still need exploration
-python3 "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
-
-# All scripts support --help.
-```
-
-The validation examples above and below use broad mode. **For a coherent
-task, replace the validation invocation with the explicit coherent form**:
-
-```text
-python PATH/TO/dream-validate.py DREAM_ID WORKTREE_DIR --mode coherent
-```
-
-Use the host's Python 3 interpreter and the repository's runner as appropriate.
-`--mode coherent` must match `manifest.json` and the report's mode; never fix a
-mismatch by silently downgrading the requested mode. The shared
-`shadow-frog/_coherence.py` ships with the core skill through both installers.
-
-If a script is not found or fails, read its source — they are
-self-documenting. Adapt the steps manually if needed (see each phase for
-inline fallback instructions).
+The shared `shadow-frog/_coherence.py` is captured beside the Dream tools.
+Never rediscover these Python helpers relative to `WORKTREE_DIR`. All scripts
+support `--help`. Setup/cleanup/GC still have their current lifecycle interfaces;
+the tool snapshot does not port remaining shell scripts or bypass their safety
+checks. Use a native Python port when it is present in the installed bundle.
 
 ## Phase 1: Preflight and Assess
 
@@ -339,9 +341,8 @@ fi
 **If any check prints ERROR, STOP.** Do not use `exit 1` — check output
 and stop at the agent level.
 
-(`RUN_PREFIX` MUST be threaded into every subagent prompt — see Critical
-Invariants above. Bare `python3`/`pytest` without prefix = completion
-criteria violation.)
+(`RUN_PREFIX` MUST be threaded into every subagent prompt for repository
+code/tests. Helper commands use the pinned packet's interpreter instead.)
 
 ### Snapshot Branch State
 
@@ -371,14 +372,8 @@ dream reports** in `_dreams/`.
 File-level coverage breadth is the strongest predictor of dream success
 (r²=0.63 vs bugs found), NOT dream count (r²=0.04).
 
-```bash
-# Find and run the coverage script
-COVERAGE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-coverage.py" ] && COVERAGE_SCRIPT="$DIR/dream-coverage.py" && break
-done
-[ -n "$COVERAGE_SCRIPT" ] && python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" || echo "WARNING: dream-coverage.py not found"
-```
+Run the packet's `commands.coverage`. It already contains the pinned
+interpreter/tool version and the original repository path.
 
 **Coverage definition:** A file is "covered" only when its shadow has
 ≥1 behavioral discovery (line starting with `- `). Placeholder-only = NOT covered.
@@ -390,15 +385,10 @@ frontier of bugs, a newly-added module, a subsystem the user just
 flagged) deserves a focused dream session. All counts (totals, %,
 saturated, fan-in, per-dir) are computed over the scoped subset only.
 
-```bash
-# Scope to one subtree
-python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" --scope src/auth/
+For one subtree, append `["--scope", "src/auth/"]` to `commands.coverage`.
+For several, append repeated `--scope` argument pairs.
 
-# Scope to multiple subtrees in one pass
-python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" --scope src/auth/ --scope src/db/
-```
-
-When using `--scope`, the per-category task quotas (Phase 2) still apply
+In broad mode, when using `--scope`, the per-category task quotas (Phase 2) still apply
 but are interpreted against the scoped subset. Don't use scoped
 exploration as the default — pick it only when there's a concrete reason
 to concentrate effort. Unscoped diversity remains the strongest
@@ -411,7 +401,8 @@ parent reports/manifests and relevant ancestor evidence. Do not reread every
 report or reject a useful parent merely because its files are well covered.
 
 When compoundable experiments exist (preflight step 9):
-- Read each report: `cat .shadow/_dreams/<dream_id>/report.md`
+- Broad mode: read the candidate reports. Coherent mode: read the selected
+  parent's report/manifest and the relevant ancestor evidence.
 - Choose which to continue (extending, fixing, integrating)
 - Note `dead_end` experiments to avoid repeating
 - Trace lineage via the `parent` column in `_dreams/_index.md`
@@ -421,9 +412,12 @@ When compoundable experiments exist (preflight step 9):
 1. Read the parent's `report.md` AND `manifest.json`
 2. Verify the parent has a non-empty `patch.diff` (prose-only parents
    are low-value — prefer parents with working code)
-3. Identify at least one specific file or function you plan to modify/extend
-4. Check the parent's area isn't saturated (8+ discoveries) — if it is,
-   start fresh from main unless you have a concrete new angle
+3. Broad mode: identify a specific file/function to modify or extend.
+   Coherent mode: identify the parent capability, finding, or decision that
+   motivates the child; a technically independent alternative is allowed.
+4. Broad mode: check saturation (8+ discoveries) and prefer a fresh target
+   unless there is a concrete new angle. Coherent mode has no saturation gate;
+   assess whether the proposed continuation adds useful evidence or capability.
 5. Log your compounding intent: "I will extend parent's retry logic in
    `src/http.py` to handle connection timeouts" — vague "continue
    exploring" is NOT compounding
@@ -581,38 +575,27 @@ written, code run, results recorded.
 Use `dream-setup.sh` to create worktrees (handles all path computation,
 namespace resolution, worktree creation, and validation):
 
-```bash
-# Find the setup script
-SETUP_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-setup.sh" ] && SETUP_SCRIPT="$DIR/dream-setup.sh" && break
-done
+Use the absolute setup helper in the pinned packet. For the current shell
+entry point, request JSON rather than shell exports:
 
-# Fresh experiment from main:
-SETUP_OUT="$("$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
-eval "$SETUP_OUT"
-
-# Compounding from prior dream:
-SETUP_OUT="$("$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
-eval "$SETUP_OUT"
+```text
+bash PINNED_SKILL/dream-setup.sh --slug t01-csv-fuzzer --repo-root REPO_ROOT --print-json
+bash PINNED_SKILL/dream-setup.sh --slug t03-extend --repo-root REPO_ROOT --base-branch dream/<ns>/<prior-id> --print-json
 ```
 
-Capture into `SETUP_OUT` first, then `eval` it — see Helper Scripts §
-usage patterns (above) for why bare `eval "$(…)" || exit 1` silently
-swallows the script's exit code.
-
-This exports (keep in sync with `dream-setup.sh`): `REPO_ROOT`,
-`DEFAULT_BRANCH`, `DREAM_NS`, `DREAM_ID`, `BRANCH_NAME`, `PARENT_BRANCH`,
-`WORKTREE_DIR`, `WORKTREE_BASE`, `BASE_COMMIT`, `RUN_PREFIX`, `SLUG`.
+Use the Python setup port when available. Keep the returned `repo_root`,
+`default_branch`, `dream_ns`, `dream_id`, `branch_name`, `parent_branch`,
+`worktree_dir`, `worktree_base`, `base_commit`, `run_prefix`, and `slug` in the
+agent's task state. Uppercase names in the remaining recipes refer to these
+values, not to shell variables that persist across tool calls.
 
 **If `dream-setup.sh` fails or is not found:** Apply the Script Failure
-Recovery rule (read the script source, adapt its logic). Common causes:
+Recovery rule (diagnose the pinned script and retry safely). Common causes:
 missing git remote, branch already exists, `/tmp` permissions.
 
-**Note:** Shell variables don't persist across tool calls. Either run
-multi-step setup in a single shell, or re-derive values. From inside a
-worktree, get main repo with:
-`git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel`
+Do not infer the current tool location from the experimental worktree. The
+packet and its outside-repository snapshot remain authoritative, even if the
+controller checkout later changes branches.
 
 **If worktree creation fails:** mark task `blocked`, replace with another.
 
@@ -889,8 +872,9 @@ it in `_dreams/_index.md`.
 
 ### Validate, Commit, Push
 
-**Coherent mode:** append `--mode coherent` to the validator command in step 2.
-The selected mode is an input from the plan, not inferred after authoring.
+Validation must use `commands.validate` from the pinned packet. Its mode was
+fixed before the worktree was created; no mode override or local-helper fallback
+is allowed. Carry this exact command prefix into each subagent prompt.
 
 ```bash
 cd "$WORKTREE_DIR"
@@ -905,27 +889,16 @@ git diff "$BASE_COMMIT" HEAD -- \
     > .shadow/_dreams/"$DREAM_ID"/patch.diff
 [ ! -s .shadow/_dreams/"$DREAM_ID"/patch.diff ] && echo "WARNING: Empty diff"
 
-# 2. Validate (hard gate — must pass before push)
-VALIDATE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-validate.py" ] && VALIDATE_SCRIPT="$DIR/dream-validate.py" && break
-done
-if [ -n "$VALIDATE_SCRIPT" ]; then
-    python3 "$VALIDATE_SCRIPT" "$DREAM_ID" "$WORKTREE_DIR" || {
-        # If validate fails: read the script to understand what checks failed,
-        # fix the issues it reports, then re-run. The script checks artifact
-        # structure, manifest schema, and report frontmatter.
-        echo "FIX ERRORS"; exit 1
-    }
-else
-    # Script not found — inline fallback (minimal checks)
-    [ ! -d ".shadow/_dreams/$DREAM_ID" ] && echo "ERROR: Missing dir" && exit 1
-    for F in report.md manifest.json patch.diff; do
-        [ ! -f ".shadow/_dreams/$DREAM_ID/$F" ] && echo "ERROR: Missing $F" && exit 1
-    done
-fi
+```
 
-# 3. Final commit and push
+**2. Validate (hard gate):** execute `commands.validate + [DREAM_ID,
+WORKTREE_DIR]`. The copied runner verifies the tooling and passes the pinned
+`--mode` to the copied validator. Stop on any nonzero exit; fix the artifact or
+tooling issue and retry. File-existence checks are not a substitute for validation.
+
+**3. Only after validation succeeds, commit and push:**
+
+```bash
 git add -A -- ':!.dream_parent'
 git commit -m "dream: $SLUG — final with report and manifest"
 if git push origin "$BRANCH_NAME"; then
@@ -993,15 +966,19 @@ rich area and the second half keeps digging there instead of spreading.
 3. Each agent writes its own manifest in its `$DREAM_ID/` directory
 4. Do NOT write to main or shared files (`_index.md`, `state.json`)
 5. Do NOT update metadata — reconciled post-dream by orchestrator
-6. Fetch once, branch from Phase 1 snapshot (no independent fetches)
+6. Broad mode: fetch once and use the initial snapshot. Coherent mode: after a
+   parent is pushed, the orchestrator refreshes that parent's ref/commit and
+   branch map before launching its children. Siblings share the refreshed
+   snapshot; subagents never fetch independently.
 7. Manifest anchors use bare symbol names (reconciler normalizes)
 8. Thread `RUN_PREFIX` into every subagent prompt
 9. Include `WORKTREE_BASE` and `DREAM_NS` in every subagent prompt
 10. Dream artifacts MUST use subdirectory format — flat files are a
     completion criteria violation (see Critical Invariants → Artifact Format)
-11. Thread the selected mode into every prompt. For coherent children, include
-    their own goal, parent packet, connection, and expected parent commit;
-    validation must use `--mode coherent`.
+11. Thread the selected mode and pinned tool packet into every prompt. For
+    coherent children, include their own goal, parent packet, connection, and
+    expected parent commit. Use the supplied validation command; never resolve
+    a helper from the child's installed skill directories.
 
 ## Phase 6: Reconcile to Main
 
@@ -1020,26 +997,15 @@ cd "$REPO_ROOT"
 git checkout "$DEFAULT_BRANCH"
 git fetch origin --prune
 
-# Find and run the reconciliation script
-RECONCILE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-reconcile.py" ] && RECONCILE_SCRIPT="$DIR/dream-reconcile.py" && break
-done
-
-if [ -n "$RECONCILE_SCRIPT" ]; then
-    python3 "$RECONCILE_SCRIPT" "$REPO_ROOT"
-else
-    echo "WARNING: dream-reconcile.py not found. Apply Script Failure Recovery: read dream-reconcile.py source, adapt its 9 steps manually."
-fi
 ```
 
-**If the reconciler script fails or errors:** Read `dream-reconcile.py` source
-to understand which step broke and why. The script is structured as 9
-sequential, idempotent steps (see below). You can often fix the issue and
-re-run the script (it skips dreams already in `_index.md`), or perform the
-failing step manually and then re-run the remaining steps. Common failures:
-missing manifest, corrupt report frontmatter, merge conflict in shadow file.
-Adapt based on the error message.
+Then execute `commands.reconcile + ["--namespace", DREAM_NS]`. It already names
+the original repository and the pinned helper, so checking out the default
+branch cannot downgrade the tooling.
+
+On an error, diagnose the pinned source and repair the reported artifacts or
+preconditions before retrying. Do not fall back to a worktree-local reconciler
+or manually imitate its branch-deletion steps.
 
 ### What the Reconciler Does
 
@@ -1075,46 +1041,26 @@ fi
 
 ### Post-Reconciliation Branch Cleanup
 
-**Broad-only recipe.** Coherent runs retain their lineage branches and must
-not execute the inline deletion loop below. The reconciler's cleanup performs
-the retention check even when coherent descendants were reconciled earlier.
+There is **one automatic pruning path in either mode**. After reconciliation
+is committed and pushed, execute:
 
-After reconciliation is **committed AND pushed**, clean up dream branches
-to prevent repo pollution. Only delete branches whose artifacts are safely
-on main.
-
-```bash
-for BRANCH in $RECONCILED_BRANCHES; do
-    DREAM_ID="${BRANCH#dream/${DREAM_NS}/}"
-    # Safety check: verify artifacts exist on main BEFORE deleting.
-    # Match the _index.md entry by EXACT cell (column 2), not substring —
-    # `grep -qF "$DREAM_ID"` would false-match when one dream_id is a prefix
-    # of another, deleting an un-reconciled branch.
-    if [ -f .shadow/_dreams/"$DREAM_ID"/report.md ] && \
-       [ -f .shadow/_dreams/"$DREAM_ID"/manifest.json ] && \
-       [ -f .shadow/_dreams/"$DREAM_ID"/patch.diff ] && \
-       awk -F'|' -v id="$DREAM_ID" \
-         '{gsub(/ /,"",$2); if ($2==id) f=1} END {exit !f}' \
-         .shadow/_dreams/_index.md 2>/dev/null; then
-        # Safe to delete — all artifacts are on main
-        git push origin --delete "$BRANCH" 2>/dev/null && \
-            echo "  🗑 Deleted remote: $BRANCH"
-        git branch -D "$BRANCH" 2>/dev/null && \
-            echo "  🗑 Deleted local: $BRANCH"
-    else
-        echo "  ⚠️ KEEPING $BRANCH — artifacts not verified on main"
-    fi
-done
+```text
+commands.reconcile + ["--namespace", DREAM_NS, "--cleanup-branches"]
 ```
 
-**Rules:**
-- NEVER delete branches before push to main succeeds
-- NEVER delete branches that have un-reconciled descendants
-- If `SHADOWFROG_KEEP_BRANCHES=1` is set, skip cleanup (for eval harness)
-- `dead_end` branches are cleaned up too — `patch.diff` + `tip_commit` in
-  index preserves recoverability
-- Branches with compounding descendants: delete ONLY after descendants are
-  also reconciled (check `_index.md` for entries listing this branch as parent)
+This is argument-array notation, not shell code. The command verifies persisted
+artifacts, remote state, descendants, and coherent retention. A broad run can
+reconcile pending coherent branches from an earlier session; the current run's
+mode is never permission to delete those branches.
+
+Never use an inline deletion loop or manually duplicate these checks. A retained
+branch is not failed cleanup: coherent branches and their canonical index
+ancestors remain available until explicit curation. `SHADOWFROG_KEEP_BRANCHES`
+still disables automatic pruning. Worktree cleanup is independent.
+
+Unreadable lineage metadata exits nonzero before any branch deletion. Restore
+the indicated manifest or repair the stale `_dreams/_index.md` row after checking
+its descendants, then retry. Do not delete valid archives to bypass the refusal.
 
 **Worktree cleanup** happens separately (Phase 7 — see "Worktree Pruning"
 below). Worktrees can be removed immediately after branch push regardless
@@ -1175,11 +1121,16 @@ Wait for user confirmation before deleting any remote branch.
 
 ### Branch Pruning
 
-Reconciled broad branches are cleaned up automatically after push; coherent
-lineages require explicit later curation. For
-branches not auto-cleaned (push failed, or `SHADOWFROG_KEEP_BRANCHES=1`
-set), apply the rules in Phase 6 → Post-Reconciliation Branch Cleanup
-(above).
+Only the guarded Phase 6 cleanup command performs automatic branch pruning.
+If push failed or lineage verification was refused, fix that condition before
+retrying it. If a branch was retained for coherence or `SHADOWFROG_KEEP_BRANCHES`,
+leave it retained; do not route it to a separate deletion recipe.
+
+Explicit curation is a distinct, user-approved decision. First identify all
+dependent dreams and exported task baselines, preserve any required commits
+under durable refs, and update consumers before retiring a branch or archive.
+Removing an archive requires repairing its index entry and descendant references
+as well. There is no automatic expiry for coherent task baselines.
 
 ### Worktree Pruning
 

@@ -61,7 +61,10 @@ def run_cli(record, tmp_path, repo, *args, env=None):
     path = tmp_path / "nap run.json"
     path.write_text(json.dumps(record), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(SCRIPT), str(path), "--repo", str(repo), *args],
+        [
+            sys.executable, str(SCRIPT), str(path), "--repo", str(repo),
+            "--mode", record["mode"], *args,
+        ],
         capture_output=True, text=True, encoding="utf-8", env=env,
     )
 
@@ -483,7 +486,10 @@ def test_utf8_bom_records_are_read_explicitly(record, tmp_path, coupon_demo):
     path = tmp_path / "powershell record.json"
     path.write_text(json.dumps(record), encoding="utf-8-sig")
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), str(path), "--repo", str(coupon_demo)],
+        [
+            sys.executable, str(SCRIPT), str(path), "--repo", str(coupon_demo),
+            "--mode", "coherent",
+        ],
         capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
@@ -499,3 +505,19 @@ def test_context_output_is_utf8_under_a_narrow_locale(record, tmp_path, coupon_d
     result = run_cli(record, tmp_path, coupon_demo, "--context", "root", env=env)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["parent"]["title"] == "Export caf\u00e9"
+
+
+@pytest.mark.parametrize("mode,expected", [("broad", 0), ("coherent", 1)])
+def test_cli_default_mode_is_broad_and_cannot_silently_enable_coherent(
+    record, tmp_path, coupon_demo, mode, expected,
+):
+    record["mode"] = mode
+    path = tmp_path / "mode.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path), "--repo", str(coupon_demo)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == expected, result.stderr
+    if expected:
+        assert "Requested mode broad" in result.stderr

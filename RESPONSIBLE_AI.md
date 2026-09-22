@@ -4,7 +4,7 @@
 
 ShadowFrog is a suite of AI coding agent skills that builds and maintains a shadow knowledge base for any software codebase. It turns idle coding-agent time into autonomous discovery loops: the agent explores source code, runs experiments in isolated branches, and records behavioral insights (edge cases, implicit contracts, cross-file interactions) in a structured .shadow/ directory that mirrors the repository. Knowledge compounds across sessions, so an agent returning to the same codebase can recall what it previously learned rather than rediscovering it from scratch.
 
-ShadowFrog is implemented entirely as prompt instructions and lightweight helper scripts (Python, Bash) that plug into existing AI agent harnesses such as GitHub Copilot CLI and Claude Code. It does not bundle or fine-tune any machine learning models; it relies on the host agent's LLM for reasoning. The system also captures knowledge shared by human developers during conversations, treating user-provided insights as the highest-trust source. All data is stored locally in plain-text Markdown and JSON files within the repository, with no external service dependencies beyond the configured git remote.
+ShadowFrog is implemented entirely as prompt instructions and lightweight helper scripts (Python, Bash) that plug into existing AI agent harnesses such as GitHub Copilot CLI and Claude Code. It does not bundle or fine-tune any machine learning models; it relies on the host agent's LLM for reasoning. The system also captures knowledge shared by human developers during conversations, treating user-provided insights as the highest-trust source. Knowledge is stored locally in plain-text Markdown and JSON artifacts, primarily within the repository, with no external service dependencies beyond the configured git remote. Host-local run artifacts such as Nap records and pinned tooling can also live in the agent workspace.
 
 ### What Can ShadowFrog Do
 
@@ -19,6 +19,12 @@ Dream and Nap can use coherent mode to ground parent-child transitions while
 allowing diverse siblings and alternatives. Schema checks do not establish
 semantic coherence, feasibility, or user value. Nap's recorded-work limits
 also do not enforce the host model's actual token or financial spending.
+
+Dream tool snapshots contain host-specific paths and executable helper copies.
+Keep them outside code repositories, do not publish them as task data, and retain
+them only while active or resumed work needs them. Hash verification detects
+unexpected changes to the pinned bundle; it is not an attestation that arbitrary
+third-party code is trustworthy.
 
 A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
