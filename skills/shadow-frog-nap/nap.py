@@ -13,6 +13,7 @@ import argparse
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass, fields
+import errno
 import hashlib
 import json
 import os
@@ -29,6 +30,8 @@ except ImportError as exc:
     raise SystemExit("ERROR: Missing shared shadow-frog/_coherence.py; reinstall the full skill set") from exc
 finally:
     sys.path.pop(0)
+
+EXPORT_AUDIENCES = ("planning", "implementation")
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,8 @@ def _validate_task(value: object, name: str, ready: bool):
     task = _object(value, name)
     allowed = {
         "current_behavior", "desired_behavior", "acceptance_criteria",
-        "non_goals", "open_questions",
+        "non_goals", "open_questions", "constraints", "design_suggestions",
+        "implementation_risks",
     }
     if task.keys() - allowed:
         raise ValueError(f"{name} has unknown fields: {', '.join(sorted(task.keys() - allowed))}")
@@ -111,6 +115,9 @@ def _validate_task(value: object, name: str, ready: bool):
         _text(task.get(field), f"{name}.{field}")
     _strings(task.get("acceptance_criteria"), f"{name}.acceptance_criteria", nonempty=True)
     _strings(task.get("non_goals"), f"{name}.non_goals")
+    for field in ("constraints", "design_suggestions", "implementation_risks"):
+        if field in task:
+            _strings(task[field], f"{name}.{field}")
     questions = _strings(task.get("open_questions"), f"{name}.open_questions")
     if ready and questions:
         raise ValueError(f"{name}.open_questions must be resolved before marking ready")
@@ -326,9 +333,35 @@ def validate_record(value: object) -> None:
 
 def _summary(node: dict) -> dict:
     result = {field: node[field] for field in ("id", "title", "goal", "status")}
+    result["status_scope"] = "planning"
     if node.get("review_id") is not None:
         result["review_id"] = node["review_id"]
     return result
+
+
+def _readiness(run: dict, node: dict) -> dict:
+    review = _review_for(run, node)
+    task = node.get("task")
+    decisions = {"accept": "accepted", "revise": "revision_requested", "reject": "rejected"}
+    return {
+        "status_scope": "planning",
+        "planning_status": node["status"],
+        "planning_review": decisions[review["decision"]] if review else "unreviewed",
+        "review_id": node.get("review_id"),
+        "review_authenticity": "not_attested" if review else "no_record",
+        "implementation": "not_assessed",
+        "runtime_validation": "not_performed_by_nap",
+        "runtime_validation_scope": "proposed_feature",
+        "blocking_planning_questions": task["open_questions"] if task else None,
+        "implementation_risks": task.get("implementation_risks") if task else None,
+    }
+
+
+def _selected_readiness(run: dict) -> dict:
+    return {
+        node["id"]: _readiness(run, node)
+        for node in run["nodes"] if node["id"] in run["selected"]
+    }
 
 
 def usage(run: dict) -> dict:
@@ -355,6 +388,7 @@ def parent_context(run: dict, node_id: str) -> dict:
         "usage": usage(run),
         "parent": parent,
         "parent_review": _review_for(run, parent) if parent else None,
+        "parent_readiness": _readiness(run, parent) if parent else None,
         "ancestors": [_summary(node) for node in path[:-1]],
         "children": [
             _summary(node) for node in nodes.values()
@@ -374,6 +408,7 @@ def idea_trajectory(run: dict, node_id: str) -> dict:
         "base_commit": run["base_commit"],
         "mode": run["mode"],
         "nodes": path,
+        "readiness": {node["id"]: _readiness(run, node) for node in path},
         "reviews": [
             {
                 **review,
@@ -417,6 +452,16 @@ def review_packet(run: dict, node_ids: list[str]) -> dict:
             "Check each parent-child connection; do not require sibling similarity or a fixed tree goal.",
             "Check user value, distinct contribution, scope and measurable acceptance criteria.",
             "Check final active requirements and branch-local supersession for consistency.",
+            "Distinguish binding requirements from non-binding design suggestions and implementation risks.",
+            "Do not hide a blocking planning question in the nonblocking implementation-risk list.",
+        ],
+        "path_questions": [
+            "What worthwhile outcome does the selected path now describe?",
+            "Which steps add a capability, resolve uncertainty, or change a meaningful tradeoff?",
+            "Which steps merely rephrase earlier work, and what actionable refinement would help?",
+            "Historical proposal payloads are immutable: keep an existing useful task or append a meaningful revision instead of editing ancestors.",
+            "Does the final active contract stand alone at the pinned baseline without implementing every ancestor?",
+            "Do not reject a useful alternative for touching the same files or changing direction; no fixed tree-wide goal is required.",
         ],
         "boundary": "Judge planning confidence only. Do not implement features or call proposals execution-verified.",
     }
@@ -523,12 +568,14 @@ def record_review(run: dict, value: object) -> tuple[dict, dict]:
     return updated, {"review_id": review_id, "recorded": True}
 
 
-def render_tasks(run: dict) -> str:
-    """Render only selected nodes' final contracts, not inherited requirements."""
+def render_tasks(run: dict, audience: str = "planning") -> str:
+    """Render one active contract for either audience, separating supporting context."""
     validate_record(run)
+    if audience not in EXPORT_AUDIENCES:
+        raise ValueError(f"Unknown export audience: {audience}")
     nodes = {node["id"]: node for node in run["nodes"]}
     lines = [
-        "# Nap task briefs", "",
+        "# Nap planning briefs" if audience == "planning" else "# Nap implementation handoffs", "",
         f"Base commit: `{run['base_commit']}`", "",
         f"Tree revision: {run['revision']}", "",
         "These are judge-reviewed proposals, not verified implementations.",
@@ -540,37 +587,71 @@ def render_tasks(run: dict) -> str:
         node = nodes[node_id]
         task = node["task"]
         review = _review_for(run, node)
+        edge = node.get("parent_connection")
+        constraints = list(task.get("constraints", []))
+        for preserved in edge["preserves"] if edge else []:
+            if preserved not in constraints:
+                constraints.append(preserved)
         lines += [
             f"## {node['title']}", "",
             f"ID: `{node_id}`",
             f"Parent idea: `{node.get('parent_id') or 'none'}`", "",
-            f"Recorded reviewer: {review['reviewer']}", "",
-            "### Goal", "", node["goal"], "",
-            "### Current behavior", "", task["current_behavior"], "",
-            "### Desired behavior", "", task["desired_behavior"], "",
+            "### User problem / goal", "", node["goal"], "",
+            "### Current behavior at the pinned baseline", "", task["current_behavior"], "",
+            "### Required behavior", "", task["desired_behavior"], "",
+        ]
+        if "constraints" in task or constraints:
+            lines += ["### Required constraints", ""]
+            lines += [f"- {item}" for item in constraints] or ["None separately stated."]
+            lines.append("")
+        lines += [
             "### Acceptance criteria", "",
         ]
         lines += [f"- {item}" for item in task["acceptance_criteria"]]
         lines += ["", "### Non-goals", ""]
         lines += [f"- {item}" for item in task["non_goals"]] or ["None stated."]
-        lines += ["", "### Evidence", ""]
+        if "design_suggestions" in task:
+            lines += ["", "### Suggested implementation (non-binding)", ""]
+            lines += [f"- {item}" for item in task["design_suggestions"]] or ["None recorded."]
+        lines += ["", "### Readiness scope", "",
+                  "Planning review: accepted",
+                  "Implementation: not assessed by Nap",
+                  "Runtime validation: not performed by Nap (proposed feature)", "",
+                  "### Remaining implementation risks", ""]
+        risks = task.get("implementation_risks")
+        if risks is None:
+            lines.append("Not recorded. This does not establish that implementation is risk-free.")
+        else:
+            lines += [f"- {item}" for item in risks] or [
+                "None identified during planning; runtime behavior remains unverified."
+            ]
+        lines += ["", "### Supporting evidence (not additional requirements)", ""]
         for entry in node["evidence"]:
             lines.append(f"- `{entry['anchor']}` ({entry['kind']}): {entry['observation']}")
             if entry["kind"] == "inherited":
                 lines.append(f"  Source: {entry['reference']}")
             if entry["kind"] == "probe":
                 probe = node["probes"][entry["probe"]]
-                lines.append(f"  Command argv: `{json.dumps(probe['command'])}`")
-                lines.append(f"  Exit code: {probe['exit_code']}. Result: {probe['result']}")
-        edge = node.get("parent_connection")
-        if edge:
+                if audience == "planning":
+                    lines.append(f"  Command argv: `{json.dumps(probe['command'])}`")
+                    lines.append(f"  Exit code: {probe['exit_code']}. Result: {probe['result']}")
+                else:
+                    lines.append(f"  Recorded probe exit: {probe['exit_code']}; details remain in the planning record.")
+        lines += [
+            "", "### Planning review provenance", "",
+            f"Review: `{review['review_id']}`",
+            f"Recorded reviewer: {review['reviewer']}",
+            "Reviewer identity is recorded metadata, not independently authenticated by the helper.",
+        ]
+        if audience == "planning":
+            lines += ["", "Review rationale (not execution evidence):", review["rationale"]]
+        if edge and audience == "planning":
             lines += [
-                "", "### Parent connection", "",
+                "", "### Proposal lineage (context, not additional requirements)", "",
                 f"Transition: {edge['relation']}",
                 f"Basis: {edge['basis']}", f"Delta: {edge['delta']}", "",
-                "Preserved constraints:",
+                "Preserved commitments are included in Required constraints above.",
             ]
-            lines += [f"- {item}" for item in edge["preserves"]] or ["None stated."]
             lines += ["", "Superseded decisions (not active requirements):"]
             lines += [f"- {item}" for item in edge["supersedes"]] or ["None."]
         lines.append("")
@@ -661,6 +742,17 @@ def _save_record(path: Path, run: dict) -> None:
             temporary = Path(stream.name)
             json.dump(run, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
+            stream.flush()
+            try:
+                os.fsync(stream.fileno())
+            except OSError as exc:
+                if exc.errno not in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP):
+                    raise
+                print(
+                    "WARNING: File sync is not supported on this filesystem; "
+                    "atomic publication does not guarantee reboot durability.",
+                    file=sys.stderr,
+                )
         os.replace(temporary, path)
     finally:
         if temporary is not None and temporary.exists():
@@ -695,6 +787,8 @@ def main() -> int:
     views.add_argument("--select", nargs="*", metavar="NODE", help="Select accepted nodes, or clear the selection")
     parser.add_argument("--base", help="Git ref/commit to pin; required with --init")
     parser.add_argument("--parent", help="Parent node for --add, or @base for root proposals")
+    parser.add_argument("--audience", choices=EXPORT_AUDIENCES,
+                        help="Export planning detail or implementation handoff (default: planning)")
     for item in fields(RunLimits):
         parser.add_argument("--" + item.name.replace("_", "-"), dest=item.name,
                             type=int, help="Initial recorded-work limit (only with --init)")
@@ -709,6 +803,8 @@ def main() -> int:
         parser.error("--add requires --parent (use @base for root proposals)")
     if args.add is None and args.parent is not None:
         parser.error("--parent requires --add")
+    if args.audience is not None and args.export is None:
+        parser.error("--audience requires --export")
     try:
         repo = Path(_git(args.repo, "rev-parse", "--show-toplevel").rstrip("\r\n")).resolve()
         record_path = args.record.resolve()
@@ -759,19 +855,24 @@ def main() -> int:
         elif args.trajectory is not None:
             output = idea_trajectory(run, args.trajectory)
         elif args.export:
+            audience = args.audience or "planning"
             target = args.export.resolve()
             _check_archive_path(target, repo)
             if target.exists():
                 raise ValueError(f"Output already exists: {target}; choose a new file")
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(render_tasks(run))
-            output = {"exported": str(target), "tasks": len(run["selected"])}
+                stream.write(render_tasks(run, audience=audience))
+            output = {
+                "exported": str(target), "audience": audience,
+                "tasks": len(run["selected"]), "readiness": _selected_readiness(run),
+            }
         else:
             output = {
                 "valid": True, "mode": run["mode"], "base_commit": run["base_commit"],
                 "revision": run["revision"], **usage(run),
                 "limits": asdict(RunLimits.from_record(run.get("limits", {}))),
+                "readiness": _selected_readiness(run),
             }
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0

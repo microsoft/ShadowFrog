@@ -1,6 +1,7 @@
 """Structural contracts and real Git/CLI integration, not ideation-quality scoring."""
 
 from copy import deepcopy
+import errno
 import json
 import os
 from pathlib import Path
@@ -583,3 +584,177 @@ def test_cli_default_mode_is_broad_and_cannot_silently_enable_coherent(
     assert result.returncode == expected, result.stderr
     if expected:
         assert "Requested mode broad" in result.stderr
+
+
+def test_export_audiences_share_one_active_contract(nap):
+    run = make_record("a" * 40)
+    run["nodes"][0]["task"]["acceptance_criteria"] = ["DISCARDED WORKER REQUIREMENT"]
+    child = node("replacement", "root", "Cancellable bounded-memory export")
+    child["parent_connection"] = connection("replace")
+    child["parent_connection"]["basis"] = "Detailed planning rationale about the old worker."
+    child["task"].update(
+        constraints=["Memory remains bounded", "Cancellation remains available"],
+        design_suggestions=["Consider a pull-based iterator"],
+        implementation_risks=["Cancellation latency needs measurement during implementation"],
+    )
+    run["nodes"].append(child)
+    approve(nap, run, "replacement")
+    before = deepcopy(run)
+    planning = nap.render_tasks(run, audience="planning")
+    implementation = nap.render_tasks(run, audience="implementation")
+    for rendered in (planning, implementation):
+        for required in (
+            child["task"]["desired_behavior"], *child["task"]["acceptance_criteria"],
+            *child["task"]["constraints"], *child["task"]["non_goals"],
+        ):
+            assert required in rendered
+        assert "Suggested implementation (non-binding)" in rendered
+        assert "Consider a pull-based iterator" in rendered
+        assert "Cancellation latency needs measurement" in rendered
+        assert "Planning review: accepted" in rendered
+        assert "Implementation: not assessed by Nap" in rendered
+        assert "Runtime validation: not performed by Nap" in rendered
+        assert "DISCARDED WORKER REQUIREMENT" not in rendered
+        assert "`cart.py::calculate_total`" in rendered
+    assert "# Nap planning briefs" in planning
+    assert "# Nap implementation handoffs" in implementation
+    assert "Detailed planning rationale about the old worker." in planning
+    assert "Detailed planning rationale about the old worker." not in implementation
+    assert run == before
+
+
+def test_both_audiences_retain_explicit_parent_commitments(nap):
+    run = make_record("a" * 40)
+    child = node("child", "root")
+    child["parent_connection"] = connection("replace")
+    child["parent_connection"]["preserves"] = ["Bounded memory", "Cancellation"]
+    run["nodes"].append(child)
+    approve(nap, run, "child")
+    for audience in ("planning", "implementation"):
+        text = nap.render_tasks(run, audience=audience)
+        constraints = text.split("### Required constraints\n", 1)[1].split("\n### ", 1)[0]
+        assert "Bounded memory" in constraints
+        assert "Cancellation" in constraints
+        assert "Offset checkpoints" not in constraints
+
+
+@pytest.mark.parametrize("field", ["constraints", "design_suggestions", "implementation_risks"])
+@pytest.mark.parametrize("bad_value", [None, "not a list", [""]])
+def test_optional_task_details_are_validated(nap, field, bad_value):
+    run = make_record("a" * 40)
+    run["nodes"][0]["task"][field] = bad_value
+    with pytest.raises(ValueError, match=field):
+        nap.validate_record(run)
+
+
+@pytest.mark.parametrize("field", ["constraints", "design_suggestions", "implementation_risks"])
+def test_task_detail_changes_require_a_fresh_judgment(nap, field):
+    run = make_record("a" * 40)
+    run["nodes"][0]["task"][field] = ["Original detail"]
+    approve(nap, run, "root")
+    run["nodes"][0]["task"][field] = ["Unreviewed replacement"]
+    with pytest.raises(ValueError, match="Stale judgment"):
+        nap.render_tasks(run, audience="implementation")
+
+
+def test_readiness_metadata_never_claims_implementation_or_runtime_validation(nap):
+    run = make_record("a" * 40)
+    candidate = nap.parent_context(run, "root")["parent_readiness"]
+    assert candidate["planning_review"] == "unreviewed"
+    assert candidate["implementation_risks"] is None
+    run["nodes"][0]["task"]["implementation_risks"] = ["Concurrency needs implementation evidence"]
+    approve(nap, run, "root")
+    expected = nap.parent_context(run, "root")["parent_readiness"]
+    assert expected["status_scope"] == "planning"
+    assert expected["planning_review"] == "accepted"
+    assert expected["implementation"] == "not_assessed"
+    assert expected["runtime_validation"] == "not_performed_by_nap"
+    assert expected["review_authenticity"] == "not_attested"
+    assert expected["blocking_planning_questions"] == []
+    assert expected["implementation_risks"] == ["Concurrency needs implementation evidence"]
+    assert nap.idea_trajectory(run, "root")["readiness"]["root"] == expected
+    assert nap.parent_context(run, "@base")["children"][0]["status_scope"] == "planning"
+
+
+def test_selected_path_review_has_concrete_progression_questions(nap):
+    run = make_record("a" * 40)
+    run["nodes"].append(node("child", "root", "Different architecture"))
+    packet = nap.review_packet(run, ["child"])
+    questions = " ".join(packet["path_questions"])
+    assert "worthwhile outcome" in questions
+    assert "uncertainty" in questions
+    assert "rephrase" in questions
+    assert "same files" in questions
+    assert "pinned baseline" in questions
+    assert [item["id"] for item in packet["targets"][0]["input"]["path"]] == ["root", "child"]
+
+
+@pytest.mark.parametrize("audience", ["planning", "implementation"])
+def test_cli_export_audience_and_readiness_are_wired(nap, record, tmp_path, coupon_demo, audience):
+    record["nodes"][0]["task"]["implementation_risks"] = ["Performance needs measurement"]
+    approve(nap, record, "root")
+    output = tmp_path / f"{audience}.md"
+    result = run_cli(
+        record, tmp_path, coupon_demo, "--export", str(output), "--audience", audience,
+    )
+    assert result.returncode == 0, result.stderr
+    response = json.loads(result.stdout)
+    assert response["audience"] == audience
+    assert response["readiness"]["root"]["planning_review"] == "accepted"
+    assert response["readiness"]["root"]["implementation"] == "not_assessed"
+    assert ("planning briefs" if audience == "planning" else "implementation handoffs") in output.read_text(encoding="utf-8")
+
+
+def test_export_audience_is_not_silently_ignored_on_other_commands(record, tmp_path, coupon_demo):
+    result = run_cli(record, tmp_path, coupon_demo, "--context", "root", "--audience", "implementation")
+    assert result.returncode == 2
+    assert "--export" in result.stderr
+
+
+def test_record_data_is_flushed_and_synced_before_publication(nap, tmp_path, monkeypatch):
+    path = tmp_path / "record.json"
+    path.write_text('{"old": true}\n', encoding="utf-8")
+    original_fsync = os.fsync
+    observed = []
+
+    def observe_sync(fd):
+        observed.append(os.fstat(fd).st_size)
+        assert path.read_text(encoding="utf-8") == '{"old": true}\n'
+        original_fsync(fd)
+
+    monkeypatch.setattr(nap.os, "fsync", observe_sync)
+    nap._save_record(path, {"new": "caf\u00e9"})
+    assert observed and observed[0] > 0
+    assert json.loads(path.read_text(encoding="utf-8")) == {"new": "caf\u00e9"}
+
+
+def test_failed_data_sync_preserves_the_previous_record(nap, tmp_path, monkeypatch):
+    path = tmp_path / "record.json"
+    original = b'{"old": true}\n'
+    path.write_bytes(original)
+
+    def fail_sync(fd):
+        raise OSError("simulated filesystem sync failure")
+
+    monkeypatch.setattr(nap.os, "fsync", fail_sync)
+    with pytest.raises(OSError, match="sync failure"):
+        nap._save_record(path, {"new": True})
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_unsupported_sync_is_explicit_not_a_silent_durability_claim(
+    nap, tmp_path, monkeypatch, capsys,
+):
+    path = tmp_path / "record.json"
+    path.write_text('{"old": true}\n', encoding="utf-8")
+
+    def unsupported(fd):
+        raise OSError(errno.ENOTSUP, "sync unsupported")
+
+    monkeypatch.setattr(nap.os, "fsync", unsupported)
+    nap._save_record(path, {"new": True})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"new": True}
+    warning = capsys.readouterr().err
+    assert "WARNING" in warning and "not supported" in warning
+    assert "reboot durability" in warning

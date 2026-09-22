@@ -28,6 +28,18 @@ its reasoning. A fresh context and direct source access reduce some forms of
 anchoring, but model judgments can still be wrong; approval is not proof that
 the proposed implementation will succeed.
 
+Planning and implementation-audience exports share the active contract while
+separating required constraints from suggested approaches. Readiness metadata
+reports planning acceptance, not assessed implementation status, and no
+proposed-feature runtime validation by Nap. Recorded implementation risks are
+distinct from blocking planning questions; omitted risk notes are not assurance
+of safety or completeness.
+
+Tree updates use atomic replacement and file-data syncing where supported.
+Unsupported sync is surfaced, and directory-entry persistence remains
+platform/filesystem-dependent. These measures are not a universal guarantee of
+power-loss durability; hosts should provide suitable storage and backup policy.
+
 Dream tool snapshots contain host-specific paths and executable helper copies.
 Keep them outside code repositories, do not publish them as task data, and retain
 them only while active or resumed work needs them. Hash verification detects

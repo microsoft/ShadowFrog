@@ -151,6 +151,14 @@ confirm its writer stopped before removing only that lock; never discard the
 tree to bypass contention. Resume by reopening the same tree and selecting a
 parent, not by reconstructing state from chat history.
 
+Record data is flushed and file-synced before replacement. Unsupported file
+sync is reported explicitly; other sync failures leave the old record intact.
+Atomic publication prevents partial JSON visibility during process interruption,
+but this helper does not perform a portable directory sync or promise survival
+of the latest update across power loss on every filesystem. Keep required
+durability/backups in the host storage layer. Never infer that a PID-only lock
+is safe to remove merely because it is old.
+
 ### 1. Pin and Ground
 
 Read the repository's instructions and, when present, relevant preferences,
@@ -228,6 +236,27 @@ scope and acceptance criteria, each parent-child connection, and the final activ
 contract. Siblings need not share a goal. A useful alternative need not call
 parent code, and no hypothetical parent API may be assumed implemented.
 
+For a selected path, use the packet's concrete `path_questions` in that same
+review, without requiring another model pass:
+- What worthwhile outcome does the path now describe?
+- Which steps add capability, resolve uncertainty, or change a meaningful tradeoff?
+- Which merely rephrase earlier work, and what actionable refinement would help?
+- Does the final contract stand alone at the pinned baseline?
+
+This is a path-level planning lens, not a fixed objective for the entire tree.
+Changing direction, revisiting the same files, and learning from a rejected
+design are legitimate. Do not turn the history into a requirement to implement
+every ancestor. Explain useful progression rather than scoring length. If a
+continuation merely repeats an existing useful task, keep that task selected
+or append a genuinely revised child; do not rewrite reviewed ancestor payloads
+to follow a suggestion to "consolidate" the history.
+
+Separate binding behavior/constraints from suggested implementation choices.
+Replacing a design does not implicitly retire a requirement. Scope changes must
+be explicit in the active contract and parent connection; user constraints must
+not disappear under the label of an architectural alternative. Keep blocking
+planning questions separate from nonblocking implementation risks.
+
 Return **accept / revise / reject**, with code references, a rationale, and
 blocking issues. Do not produce only a score. The output format is:
 
@@ -282,6 +311,10 @@ override a later rejection.
 Receipts prevent accidental stale approvals but cannot authenticate that an LLM
 actually ran or establish the truth of its conclusions. The host must perform
 the real independent review; the Python helper is not a semantic oracle.
+Views and exports scope this status to planning: implementation is not assessed
+by Nap, proposed-feature runtime validation has not been performed by Nap, and
+reviewer authenticity is not attested. Do not equate missing risk notes with an
+absence of implementation risk.
 
 If a blocking question requires implementing a candidate or prototype, leave
 it unresolved and hand it to `/shadow-frog-dream` or a downstream implementation
@@ -369,7 +402,10 @@ A ready node also contains this complete, **currently active** task contract:
     "desired_behavior": "<observable behavior to implement>",
     "acceptance_criteria": ["<specific successful and edge-case outcomes>"],
     "non_goals": ["<explicit boundary>"],
-    "open_questions": []
+    "open_questions": [],
+    "constraints": ["<binding constraint, when needed>"],
+    "design_suggestions": ["<optional implementation approach, not a requirement>"],
+    "implementation_risks": ["<nonblocking risk to evaluate during implementation>"]
   }
 }
 ```
@@ -377,6 +413,15 @@ A ready node also contains this complete, **currently active** task contract:
 Non-ready nodes may omit `task`. A review packet requires a complete task shape,
 which may still have open questions for the judge to identify as blockers.
 `selected` contains unique ready IDs only. Use `--select` with no IDs to clear it.
+
+`constraints`, `design_suggestions`, and `implementation_risks` are optional
+lists of nonempty strings. Binding behavior belongs in `desired_behavior`,
+`acceptance_criteria`, or `constraints`; advice belongs in `design_suggestions`.
+Explicit `parent_connection.preserves` commitments remain required and appear
+in both export audiences. The judge must check that the full active contract
+actually respects them; the helper does not infer semantic preservation.
+An implementation risk that makes the plan itself ungrounded or infeasible is
+instead a blocking `open_questions` item and must prevent acceptance.
 
 ## Python Helper
 
@@ -389,6 +434,7 @@ The examples below use the Copilot install path and a coherent run:
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --context n1
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export TASKS.md
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export HANDOFF.md --audience implementation
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --trajectory n3
 ```
 
@@ -398,6 +444,20 @@ and brief ancestor/child summaries; `--context @base` starts from real code.
 `--export` writes UTF-8 Markdown to a **new** file
 and refuses to overwrite existing files. Other outputs are JSON on stdout;
 errors go to stderr with exit 1 (argument errors use exit 2).
+
+Exports have two explicit audiences. The default `planning` brief retains the
+review rationale, detailed probes, and parent design context for comparing
+alternatives. `--audience implementation` produces a more concise handoff that
+leads with the user problem, required behavior/constraints, acceptance criteria,
+non-goals, suggestions, and implementation risks. Both retain supporting source
+references, planning-only readiness, and the **same active requirements**.
+Changing the audience does not change the node or its review.
+
+Suggested implementation is labelled non-binding. Parent history and superseded
+designs remain planning context, not additional implementation requirements.
+JSON summaries, parent context, trajectories, and export responses also expose
+scope-qualified readiness; an implementation may exist elsewhere, so Nap says
+`not_assessed`, not that no implementation has ever been started.
 
 The final export uses selected nodes' active contracts, **not** a union of
 ancestor requirements. Replacing A with B must not produce a task requiring

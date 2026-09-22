@@ -10,6 +10,14 @@ shadow knowledge bases for any codebase.
 ## Unreleased
 
 ### Added
+- **Audience-aware Nap handoffs** — detailed planning briefs and concise
+  implementation handoffs share the same active behavior, constraints, and
+  preserved commitments. Optional design suggestions are explicitly non-binding,
+  and implementation risks are separate from blocking planning questions.
+- **Scope-qualified readiness** — views and exports distinguish recorded planning
+  acceptance from implementation status, runtime validation, and review
+  authenticity. Selected-path review includes concrete progression questions
+  without imposing a common tree goal or another review pass.
 - **Managed, judged Nap trees** — version-2 records support initialization at an
   explicit code ref, a virtual `@base` root, ID-allocating append operations,
   resumed parent context, independent review packets/receipts, and selection.
@@ -39,6 +47,9 @@ shadow knowledge bases for any codebase.
   retention. New helpers require only the Python standard library and Git.
 
 ### Fixed
+- **Record publication** — flush and file-sync new JSON data before atomic
+  replacement; report unsupported syncing without claiming universal reboot
+  durability, and preserve the prior record on other sync failures.
 - **Nap depth is opt-in** — removed the arbitrary default depth-2 cap and the
   corresponding two-round planning instruction. `max_depth` may be omitted or
   `null`; explicit caps still work, and node/probe budgets plus cycle checks

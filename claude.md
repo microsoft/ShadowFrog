@@ -222,6 +222,15 @@ it in `_dreams/_index.md`.
   may impersonate an independent review. `ready` requires a current accepted
   receipt with no blockers; the helper checks association, not model authenticity
   or semantic truth. Revisions append children rather than rewrite parents.
+- Nap exports default to a planning dossier; `--audience implementation` is a
+  concise handoff with the same required behavior and preserved commitments.
+  Optional task `constraints` are binding; `design_suggestions` are not.
+  `implementation_risks` may remain after planning approval, while blocking
+  `open_questions` may not. Readiness metadata never claims implemented or
+  runtime-validated behavior.
+- Use concrete progression questions in selected-path review, not a fixed
+  tree-wide goal or a quota of steps. Atomic tree publication file-syncs data
+  where supported, but does not promise portable power-loss durability.
 - Store nap artifacts outside `.shadow/`, or in an initialized
   `.shadow/_meta/naps/`. Never initialize a partial shadow just to store a nap,
   increment dream counters for naps, or treat proposals as verified discoveries.

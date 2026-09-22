@@ -220,7 +220,7 @@ API spending. Store records outside `.shadow/`, or under an already initialized
 `.shadow/_meta/naps/`, so proposals never become verified discoveries by accident.
 
 The bundled `nap.py` uses Python's standard library and Git, with no Bash
-dependency. It manages a persistent version-2 proposal tree: code stays at one
+dependency. It manages a persistent proposal tree: code stays at one
 pinned commit while children carry revised hypothetical design states. `@base`
 selects the code root; it is not an implemented parent feature.
 
@@ -234,6 +234,7 @@ python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coheren
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --select n2
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export TASKS.md
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export HANDOFF.md --audience implementation
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --trajectory n3
 ```
 
@@ -248,6 +249,17 @@ lock plus atomic replacement. The same record resumes across agent sessions.
 Workers return submissions to one writer rather than editing the tree in
 parallel. Verdicts are planning judgments, not verified implementations, and
 recorded reviewer identities are not independently authenticated by the helper.
+
+The default export is a detailed **planning brief**. An implementation-audience
+handoff presents the same active requirements more concisely, with binding
+constraints separated from optional design suggestions and supporting evidence.
+Both explicitly distinguish accepted planning review from implementation and
+runtime validation, which Nap does not establish. Nonblocking implementation
+risks can be recorded separately from questions that prevent planning approval.
+
+Selected-path review asks what outcome the path now describes and which steps
+add capability, reduce uncertainty, or change a useful tradeoff. It does not
+require one goal for the entire tree or implementation of superseded ancestors.
 
 For Claude Code use `.claude/skills/`; on Windows, `py -3` can be used in
 place of `python`. See the [Nap skill](skills/shadow-frog-nap/SKILL.md) for
