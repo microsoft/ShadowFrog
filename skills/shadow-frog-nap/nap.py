@@ -30,16 +30,19 @@ class RunLimits:
     """Bounds on recorded work, not a hard limit on an agent's API spending."""
 
     max_nodes: int = 7
-    max_depth: int = 2
+    max_depth: int | None = None
     max_probes: int = 2
     max_tasks: int = 2
 
     def __post_init__(self):
         for item in fields(self):
             value = getattr(self, item.name)
+            if item.name == "max_depth" and value is None:
+                continue
             minimum = 0 if item.name in ("max_depth", "max_probes") else 1
             if type(value) is not int or value < minimum:
-                raise ValueError(f"limits.{item.name} must be an integer >= {minimum}")
+                allowed = "null or an integer >= 0" if item.name == "max_depth" else f"an integer >= {minimum}"
+                raise ValueError(f"limits.{item.name} must be {allowed}")
 
     @classmethod
     def from_record(cls, value: object) -> RunLimits:
@@ -195,7 +198,8 @@ def validate_record(value: object) -> None:
         nodes[node["id"]] = node
         probes += len(node.get("probes", []))
     for node_id in nodes:
-        if len(_path_to(nodes, node_id)) - 1 > limits.max_depth:
+        depth = len(_path_to(nodes, node_id)) - 1
+        if limits.max_depth is not None and depth > limits.max_depth:
             raise ValueError(f"max_depth exceeded by node {node_id}")
     if probes > limits.max_probes:
         raise ValueError(f"max_probes exceeded: {probes} > {limits.max_probes}")

@@ -25,7 +25,7 @@ ShadowFrog/
       dream-cleanup.sh           Safe per-worktree cleanup (replaces inline snippet)
       dream-gc.sh                Orphan-worktree sweep (defense-in-depth)
       _worktree_safety.py        Shared safety gate for rm-rf paths
-    shadow-frog-nap/             Lightweight feature-task ideation (no mandatory implementation)
+    shadow-frog-nap/             Implementation-free feature-task ideation
       SKILL.md                   Bounded ideation, evidence, and task export instructions
       nap.py                     Portable record validator, parent context, and exporter
     shadow-frog-meditate/SKILL.md Dedup, merge, and resolve conflicting discoveries
@@ -211,6 +211,10 @@ it in `_dreams/_index.md`.
   selected ready tasks. Its Python helper checks recorded budgets, acyclic
   lineage, task shape, and commit/file existence; it never executes probes.
   Its expected mode defaults to broad; coherent runs must pass `--mode coherent`.
+  Depth is uncapped by default (`max_depth: null`); explicit user depth limits
+  still apply. Node/probe budgets and cycle checks remain mandatory. Probes
+  observe existing behavior, while candidate implementations/prototypes belong
+  in Dream or downstream work.
 - Store nap artifacts outside `.shadow/`, or in an initialized
   `.shadow/_meta/naps/`. Never initialize a partial shadow just to store a nap,
   increment dream counters for naps, or treat proposals as verified discoveries.

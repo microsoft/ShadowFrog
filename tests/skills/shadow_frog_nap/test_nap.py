@@ -41,20 +41,24 @@ def node(node_id="root", parent=None, goal="Support bounded-memory export"):
     }
 
 
+def make_record(commit):
+    return {
+        "version": 1,
+        "mode": "coherent",
+        "base_commit": commit,
+        "limits": {"max_nodes": 7, "max_depth": None, "max_probes": 2, "max_tasks": 2},
+        "nodes": [node()],
+        "selected": ["root"],
+    }
+
+
 @pytest.fixture
 def record(coupon_demo):
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=coupon_demo, check=True,
         capture_output=True, text=True, encoding="utf-8",
     ).stdout.strip()
-    return {
-        "version": 1,
-        "mode": "coherent",
-        "base_commit": commit,
-        "limits": {"max_nodes": 7, "max_depth": 2, "max_probes": 2, "max_tasks": 2},
-        "nodes": [node()],
-        "selected": ["root"],
-    }
+    return make_record(commit)
 
 
 def run_cli(record, tmp_path, repo, *args, env=None):
@@ -79,6 +83,38 @@ def test_empty_run_is_valid_and_does_not_require_filler(nap, record):
     record["nodes"] = []
     record["selected"] = []
     nap.validate_record(record)
+
+
+def test_default_depth_is_unset(nap):
+    assert nap.RunLimits().max_depth is None
+
+
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_no_depth_cap_allows_a_full_node_budget_chain(nap, explicit_null):
+    record = make_record("a" * 40)
+    if not explicit_null:
+        del record["limits"]["max_depth"]
+    record["nodes"] = [
+        node(f"n{index}", f"n{index - 1}" if index else None)
+        for index in range(7)
+    ]
+    record["selected"] = ["n6"]
+    nap.validate_record(record)
+    assert nap.parent_context(record, "n6")["limits"]["max_depth"] is None
+    assert len(nap.idea_trajectory(record, "n6")["nodes"]) == 7
+
+
+@pytest.mark.parametrize("limit", [0, 1, 2])
+def test_explicit_depth_cap_is_still_enforced(nap, limit):
+    record = make_record("a" * 40)
+    record["limits"]["max_depth"] = limit
+    record["nodes"] = [
+        node(f"n{index}", f"n{index - 1}" if index else None)
+        for index in range(4)
+    ]
+    record["selected"] = ["n3"]
+    with pytest.raises(ValueError, match="max_depth"):
+        nap.validate_record(record)
 
 
 def test_ten_siblings_have_distinct_goals_on_the_same_files(nap, record):
@@ -126,7 +162,8 @@ def test_invalid_run_fields(nap, record, field, value, message):
     [
         ("max_nodes", 0), ("max_tasks", 0), ("max_depth", -1),
         ("max_probes", -1), ("max_nodes", True), ("max_depth", "2"),
-        ("max_probes", 1.5),
+        ("max_probes", 1.5), ("max_nodes", None), ("max_probes", None),
+        ("max_tasks", None),
     ],
 )
 def test_limits_fail_early(nap, record, field, value):

@@ -22,7 +22,7 @@ The shadow contains discoveries from code analysis and user conversations. Alway
 - `.shadow/_meta/state.json` — tracking state (last commit, counts)
 - `.shadow/_meta/naps/` — optional ideation records, not verified discoveries
 
-Use `/shadow-frog-nap` for bounded feature-task ideation without mandatory
-implementation. Dream and Nap accept `mode=coherent`: each child needs a
+Use `/shadow-frog-nap` for implementation-free feature-task ideation within a
+work budget. Dream and Nap accept `mode=coherent`: each child needs a
 substantive parent connection, while siblings remain free to pursue diverse
 directions. A nap parent is an idea, not proof that its proposed code exists.

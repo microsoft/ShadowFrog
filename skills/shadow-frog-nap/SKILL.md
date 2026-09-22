@@ -14,8 +14,8 @@ scripts:
 
 # ShadowFrog Nap
 
-Nap produces **feature-task briefs**, not finished implementations or verified
-dreams. Reasoning stays with the agent; the Python helper validates records,
+Nap is **implementation-free feature-task ideation**, not feature development
+or verified dreaming. Reasoning stays with the agent; the Python helper validates records,
 retrieves compact parent context, and exports tasks. It never runs probes,
 creates worktrees, changes branches, pushes, or updates shadow discoveries.
 
@@ -29,7 +29,7 @@ initialized `.shadow/` are **not** required.
 |---------|---------|---------|
 | `mode` | `broad` | Explore distinct opportunities; `coherent` regularizes parent-child connections |
 | `max_nodes` | 7 | Total recorded nodes, including imported seeds and rejected attempts |
-| `max_depth` | 2 | Maximum parent edges from a root; roots have depth 0 |
+| `max_depth` | unset (`null`) | Optional user-requested maximum parent edges; roots have depth 0 |
 | `max_probes` | 2 | Total executed probes recorded across all nodes, including failures |
 | `max_tasks` | 2 | Maximum selected ready task briefs |
 
@@ -37,6 +37,9 @@ These are **ceilings, not quotas**. Zero selected tasks is a valid result.
 Users can request larger budgets, including ten diverse children of one
 parent. Agree on limits before starting and persist them in the record;
 never erase rejected work or enlarge limits to disguise an overrun.
+Depth is not a default stopping condition. Omit `max_depth` or set it to
+`null` to leave it uncapped; an explicit nonnegative integer still limits it.
+The total node budget bounds every run, and parent/cycle checks always apply.
 
 The helper enforces **recorded** limits, not actual API spending or unrecorded
 commands. Respect the host's token/cost/time limits separately. Do not install
@@ -55,7 +58,8 @@ a coherent record requires an explicit `--mode coherent`.
 
 **Broad:** propose a few distinct, code-grounded opportunities. With defaults,
 start with up to three candidates, retain at most two promising directions,
-and refine for at most two rounds within the total node budget.
+and refine while useful grounded progress and the total work budget remain.
+Do not impose a fixed number of refinement rounds.
 
 **Coherent:** each child identifies a concrete parent capability, finding,
 limitation, or design decision and extends, integrates, challenges, replaces,
@@ -107,7 +111,7 @@ are not sufficient motivation.
 
 ### 2. Select and Refine
 
-Reject weak or duplicate ideas early, before implementation. Maintain one
+Reject weak or duplicate ideas early, without implementing them. Maintain one
 canonical run record with a single writer. Save observations and rejected
 directions as work proceeds so another session can resume from that record.
 
@@ -132,8 +136,8 @@ charged to this run's execution budget.
 ### 3. Probe Only Decision-Changing Questions
 
 Run a narrow probe only if its result can change selection, feasibility,
-acceptance criteria, or the choice between alternatives. Prefer inspecting
-an existing path or running one focused command over implementing the feature.
+acceptance criteria, or the choice between alternatives. Probes observe
+existing behavior; they must not implement or prototype the proposed feature.
 Use the repository's supported runner and isolation appropriate to the command.
 Do not execute experimental mutations in the user's working tree.
 
@@ -157,11 +161,12 @@ A ready task must:
 judge usefulness, novelty, feasibility, and semantic coherence; a structurally
 valid JSON record does not establish these properties.
 
-If real implementation-backed compounding is needed, implement only selected
-parents (or reuse independently validated downstream work), pin that actual
-commit in a new run, and import its evidence. Do not pretend hypothetical
-dependencies exist. Freeze task definitions and parent commits before using
-them for an offline benchmark.
+If a blocking question requires implementing a candidate or prototype, leave
+it unresolved and hand it to `/shadow-frog-dream` or a downstream implementation
+task. Do not turn the nap into an implementation loop. A later nap can pin an
+actual, independently validated implementation commit and import its evidence.
+Do not pretend hypothetical dependencies exist. Freeze task definitions and
+parent commits before using them for an offline benchmark.
 
 ## Record Format
 
@@ -180,7 +185,7 @@ with actual evidence before validation:
   "base_commit": "<full commit ID>",
   "limits": {
     "max_nodes": 7,
-    "max_depth": 2,
+    "max_depth": null,
     "max_probes": 2,
     "max_tasks": 2
   },

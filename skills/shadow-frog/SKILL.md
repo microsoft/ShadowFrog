@@ -415,6 +415,6 @@ requirements rather than all superseded ancestor designs.
 - `/shadow-frog-init` — create `.shadow/` for a new repo
 - `/shadow-frog-update` — refresh shadows after changes or from conversation
 - `/shadow-frog-dream` — autonomous exploration and experimentation while user is AFK
-- `/shadow-frog-nap` — bounded, source-grounded feature-task ideation without mandatory implementation
+- `/shadow-frog-nap` — implementation-free, source-grounded feature-task ideation within a work budget
 - `/shadow-frog-meditate` — deduplicate, merge, and resolve conflicting discoveries
 - `/shadow-frog-viewer` — browse and query the shadow (overview, search, preferences, recent)

@@ -32,6 +32,11 @@ shadow knowledge bases for any codebase.
   retention. New helpers require only the Python standard library and Git.
 
 ### Fixed
+- **Nap depth is opt-in** — removed the arbitrary default depth-2 cap and the
+  corresponding two-round planning instruction. `max_depth` may be omitted or
+  `null`; explicit caps still work, and node/probe budgets plus cycle checks
+  remain enforced. Clarified that Nap does not implement candidate features or
+  prototypes; implementation-backed questions are handed to Dream.
 - **Canonical ancestor retention** — cleanup now follows the same resolved
   index parent edges as reconciliation and index repair, rather than reading
   only a string `parent_branch`. List-valued and fallback lineage can no longer

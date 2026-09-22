@@ -160,7 +160,7 @@ function is named. Prefer "silently returns `None` on expired tokens" over
 | **shadow-frog-init** | Creates `.shadow/` with structural templates for every file | Once per repo |
 | **shadow-frog-update** | Refreshes shadows after code changes; captures knowledge from conversations | After commits, or when you share context |
 | **shadow-frog-dream** | Autonomous exploration and experimentation while you're away | When you want the agent to explore on its own |
-| **shadow-frog-nap** | Lightweight feature-task ideation with selective probes, parent context, and task exports | When you need ideas or SWE task briefs without implementing every candidate |
+| **shadow-frog-nap** | Implementation-free feature-task ideation with selective probes, parent context, and task exports | When you need ideas or SWE task briefs rather than implemented features |
 | **shadow-frog-meditate** | Deduplicates, merges, and resolves conflicting discoveries | Periodically, to keep the shadow clean |
 | **shadow-frog-viewer** | Browse, search, inspect preferences and labels, render dream lineage, and check invariants | When you want to see what's in the shadow, or audit its integrity |
 
@@ -202,8 +202,9 @@ up where it left off.
 ### Lightweight Ideation with Nap
 
 Nap reads focused source and optional shadow/dream evidence, refines a small
-shortlist, and runs only probes that can change a decision. It produces task
-briefs, not completed implementations. It does not require a remote, a
+shortlist, and runs only probes of existing behavior that can change a decision.
+It remains implementation-free: feature code and prototypes belong in Dream or
+downstream implementation work. It does not require a remote, a
 git-tracked shadow, or full shadow initialization.
 
 ```
@@ -211,8 +212,9 @@ git-tracked shadow, or full shadow initialization.
 /shadow-frog-nap mode=coherent
 ```
 
-Default limits are 7 recorded nodes, depth 2, 2 probes, and 2 selected tasks.
-These are configurable ceilings, not quotas; rejected attempts and failed
+Default limits are 7 recorded nodes, 2 probes, and 2 selected tasks. There is
+no default depth cap; `max_depth` is an optional user limit (unset or `null`
+otherwise). These are configurable ceilings, not quotas; rejected attempts and failed
 probes count. The record validator does not enforce the host agent's actual
 API spending. Store records outside `.shadow/`, or under an already initialized
 `.shadow/_meta/naps/`, so proposals never become verified discoveries by accident.
