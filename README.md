@@ -160,7 +160,7 @@ function is named. Prefer "silently returns `None` on expired tokens" over
 | **shadow-frog-init** | Creates `.shadow/` with structural templates for every file | Once per repo |
 | **shadow-frog-update** | Refreshes shadows after code changes; captures knowledge from conversations | After commits, or when you share context |
 | **shadow-frog-dream** | Autonomous exploration and experimentation while you're away | When you want the agent to explore on its own |
-| **shadow-frog-nap** | Implementation-free feature-task ideation with selective probes, parent context, and task exports | When you need ideas or SWE task briefs rather than implemented features |
+| **shadow-frog-nap** | Implementation-free proposal trees with independent judgments, selective probes, and task exports | When you need ideas or SWE task briefs rather than implemented features |
 | **shadow-frog-meditate** | Deduplicates, merges, and resolves conflicting discoveries | Periodically, to keep the shadow clean |
 | **shadow-frog-viewer** | Browse, search, inspect preferences and labels, render dream lineage, and check invariants | When you want to see what's in the shadow, or audit its integrity |
 
@@ -212,7 +212,7 @@ git-tracked shadow, or full shadow initialization.
 /shadow-frog-nap mode=coherent
 ```
 
-Default limits are 7 recorded nodes, 2 probes, and 2 selected tasks. There is
+Default limits are 7 recorded nodes, 2 probes, 2 judge batches, and 2 selected tasks. There is
 no default depth cap; `max_depth` is an optional user limit (unset or `null`
 otherwise). These are configurable ceilings, not quotas; rejected attempts and failed
 probes count. The record validator does not enforce the host agent's actual
@@ -220,15 +220,34 @@ API spending. Store records outside `.shadow/`, or under an already initialized
 `.shadow/_meta/naps/`, so proposals never become verified discoveries by accident.
 
 The bundled `nap.py` uses Python's standard library and Git, with no Bash
-dependency. It validates the record and pinned source files, returns compact
-parent context, exports selected task briefs, or emits one idea trajectory:
+dependency. It manages a persistent version-2 proposal tree: code stays at one
+pinned commit while children carry revised hypothetical design states. `@base`
+selects the code root; it is not an implemented parent feature.
 
 ```text
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --init --base DEFAULT_REF
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --context @base
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --add IDEAS.json --parent @base
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --add CHILDREN.json --parent n1
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --review-packet n2 n3
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --record-review JUDGMENT.json
+python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --select n2
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --context n1
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export TASKS.md
 python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --trajectory n3
 ```
+
+The host agent generates proposals and invokes a strong independent judge on
+the shortlist; the Python helper does not call a model. Accepted judgments are
+bound to the exact proposal, ancestor design state, mode and base commit.
+Unreviewed or stale approvals cannot make tasks ready/exportable. Adding
+unrelated siblings does not invalidate an existing approval.
+
+Updates allocate IDs, preserve parent proposal payloads, and use an exclusive
+lock plus atomic replacement. The same record resumes across agent sessions.
+Workers return submissions to one writer rather than editing the tree in
+parallel. Verdicts are planning judgments, not verified implementations, and
+recorded reviewer identities are not independently authenticated by the helper.
 
 For Claude Code use `.claude/skills/`; on Windows, `py -3` can be used in
 place of `python`. See the [Nap skill](skills/shadow-frog-nap/SKILL.md) for

@@ -23,7 +23,7 @@ def node(node_id="root", parent=None, goal="Support bounded-memory export"):
         "parent_id": parent,
         "title": f"Proposal {node_id}",
         "goal": goal,
-        "status": "ready",
+        "status": "candidate",
         "parent_connection": connection() if parent else None,
         "evidence": [{
             "anchor": "cart.py::calculate_total",
@@ -43,13 +43,36 @@ def node(node_id="root", parent=None, goal="Support bounded-memory export"):
 
 def make_record(commit):
     return {
-        "version": 1,
+        "version": 2,
+        "revision": 0,
         "mode": "coherent",
         "base_commit": commit,
         "limits": {"max_nodes": 7, "max_depth": None, "max_probes": 2, "max_tasks": 2},
         "nodes": [node()],
-        "selected": ["root"],
+        "reviews": [],
+        "selected": [],
     }
+
+
+def approve(nap, record, *node_ids):
+    record["selected"] = []
+    packet = nap.review_packet(record, list(node_ids))
+    response = {
+        "reviewer": "external fixture judge",
+        "judgments": [
+            {
+                "node_id": target["node_id"], "input_hash": target["input_hash"],
+                "decision": "accept", "rationale": "Fixture task accepted.",
+                "blocking_issues": [],
+                "evidence": ["cart.py::calculate_total"],
+            }
+            for target in packet["targets"]
+        ],
+    }
+    updated, _ = nap.record_review(record, response)
+    record.clear()
+    record.update(updated)
+    record["selected"] = list(node_ids)
 
 
 @pytest.fixture
@@ -98,7 +121,6 @@ def test_no_depth_cap_allows_a_full_node_budget_chain(nap, explicit_null):
         node(f"n{index}", f"n{index - 1}" if index else None)
         for index in range(7)
     ]
-    record["selected"] = ["n6"]
     nap.validate_record(record)
     assert nap.parent_context(record, "n6")["limits"]["max_depth"] is None
     assert len(nap.idea_trajectory(record, "n6")["nodes"]) == 7
@@ -112,7 +134,6 @@ def test_explicit_depth_cap_is_still_enforced(nap, limit):
         node(f"n{index}", f"n{index - 1}" if index else None)
         for index in range(4)
     ]
-    record["selected"] = ["n3"]
     with pytest.raises(ValueError, match="max_depth"):
         nap.validate_record(record)
 
@@ -122,13 +143,11 @@ def test_ten_siblings_have_distinct_goals_on_the_same_files(nap, record):
     record["nodes"] += [
         node(f"child-{i}", "root", f"Distinct direction {i}") for i in range(10)
     ]
-    record["selected"] = ["child-1", "child-9"]
     nap.validate_record(record)
 
 
 def test_nodes_need_not_be_in_topological_order(nap, record):
     record["nodes"].insert(0, node("child", "root"))
-    record["selected"] = ["child"]
     nap.validate_record(record)
 
 
@@ -141,7 +160,8 @@ def test_record_must_be_an_object(nap, value):
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("version", 2, "version"),
+        ("version", 1, "version"),
+        ("version", 3, "version"),
         ("version", True, "version"),
         ("mode", "dream", "mode"),
         ("base_commit", "HEAD", "base_commit"),
@@ -164,6 +184,7 @@ def test_invalid_run_fields(nap, record, field, value, message):
         ("max_probes", -1), ("max_nodes", True), ("max_depth", "2"),
         ("max_probes", 1.5), ("max_nodes", None), ("max_probes", None),
         ("max_tasks", None),
+        ("max_reviews", None), ("max_reviews", -1),
     ],
 )
 def test_limits_fail_early(nap, record, field, value):
@@ -195,7 +216,7 @@ def test_depth_budget_is_enforced(nap, record):
 def test_task_budget_is_enforced(nap, record):
     record["limits"]["max_tasks"] = 1
     record["nodes"].append(node("child", "root"))
-    record["selected"].append("child")
+    record["selected"] = ["root", "child"]
     with pytest.raises(ValueError, match="max_tasks"):
         nap.validate_record(record)
 
@@ -280,11 +301,13 @@ def test_inherited_claims_keep_their_provenance(nap, record):
 def test_unready_nodes_cannot_be_selected(nap, record, status):
     record["nodes"][0]["status"] = status
     record["nodes"][0]["reason"] = "Feasibility unresolved."
+    record["selected"] = ["root"]
     with pytest.raises(ValueError, match="ready"):
         nap.validate_record(record)
 
 
 def test_ready_task_cannot_hide_open_questions(nap, record):
+    record["nodes"][0]["status"] = "ready"
     record["nodes"][0]["task"]["open_questions"] = ["Is the API usable?"]
     with pytest.raises(ValueError, match="open_questions"):
         nap.validate_record(record)
@@ -292,6 +315,7 @@ def test_ready_task_cannot_hide_open_questions(nap, record):
 
 @pytest.mark.parametrize("field", ["current_behavior", "desired_behavior", "acceptance_criteria"])
 def test_ready_task_requires_an_actionable_contract(nap, record, field):
+    record["nodes"][0]["status"] = "ready"
     del record["nodes"][0]["task"][field]
     with pytest.raises(ValueError, match=field):
         nap.validate_record(record)
@@ -332,7 +356,7 @@ def test_export_uses_final_contract_not_superseded_parent_requirements(nap, reco
     child["parent_connection"] = connection("replace")
     child["task"]["acceptance_criteria"] = ["NEW REQUIREMENT"]
     record["nodes"].append(child)
-    record["selected"] = ["replacement"]
+    approve(nap, record, "replacement")
     rendered = nap.render_tasks(record)
     assert "NEW REQUIREMENT" in rendered
     assert "OLD REQUIREMENT" not in rendered
@@ -376,8 +400,9 @@ def test_cli_views_are_wired(record, tmp_path, coupon_demo, flag):
     assert ("parent" if flag == "--context" else "nodes") in output
 
 
-def test_cli_export_is_utf8_and_does_not_overwrite_record(record, tmp_path, coupon_demo):
+def test_cli_export_is_utf8_and_does_not_overwrite_record(nap, record, tmp_path, coupon_demo):
     record["nodes"][0]["title"] = "Export caf\u00e9"
+    approve(nap, record, "root")
     output = tmp_path / "tasks with spaces.md"
     result = run_cli(record, tmp_path, coupon_demo, "--export", str(output))
     assert result.returncode == 0, result.stderr
@@ -464,8 +489,7 @@ def test_documented_record_and_task_shapes_match_helper(nap, record, repo_root):
     template["nodes"][0]["evidence"] = record["nodes"][0]["evidence"]
     nap.validate_record(template)
     template["nodes"][0].update(task)
-    template["nodes"][0]["status"] = "ready"
-    template["selected"] = ["n1"]
+    approve(nap, template, "n1")
     nap.validate_record(template)
 
 
@@ -476,7 +500,7 @@ def test_empty_view_id_is_not_silently_ignored(record, tmp_path, coupon_demo, fl
     assert "Unknown node" in result.stderr
 
 
-def test_nap_needs_neither_a_shadow_nor_a_remote(record, tmp_path, tmp_git_repo):
+def test_nap_needs_neither_a_shadow_nor_a_remote(nap, record, tmp_path, tmp_git_repo):
     (tmp_git_repo / "cart.py").write_text(
         "def calculate_total(items):\n    return sum(items)\n", encoding="utf-8",
     )
@@ -488,6 +512,7 @@ def test_nap_needs_neither_a_shadow_nor_a_remote(record, tmp_path, tmp_git_repo)
         ["git", "rev-parse", "HEAD"], cwd=tmp_git_repo, env=env,
         check=True, capture_output=True, text=True, encoding="utf-8",
     ).stdout.strip()
+    approve(nap, record, "root")
     output = tmp_path / "standalone tasks.md"
     result = run_cli(record, tmp_path, tmp_git_repo, "--export", str(output))
     assert result.returncode == 0, result.stderr

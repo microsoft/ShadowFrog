@@ -410,6 +410,13 @@ real code baseline separately from idea lineage. Export a root-to-leaf path
 for a trajectory, not stacked siblings; a final task uses its final active
 requirements rather than all superseded ancestor designs.
 
+Nap's host agent generates proposals and delegates a strong independent
+shortlist review. Version-2 tree records bind each judgment to the exact
+proposal, ancestor design state, mode, and source commit. The helper manages
+atomic append/review/select operations and rejects missing or stale approvals
+for ready tasks, but it neither invokes an LLM nor authenticates that a recorded
+review happened. Judgment approval is planning confidence, not execution proof.
+
 ## Related Skills
 
 - `/shadow-frog-init` — create `.shadow/` for a new repo

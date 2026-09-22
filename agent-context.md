@@ -26,3 +26,6 @@ Use `/shadow-frog-nap` for implementation-free feature-task ideation within a
 work budget. Dream and Nap accept `mode=coherent`: each child needs a
 substantive parent connection, while siblings remain free to pursue diverse
 directions. A nap parent is an idea, not proof that its proposed code exists.
+Nap's managed tree operations preserve proposals and record independent judge
+receipts; only current accepted judgments make tasks ready for selection.
+Judged planning quality is not execution-verified correctness.

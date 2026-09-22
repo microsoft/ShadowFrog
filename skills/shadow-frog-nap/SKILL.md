@@ -3,8 +3,9 @@ name: shadow-frog-nap
 description: >-
   Generate grounded software feature-task briefs with a small, bounded
   ideation budget instead of implementing every idea. Read focused source
-  and optional shadow/dream evidence, refine a shortlist, and run only
-  decision-changing probes. Use mode=coherent to connect each child to
+  and optional shadow/dream evidence, grow or resume a persistent proposal
+  tree, and obtain independent shortlist judgments. Run only decision-changing
+  probes of existing behavior. Use mode=coherent to connect each child to
   its parent's findings or design while encouraging diverse siblings.
   Use for lightweight ideation, nap runs, or preparing SWE implementation
   tasks; use shadow-frog-dream for full implementation-backed experiments.
@@ -15,9 +16,11 @@ scripts:
 # ShadowFrog Nap
 
 Nap is **implementation-free feature-task ideation**, not feature development
-or verified dreaming. Reasoning stays with the agent; the Python helper validates records,
-retrieves compact parent context, and exports tasks. It never runs probes,
-creates worktrees, changes branches, pushes, or updates shadow discoveries.
+or verified dreaming. The host agent generates proposals and delegates an
+independent judgment. The Python helper manages the persistent tree, binds
+judgments to exact proposal inputs, and exports reviewed contracts. It never
+calls a model, executes probes, implements features, creates worktrees/branches,
+pushes, or writes shadow discoveries.
 
 ## Inputs and Limits
 
@@ -32,6 +35,7 @@ initialized `.shadow/` are **not** required.
 | `max_depth` | unset (`null`) | Optional user-requested maximum parent edges; roots have depth 0 |
 | `max_probes` | 2 | Total executed probes recorded across all nodes, including failures |
 | `max_tasks` | 2 | Maximum selected ready task briefs |
+| `max_reviews` | 2 | Recorded judge batches: one shortlist review plus a bounded re-review |
 
 These are **ceilings, not quotas**. Zero selected tasks is a valid result.
 Users can request larger budgets, including ten diverse children of one
@@ -42,9 +46,12 @@ Depth is not a default stopping condition. Omit `max_depth` or set it to
 The total node budget bounds every run, and parent/cycle checks always apply.
 
 The helper enforces **recorded** limits, not actual API spending or unrecorded
-commands. Respect the host's token/cost/time limits separately. Do not install
-dependencies, debug infrastructure, start nested agents, or run full suites
-automatically. Escalation to a full dream is a separate decision.
+commands/model calls. Respect the host's token/cost/time limits separately,
+including invalid or failed judge responses. Do not install dependencies,
+debug infrastructure, spawn per-candidate implementation workers, or run full
+suites automatically. One independent shortlist judge and a bounded re-review
+are allowed within the review budget; do not start a model panel for every node.
+Escalation to a full dream is a separate decision.
 
 ## Modes
 
@@ -87,8 +94,62 @@ pinned source + optional prior evidence
                   |
        probe decisive unknowns
                   |
+       independent shortlist judge
+                  |
        selected task contracts
 ```
+
+## Operational Tree Workflow
+
+Use one persistent record across sessions. The default branch is represented
+by an immutable `base_commit`; `@base` is a virtual code-root selector, not an
+invented proposal with fake symbol evidence. Root proposals have null
+`parent_id`. Depth counts proposal-parent edges, and the virtual root consumes
+no node budget.
+
+Resolve the intended default branch or commit explicitly; do not assume the
+currently checked-out feature branch is the intended baseline. Initialize once:
+
+```text
+python .github/skills/shadow-frog-nap/nap.py TREE.json --repo REPO --mode coherent --init --base DEFAULT_REF --max-nodes 20
+```
+
+Use the actual default branch name/ref or full commit instead of `DEFAULT_REF`.
+The helper resolves it once, creates a version-2 record, and refuses to overwrite
+an existing tree. `--max-depth` is optional; initial `--max-nodes`, `--max-probes`,
+`--max-tasks`, and `--max-reviews` flags are accepted only with `--init`.
+
+To expand a parent, use `--context @base` for root opportunities or
+`--context n1` for a proposal. The packet supplies the pinned code baseline,
+the parent's full proposal and review feedback, brief ancestors/existing
+children, and current usage. Keep actual code and hypothetical design state
+separate.
+
+Generate a UTF-8 JSON **list of proposal objects** in a submission file. Each
+object uses the node fields below except `id`, `parent_id`, and `review_id`;
+the driver owns those fields. Omit status for a candidate, or explicitly record
+a `seed`/`rejected` attempt with its required evidence/reason. Never submit
+`ready`: only a current accepted judgment can grant it.
+
+```text
+python .github/skills/shadow-frog-nap/nap.py TREE.json --repo REPO --mode coherent --add CHILDREN.json --parent n1
+```
+
+The helper assigns unique IDs and appends the whole batch or nothing. Exact
+same-parent retries reuse existing IDs without resetting judgment/status or
+consuming another node. Existing parent/sibling design payloads are unchanged.
+To revise or replace a proposal,
+append a child with its full active contract and appropriate parent connection;
+do not rewrite its parent. This also permits sibling alternatives and rejected
+ideas to motivate a better child.
+
+One coordinator writes the canonical tree. Workers return proposal/judgment
+files, not competing edits to `TREE.json`. Mutations use an exclusive adjacent
+lock and atomic replacement, increment `revision`, and validate the complete
+record and pinned source before publishing. On a stale lock after interruption,
+confirm its writer stopped before removing only that lock; never discard the
+tree to bypass contention. Resume by reopening the same tree and selecting a
+parent, not by reconstructing state from chat history.
 
 ### 1. Pin and Ground
 
@@ -97,7 +158,7 @@ per-file shadows, cross-cutting discoveries, and selected dream reports.
 Use existing indexes to select context; do not read every past report or
 initialize a full shadow merely to nap.
 
-Obtain the full base commit with `git rev-parse HEAD`. Inspect source and
+Use `--init --base` to obtain the full intended baseline commit. Inspect source and
 existing behavior at that commit. If the working tree differs, inspect the
 pinned versions rather than treating uncommitted or newer code as baseline.
 Resolve real `file::symbol` anchors; do not invent symbols or copy template
@@ -112,8 +173,8 @@ are not sufficient motivation.
 ### 2. Select and Refine
 
 Reject weak or duplicate ideas early, without implementing them. Maintain one
-canonical run record with a single writer. Save observations and rejected
-directions as work proceeds so another session can resume from that record.
+canonical run record through the managed append operations. Save observations
+and rejected directions as work proceeds so another session can resume.
 
 Use a selected parent's context packet, not its entire conversation history.
 Read cited source/report details when necessary to check the evidence.
@@ -147,7 +208,65 @@ probe belongs in `open_questions`, not the `probes` list. Missing dependencies
 or an exhausted budget are explicit unresolved questions, never evidence of
 success. The helper does not execute or independently attest these commands.
 
-### 4. Review Readiness
+### 4. Independent Judgment and Readiness
+
+Before selecting tasks, prepare one review packet for the shortlisted paths:
+
+```text
+python .github/skills/shadow-frog-nap/nap.py TREE.json --repo REPO --mode coherent --review-packet n3 n6
+```
+
+Capture its JSON output through the host's tooling. Delegate to a **strong
+reasoning model in a fresh context**, preferably a different backbone from the
+generator when the host supports it. Give the judge the packet and read-only
+access to source at its exact `base_commit`, not the generator's conversation
+or self-assigned confidence. If the host cannot provide an independent context,
+leave proposals as candidates; do not fabricate a review or impersonate a judge.
+
+The judge assesses grounding, plausible feasibility, user value/distinctness,
+scope and acceptance criteria, each parent-child connection, and the final active
+contract. Siblings need not share a goal. A useful alternative need not call
+parent code, and no hypothetical parent API may be assumed implemented.
+
+Return **accept / revise / reject**, with code references, a rationale, and
+blocking issues. Do not produce only a score. The output format is:
+
+```json
+{
+  "reviewer": "<actual independent model/context identity recorded by the host>",
+  "judgments": [
+    {
+      "node_id": "n3",
+      "input_hash": "<copy exactly from the corresponding packet target>",
+      "decision": "accept",
+      "rationale": "<specific source-grounded assessment>",
+      "blocking_issues": [],
+      "evidence": ["<real file>::<real symbol>"]
+    }
+  ]
+}
+```
+
+An accept decision requires no blockers and a complete task with no unresolved
+questions. Revise/reject decisions require concrete blockers. The host records
+the real reviewer identity and submits the response, without changing a verdict
+to make the demonstration or quota succeed:
+
+```text
+python .github/skills/shadow-frog-nap/nap.py TREE.json --repo REPO --mode coherent --record-review JUDGMENT.json
+python .github/skills/shadow-frog-nap/nap.py TREE.json --repo REPO --mode coherent --select n3 n6
+```
+
+Recording is atomic and exact retries are idempotent. The helper stores review
+batches, changes only review/status metadata, and checks SHA-256 bindings over
+the proposal, its ancestor design payloads, mode, and base commit. Adding a
+sibling does not invalidate an existing approval. Changing reviewed semantics
+does; append a revision and obtain a new judgment rather than forging hashes.
+Status/review metadata is not implementation state and is not inherited as code.
+
+Permit at most one targeted revision/re-review under default limits. If a judge
+cannot settle a critical uncertainty without implementation, keep the proposal
+unready and hand that question to Dream. Do not run open-ended debates.
 
 A ready task must:
 
@@ -157,9 +276,12 @@ A ready task must:
 - Stand alone at `base_commit`, without assuming an idea parent was implemented.
 - In coherent mode, explain a meaningful parent connection and its own delta.
 
-`ready` means **reviewed and specified**, not execution-proven. The agent must
-judge usefulness, novelty, feasibility, and semantic coherence; a structurally
-valid JSON record does not establish these properties.
+`ready` means **independently judge-reviewed and specified**, not execution-proven.
+It must reference the latest judgment for that node; an older acceptance cannot
+override a later rejection.
+Receipts prevent accidental stale approvals but cannot authenticate that an LLM
+actually ran or establish the truth of its conclusions. The host must perform
+the real independent review; the Python helper is not a semantic oracle.
 
 If a blocking question requires implementing a candidate or prototype, leave
 it unresolved and hand it to `/shadow-frog-dream` or a downstream implementation
@@ -175,19 +297,24 @@ the shadow is already initialized**. Otherwise use an agent workspace or
 another user-approved directory outside `.shadow/`. Do not create a partial
 shadow, `_dreams/` artifacts, or per-file discovery entries for proposals.
 
-This template illustrates the shape; replace commit and source placeholders
-with actual evidence before validation:
+The persisted record is normally created and mutated by the helper, not edited
+by workers. This example illustrates its shape; placeholders must become actual
+source evidence. Version 1 records do not have judgment provenance; import their
+proposals as unreviewed candidates/seeds in a new tree rather than inventing
+approvals.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
+  "revision": 0,
   "mode": "coherent",
   "base_commit": "<full commit ID>",
   "limits": {
     "max_nodes": 7,
     "max_depth": null,
     "max_probes": 2,
-    "max_tasks": 2
+    "max_tasks": 2,
+    "max_reviews": 2
   },
   "nodes": [
     {
@@ -207,6 +334,7 @@ with actual evidence before validation:
       "probes": []
     }
   ],
+  "reviews": [],
   "selected": []
 }
 ```
@@ -216,8 +344,10 @@ letter/digit, and are at most 80 characters. `parent_id` is null for a root
 or an existing node ID; records may be unordered but must be acyclic.
 
 Statuses: `seed`, `candidate`, `ready`, `rejected`. A rejected node also needs
-a nonempty `reason`. Seeds and rejected nodes can motivate a child, but cannot
-be selected as ready tasks. Preserve their status in the context packet.
+a nonempty `reason`. Seeds/rejections can motivate a child. A ready node has
+a `review_id` pointing to a current accepted judgment in the append-only
+`reviews` list. Preserve historical proposal payloads; supersession is local
+to the child path, not a rewrite of the parent or its other children.
 
 Every node has at least one evidence entry:
 - `inspection`: an observation checked against source.
@@ -244,8 +374,9 @@ A ready node also contains this complete, **currently active** task contract:
 }
 ```
 
-Non-ready nodes may omit `task`. If present, it uses the same shape but can
-retain open questions. `selected` contains unique IDs of ready nodes only.
+Non-ready nodes may omit `task`. A review packet requires a complete task shape,
+which may still have open questions for the judge to identify as blockers.
+`selected` contains unique ready IDs only. Use `--select` with no IDs to clear it.
 
 ## Python Helper
 
@@ -262,8 +393,9 @@ python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coheren
 ```
 
 Validation checks limits, lineage, evidence shape, commit/file existence, and
-selected readiness. `--context` emits the parent's full record plus brief
-ancestor/child summaries. `--export` writes UTF-8 Markdown to a **new** file
+review bindings/readiness. `--context` emits the parent's full record/review
+and brief ancestor/child summaries; `--context @base` starts from real code.
+`--export` writes UTF-8 Markdown to a **new** file
 and refuses to overwrite existing files. Other outputs are JSON on stdout;
 errors go to stderr with exit 1 (argument errors use exit 2).
 

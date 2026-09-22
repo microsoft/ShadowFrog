@@ -207,14 +207,21 @@ it in `_dreams/_index.md`.
 - Broad exploration uses its initial snapshot; coherent descendants receive
   an orchestrator-refreshed parent ref/tip after the parent is pushed. Siblings
   share that refreshed snapshot, without independent fetches.
-- Nap has a single JSON run record with pinned source, limits, nodes, and
-  selected ready tasks. Its Python helper checks recorded budgets, acyclic
-  lineage, task shape, and commit/file existence; it never executes probes.
+- Nap has a version-2 JSON tree with revision, pinned source, limits, nodes,
+  append-only review receipts, and selected ready tasks. Managed init/add/review/
+  select operations use locking and atomic writes. `@base` is the virtual code
+  root; proposals do not require Git branches or implemented parent APIs.
+  Its Python helper checks budgets, lineage, source references, and judgments
+  bound to exact semantic inputs; it never calls a model or executes probes.
   Its expected mode defaults to broad; coherent runs must pass `--mode coherent`.
   Depth is uncapped by default (`max_depth: null`); explicit user depth limits
   still apply. Node/probe budgets and cycle checks remain mandatory. Probes
   observe existing behavior, while candidate implementations/prototypes belong
   in Dream or downstream work.
+- The host provides a strong independent judge in a fresh context. No self-rating
+  may impersonate an independent review. `ready` requires a current accepted
+  receipt with no blockers; the helper checks association, not model authenticity
+  or semantic truth. Revisions append children rather than rewrite parents.
 - Store nap artifacts outside `.shadow/`, or in an initialized
   `.shadow/_meta/naps/`. Never initialize a partial shadow just to store a nap,
   increment dream counters for naps, or treat proposals as verified discoveries.

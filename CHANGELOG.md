@@ -10,6 +10,13 @@ shadow knowledge bases for any codebase.
 ## Unreleased
 
 ### Added
+- **Managed, judged Nap trees** — version-2 records support initialization at an
+  explicit code ref, a virtual `@base` root, ID-allocating append operations,
+  resumed parent context, independent review packets/receipts, and selection.
+  One writer uses an exclusive lock and atomic replacement; historical proposal
+  payloads remain unchanged. Ready/exported tasks require an accepted judgment
+  bound to their exact proposal, ancestry, mode and base commit. The host calls
+  the model; Python never generates features or claims to authenticate judgments.
 - **`shadow-frog-nap`** — bounded, source-grounded feature-task ideation with
   optional probes, compact parent context, and a Python-only record
   validator/exporter. Records pin a code baseline and keep proposals separate

@@ -20,6 +20,14 @@ allowing diverse siblings and alternatives. Schema checks do not establish
 semantic coherence, feasibility, or user value. Nap's recorded-work limits
 also do not enforce the host model's actual token or financial spending.
 
+Nap uses a host-supplied independent model review before a task can be selected.
+Review receipts are bound to the exact proposal, ancestry, mode, and source
+baseline to catch stale approvals. The helper checks those bindings and the
+declared verdict, not the authenticity of the reviewer or the correctness of
+its reasoning. A fresh context and direct source access reduce some forms of
+anchoring, but model judgments can still be wrong; approval is not proof that
+the proposed implementation will succeed.
+
 Dream tool snapshots contain host-specific paths and executable helper copies.
 Keep them outside code repositories, do not publish them as task data, and retain
 them only while active or resumed work needs them. Hash verification detects
