@@ -4,6 +4,11 @@ ShadowFrog gives coding agents a **shadow knowledge base** for any codebase:
 a file-backed memory of tacit codebase knowledge learned from code reading,
 experiments, and conversations with you.
 
+A **shadow** mirrors your source tree under `.shadow/`, storing discoveries in
+symbol-organized Markdown files. Lookup is **index-free**: agents follow source
+paths and `file::symbol` references rather than a vector index or embedding
+service.
+
 It records knowledge that is hard to recover from source alone: which refactor
 breaks downstream callers, which invariant the tests never exercise, or which
 "obvious" cleanup removes a production workaround. The code tells you *what
@@ -188,12 +193,10 @@ Structural validation alone cannot establish semantic coherence or feasibility.
 
 ## How Discoveries Work
 
-The `.shadow/` directory mirrors source paths with Markdown files organized by
-symbol. Knowledge about `src/auth.py` lives at `.shadow/src/auth.py.md`;
+For example, knowledge about `src/auth.py` lives at `.shadow/src/auth.py.md`;
 locations such as `src/auth.py::login` identify the relevant symbol.
 Cross-file discoveries live once in `_cross/`, with links from the involved
-per-file shadows. Lookup follows source paths, not a separate vector index;
-no embedding database or retrieval service is required.
+per-file shadows.
 
 ```
 your-repo/
