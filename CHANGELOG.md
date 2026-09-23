@@ -17,6 +17,8 @@ shadow knowledge bases for any codebase.
   Citation scores measure emitted content, not correctness or proven usefulness.
 
 ### Changed
+- Citation writes retry temporary SQLite lock contention within their existing
+  wait budget and reuse the rollback journal without weakening synchronization.
 - Retrieval views now show IDs/scores and paginate by default. Preferences
   remain separately accessible, trust and relevance precede popularity, and
   hooks remain fail-open while surfacing citation warnings.

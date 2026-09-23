@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -61,10 +62,83 @@ for index in range(30):
         )
         for worker in range(6)
     ]
-    for process in processes:
-        stdout, stderr = process.communicate(timeout=40)
-        assert process.returncode == 0, stdout + stderr
+    outcomes = []
+    try:
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=40)
+            outcomes.append((process.returncode, stdout, stderr))
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+                process.communicate(timeout=10)
+    assert all(code == 0 for code, _, _ in outcomes), outcomes
     assert citations.CitationStore(path, ".shadow").scores([identity])[identity] == 180
+
+
+def test_writes_reuse_journal_without_disabling_synchronization(citations, tmp_path):
+    store = citations.CitationStore(tmp_path / "citations.sqlite3", ".shadow")
+    identity = citations.discovery_id("file", "a::f", "Claim")
+    store.record([identity], "first")
+    with store._connection() as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "persist"
+        assert db.execute("PRAGMA synchronous").fetchone()[0] >= 2
+    journal = tmp_path / "citations.sqlite3-journal"
+    assert journal.is_file()
+    assert journal.read_bytes()[:28] == b"\0" * 28
+    store.record([identity], "second")
+    assert store.scores([identity])[identity] == 2
+
+
+def test_busy_commit_retries_whole_transaction_without_duplicate_updates(citations, tmp_path):
+    path = tmp_path / "citations.sqlite3"
+    store = citations.CitationStore(path, ".shadow")
+    identity = citations.discovery_id("file", "a::f", "Claim")
+    store.record([identity], "initial")
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM scores").fetchall()
+    code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from _citations import CitationStore
+store = CitationStore(Path(sys.argv[2]), ".shadow", timeout=2)
+def update(db):
+    db.execute("UPDATE scores SET citation_score = citation_score + 1")
+    print("attempt", flush=True)
+store._write(update)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", code, str(HELPER.parent), str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+    )
+    try:
+        # Reader permits BEGIN IMMEDIATE and the update, but prevents COMMIT.
+        assert process.stdout.readline().strip() == "attempt"
+        assert process.stdout.readline().strip() == "attempt"
+        reader.rollback()
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 0, stdout + stderr
+    finally:
+        reader.close()
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=10)
+    assert store.scores([identity])[identity] == 2
+
+
+def test_non_lock_errors_are_not_retried(citations, tmp_path):
+    store = citations.CitationStore(tmp_path / "citations.sqlite3", ".shadow")
+    attempts = []
+
+    def invalid_sql(db):
+        attempts.append(True)
+        db.execute("INSERT INTO nonexistent_table VALUES (1)")
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        store._write(invalid_sql)
+    assert len(attempts) == 1
 
 
 def test_worktrees_share_scores_but_not_nested_shadows(citations, coupon_demo, tmp_path):
@@ -117,8 +191,10 @@ def test_locked_ledger_fails_within_bounded_wait(citations, tmp_path):
     connection = sqlite3.connect(store.path)
     try:
         connection.execute("BEGIN EXCLUSIVE")
+        start = time.monotonic()
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             store.record([identity], "second")
+        assert time.monotonic() - start < 0.5
     finally:
         connection.rollback()
         connection.close()

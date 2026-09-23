@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import random
 import re
 import sqlite3
 import subprocess
@@ -76,13 +77,19 @@ class CitationStore:
         return cls(state / "shadowfrog/citations" / f"{identity}.sqlite3", str(shadow))
 
     @contextmanager
-    def _connection(self):
+    def _connection(self, *, timeout=None):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path, timeout=self.timeout)
+        db = sqlite3.connect(self.path, timeout=self.timeout if timeout is None else timeout)
         try:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1):
                 raise ValueError(f"Unsupported citation database version {version}; use a compatible helper")
+            # Reuse the rollback journal instead of creating/deleting it on every
+            # tiny update, while retaining FULL synchronization and atomic commits.
+            mode = db.execute("PRAGMA journal_mode=PERSIST").fetchone()[0]
+            if mode != "persist":
+                raise ValueError(f"Cannot enable persistent citation journaling (got {mode})")
+            db.execute("PRAGMA synchronous=FULL")
             if version == 0:
                 with db:
                     db.execute("BEGIN IMMEDIATE")
@@ -102,6 +109,27 @@ class CitationStore:
             yield db
         finally:
             db.close()
+
+    def _write(self, action):
+        """Retry only lock contention, rolling back each attempt within one budget."""
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                wait = min(0.01, max(0, deadline - time.monotonic()))
+                with self._connection(timeout=wait) as db, db:
+                    db.execute("BEGIN IMMEDIATE")
+                    return action(db)
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                locked = (
+                    (code is not None and code & 0xff in (5, 6))  # SQLITE_BUSY / SQLITE_LOCKED
+                    or (code is None and str(exc) in ("database is locked", "database table is locked"))
+                )
+                remaining = deadline - time.monotonic()
+                if not locked or remaining <= 0:
+                    raise
+                # Avoid letting repeated writers monopolize SQLite's polling slots.
+                time.sleep(min(remaining, random.uniform(0.001, 0.01)))
 
     def scores(self, ids):
         if not self.path.exists() or not ids:
@@ -124,8 +152,7 @@ class CitationStore:
         ids = list(dict.fromkeys(ids))
         if not ids:
             return
-        with self._connection() as db, db:
-            db.execute("BEGIN IMMEDIATE")
+        def update(db):
             for identity in ids:
                 inserted = db.execute(
                     "INSERT OR IGNORE INTO events(scope, event, id) VALUES (?, ?, ?)",
@@ -137,16 +164,18 @@ class CitationStore:
                         "ON CONFLICT(scope, id) DO UPDATE SET citation_score=citation_score+1",
                         (self.scope, identity),
                     )
+        self._write(update)
 
     def save_page(self, request, catalog, ids):
         token = uuid.uuid4().hex
         request = hashlib.sha256(request.encode("utf-8")).hexdigest()
-        with self._connection() as db, db:
+        def publish(db):
             db.execute("DELETE FROM pages WHERE created < ?", (time.time() - PAGE_TTL,))
             db.execute(
                 "INSERT INTO pages VALUES (?, ?, ?, ?, ?, ?)",
                 (token, self.scope, request, catalog, json.dumps(ids), time.time()),
             )
+        self._write(publish)
         return token
 
     def load_page(self, token, request, catalog):

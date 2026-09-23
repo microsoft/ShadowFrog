@@ -113,7 +113,10 @@ roots in the same repo have separate scopes. Outside Git, the cache lives under
 not discovery bodies. It is local metadata, not a tracked or multi-machine DB;
 Markdown and its format remain authoritative and unchanged.
 
-Transactions prevent lost increments from concurrent agents. Reuse `--event-id`
+Transactions prevent lost increments from concurrent agents. Lock contention
+retries the whole transaction within the original short wait budget; each failed
+attempt rolls back. The ledger reuses its rollback journal with full disk
+synchronization rather than repeatedly creating/deleting it. Reuse `--event-id`
 when retrying one retrieval; do not reuse it for unrelated visits. A failed
 stdout emission is not recorded. Ledger failures warn on stderr, return the
 knowledge, and show unknown scores as `?` when scores cannot be read.
