@@ -26,19 +26,13 @@ python3 .github/skills/shadow-frog-init/shadow-init.py [options]
 python3 .claude/skills/shadow-frog-init/shadow-init.py [options]
 ```
 
-**IMPORTANT: Run from the repo/worktree root directory.** The script
-auto-detects the root via `git rev-parse --show-toplevel`, which returns
-the correct root for regular repos AND worktrees. If auto-detection fails
-(common when python is routed through Docker or the `.git` file points to
-an inaccessible path), pass `--root` explicitly:
+**Run from the repo/worktree root.** The helper auto-detects it with
+`git rev-parse --show-toplevel`. If Git cannot resolve or access the root
+(for example, inside a container), use `--root` to bypass detection:
 
 ```bash
 # If auto-detect fails, pass the root explicitly:
 python3 .github/skills/shadow-frog-init/shadow-init.py --root "$(pwd)"
-
-# In Docker wrapper scenarios (eval harness), git may not work inside
-# the container. Use --root to bypass git detection:
-python3 .github/skills/shadow-frog-init/shadow-init.py --root /testbed
 ```
 
 ### Options
@@ -51,32 +45,18 @@ python3 .github/skills/shadow-frog-init/shadow-init.py --root /testbed
 
 ### What it does
 
-1. Discovers source files via `git ls-files`
-2. Filters through `.shadow/.shadowignore` (gitignore syntax)
-3. Extracts symbols from each file (classes, functions, methods)
-4. Creates per-file shadow `.md` files with symbol headings
-5. Creates `_index.md`, `_prefs.md`, `_meta/state.json`, `.shadowignore`
-6. Reports: files, symbols, languages detected
+The helper discovers sources with `git ls-files`, applies
+`.shadow/.shadowignore`, extracts symbols, and creates symbol-organized
+per-file shadows plus `_index.md`, `_prefs.md`, `_meta/state.json`, and
+`.shadowignore`. It reports file/symbol counts and detected languages.
 
-### After running
-
-Tell the user:
-- "Edit `.shadow/.shadowignore` to exclude files that shouldn't be shadowed"
-- "Run `/shadow-frog-dream` for autonomous exploration, or `/shadow-frog-update` after your next changes"
-
-Then decide the version-control mode (do not skip this — it is not handled
-by the script). Ask the user: "Should `.shadow/` be **committed** (shared
-with your team via git) or **gitignored** (local to your machine only)?"
-Make the trade-off explicit before they choose — see
-[Step 9: Handle .gitignore](#9-handle-gitignore) for the full committed vs
-gitignored comparison. Key caveat: a gitignored `.shadow/` disables
-`shadow-frog-dream` (dreams move `.shadow/` through git). If gitignored, add
-`.shadow/` to `.gitignore`.
+After creating `.shadow/`, complete [Post-init steps](#post-init-steps).
+The helper does not choose the version-control mode.
 
 ## Fallback: Manual Init
 
 If the Python script fails (wrong Python version, missing file, etc.),
-follow these steps manually:
+follow these steps manually, then complete [Post-init steps](#post-init-steps).
 
 ### 1. Check preconditions
 
@@ -156,10 +136,6 @@ out/
 .claude/hooks/scripts/shadow-frog-*
 ```
 
-Tell the user: "Edit `.shadow/.shadowignore` to exclude files or
-folders that shouldn't be shadowed (e.g., vendored code, generated
-files, tool configs)."
-
 ### 5. Create `_prefs.md`
 
 ```markdown
@@ -236,7 +212,11 @@ Rules:
 | src/auth.py | Python | 5 (UserAuth, authenticate_user, ...) | 0 |
 ```
 
-### 9. Handle .gitignore
+## Post-init Steps
+
+After creating `.shadow/` with either path:
+
+### Version-Control Mode
 
 Ask the user: "Should `.shadow/` be **committed** (shared with your team via
 git) or **gitignored** (local to your machine only)?"
@@ -261,7 +241,10 @@ Before they decide, make the trade-off explicit:
 
 - If gitignored: add `.shadow/` to `.gitignore`.
 
-### 10. Report
+### Report
 
 Print: files discovered, languages detected, total symbols.
-Suggest: `/shadow-frog-update` for deeper analysis, `/shadow-frog-dream` for autonomous exploration.
+Tell the user to edit `.shadow/.shadowignore` to exclude unwanted paths,
+such as vendored/generated files or tool configs. Suggest `/shadow-frog-update`
+for deeper analysis or after code changes, and `/shadow-frog-dream` for
+autonomous exploration if `.shadow/` is committed.

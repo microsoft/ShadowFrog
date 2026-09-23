@@ -4,12 +4,16 @@ ShadowFrog gives coding agents a **shadow knowledge base** for any codebase:
 a file-backed memory of tacit codebase knowledge learned from code reading,
 experiments, and conversations with you.
 
-Most agent memory preserves what happened in past chats. ShadowFrog is built
-for **tacit knowledge** that is hard to recover from chat history or source
-alone: which refactor breaks downstream callers, which invariant the tests
-never exercise, which "obvious" cleanup removes a production workaround, or
-which cross-file edge case is easy to miss. The code tells you *what runs*. The
-shadow tells future agents *what has been learned about how it behaves*.
+A **shadow** mirrors your source tree under `.shadow/`, storing discoveries in
+symbol-organized Markdown files. Lookup is **index-free**: agents follow source
+paths and `file::symbol` references rather than a vector index or embedding
+service.
+
+It records knowledge that is hard to recover from source alone: which refactor
+breaks downstream callers, which invariant the tests never exercise, or which
+"obvious" cleanup removes a production workaround. The code tells you *what
+runs*. The shadow tells future agents *what has been learned about how it
+behaves*.
 
 Read the launch blog post: [Shadow-Frog: Coding Agents that Dream and
 Discover](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
@@ -22,15 +26,21 @@ Discover](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
 ## Quick Start
 
+Install **per repository**, not globally. You need Git, Python 3, either GitHub
+Copilot CLI or Claude Code, and a Git repository as the target project.
+Hooks are limited to projects you explicitly opt into.
+
+### 1. Install
+
+From a checkout of ShadowFrog, choose one agent:
+
 ```bash
-# From your ShadowFrog checkout, install into your target repo.
 cd /path/to/ShadowFrog
-# Choose one:
 ./install.sh --project /path/to/your-repo                 # Copilot CLI (default)
 # ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
 ```
 
-On **Windows**, use the PowerShell installer instead (no Bash shell needed):
+On **Windows**, use the PowerShell installer, which does not require Bash:
 
 ```powershell
 cd C:\path\to\ShadowFrog
@@ -38,7 +48,10 @@ cd C:\path\to\ShadowFrog
 # .\install.ps1 -Agent claude -Project C:\path\to\your-repo  # Claude Code
 ```
 
-Commit the installed files in the target repo:
+### 2. Share the setup
+
+For a shared setup, commit and push the installed files in the target repo.
+The installer prints the exact staging paths for your selected components:
 
 ```bash
 cd /path/to/your-repo
@@ -49,453 +62,178 @@ git commit -m "Add ShadowFrog skills, hooks, and context"
 git push
 ```
 
-Then open the target repo in your AI agent session:
+Local-only use does not require a writable remote; Dream does.
 
-| Command | Use |
-|---------|-----|
-| `/shadow-frog-init` | Create the shadow |
-| `/shadow-frog-update` | Refresh after code changes |
-| `/shadow-frog-dream` | Explore and experiment while you're away |
-| `/shadow-frog-nap` | Generate grounded feature-task briefs with a bounded budget |
-| `/shadow-frog-meditate` | Deduplicate and resolve conflicts |
-| `/shadow-frog-viewer` | Browse what's in the shadow |
+### 3. Initialize
 
-If you plan to use `/shadow-frog-dream`, commit and push `.shadow/` after
-init. Dream also needs permission to push `dream/...` branches to the repo's
-remote.
+To start collecting shadow knowledge, open the target repo in your agent
+session and run the following. Nap-only ideation can skip this step.
 
-> See [Installation](#installation) for full details.
+```
+/shadow-frog-init
+```
+
+This creates symbol-organized templates in `.shadow/`. Choose how to store it:
+
+| Mode | Effect |
+|------|--------|
+| **Committed** | Team-shared knowledge; required for Dream |
+| **Gitignored** | Local-only knowledge; update, meditate, viewer, and Nap remain available, but Dream is disabled |
+
+If you chose committed storage, commit and push `.shadow/` after initialization.
+For installed paths and optional components, see [Installation options](#installation-options).
 
 ---
 
-## What is a Shadow?
+## Everyday Workflow
 
-A shadow is a `.shadow/` directory that mirrors your source tree with markdown
-files. It is not generated API documentation and it is not a transcript store.
-It stores **discoveries**: behavioral facts, edge cases, implicit contracts,
-warnings, and cross-file interactions that are useful to future agents.
+Use the skill that matches your goal. Each link contains its full workflow,
+helper commands, and format definitions.
 
-Shadow lookup is **index-free**: it follows the source tree instead of a
-separate vector index. If an agent is editing `src/auth.py`, the corresponding
-knowledge lives at `.shadow/src/auth.py.md`; if it is reasoning about
-`src/auth.py::login`, the same shadow file contains the symbol-level section.
-Cross-file discoveries use `file::symbol` back-pointers in `.shadow/_cross/`.
-No embedding database or separate retrieval service is required for this
-lookup path.
+| Command | When to use |
+|---------|-------------|
+| [`/shadow-frog`](skills/shadow-frog/SKILL.md) | Consult relevant knowledge before editing or investigating code |
+| [`/shadow-frog-init`](skills/shadow-frog-init/SKILL.md) | Create the shadow once per repo |
+| [`/shadow-frog-update`](skills/shadow-frog-update/SKILL.md) | Refresh after code changes and capture session insights |
+| [`/shadow-frog-dream`](skills/shadow-frog-dream/SKILL.md) | Run autonomous experiments while you're away |
+| [`/shadow-frog-nap`](skills/shadow-frog-nap/SKILL.md) | Generate reviewed feature-task briefs without implementing them |
+| [`/shadow-frog-meditate`](skills/shadow-frog-meditate/SKILL.md) | Merge duplicates and resolve conflicting discoveries |
+| [`/shadow-frog-viewer`](skills/shadow-frog-viewer/SKILL.md) | Browse, search, inspect lineage, and audit structural integrity |
 
-```
-source code + conversations + dream experiments
-                 |
-                 v
-       shadow-frog skills and hooks
-                 |
-                 v
- .shadow/  (per-file discoveries, cross-cutting notes, prefs, dreams)
-                 |
-                 v
- future agent sessions  (hooks, viewer, file reads, search)
-```
+As you work, the agent captures your code context as `source: user` and
+collaborative findings as `source: interaction`. After commits, the pre-tool
+hook can detect a shadow behind HEAD and remind the agent to run
+`/shadow-frog-update`; the hook does not run the update itself. Meditate
+consolidates accumulated knowledge and escalates unresolved conflicts to you.
 
-The `.shadow/` layout mirrors the repo:
+For example, use Viewer to find relevant knowledge or audit its structure:
 
 ```
-your-repo/
-  src/
-    auth.py
-    db/models.py
-  .shadow/
-    .shadowignore                      gitignore-style excludes
-    _index.md                          file list with discovery counts
-    _prefs.md                          project-wide user preferences
-    _cross/                            cross-cutting discoveries (span multiple files)
-      token-expiry-config-split.md
-    _meta/
-      state.json                       tracking state
-    _dreams/                           experiment archive (reports + branch metadata)
-      _index.md                        table of all experiments (branch, parent, tip)
-      20250115-143012Z-retry-logic/    one folder per experiment (mirrored from branch)
-        report.md                      structured report with YAML frontmatter
-        patch.diff                     code-only diff (excludes .shadow/)
-        manifest.json                  machine-readable discovery manifest
-    src/
-      auth.py.md                       discoveries about auth.py
-      db/
-        models.py.md                   discoveries about models.py
+/shadow-frog-viewer --search "auth"
+/shadow-frog-viewer --top src/auth.py
+/shadow-frog-viewer --check-invariants
 ```
 
-Discoveries come from three sources:
-
-**Agent exploration**: the agent reads code and runs experiments:
-```markdown
-- authenticate_user() silently returns None on expired tokens
-  instead of raising. 3 of 7 callers don't check the return value.
-  _(verified, source: exploration, labels: [bug])_
-```
-
-**User knowledge**: things you tell the agent during conversation:
-```markdown
-- The retry logic here took 3 iterations to get right -- it handles
-  a subtle race condition during rolling deployments. Do not simplify.
-  _(verified, source: user)_
-```
-
-**Collaborative work**: insights from debugging, refactoring, etc.:
-```markdown
-- While debugging issue #42, discovered that process_batch() silently
-  drops items exceeding 1MB -- logged at DEBUG level only.
-  _(verified, source: interaction)_
-```
-
-Good discoveries are claims a future agent can act on, not summaries of what a
-function is named. Prefer "silently returns `None` on expired tokens" over
-"handles token expiration."
+The [Viewer reference](skills/shadow-frog-viewer/SKILL.md) also covers summaries,
+recent discoveries, label filters, preferences, and interactive dream-lineage HTML.
 
 ---
 
-## Skills
+## Choose Dream or Nap
 
-| Skill | What it does | When to use |
-|-------|-------------|-------------|
-| **shadow-frog** | Reference docs for the shadow format and conventions | Use when working in a repo with `.shadow/` |
-| **shadow-frog-init** | Creates `.shadow/` with structural templates for every file | Once per repo |
-| **shadow-frog-update** | Refreshes shadows after code changes; captures knowledge from conversations | After commits, or when you share context |
-| **shadow-frog-dream** | Autonomous exploration and experimentation while you're away | When you want the agent to explore on its own |
-| **shadow-frog-nap** | Implementation-free proposal trees with independent judgments, selective probes, and task exports | When you need ideas or SWE task briefs rather than implemented features |
-| **shadow-frog-meditate** | Deduplicates, merges, and resolves conflicting discoveries | Periodically, to keep the shadow clean |
-| **shadow-frog-viewer** | Browse, search, inspect preferences and labels, render dream lineage, and check invariants | When you want to see what's in the shadow, or audit its integrity |
+| | Dream | Nap |
+|---|---|---|
+| Goal | Learn through implemented experiments | Develop source-grounded feature/task proposals |
+| Output | Runnable experiment branches and discoveries | Reviewed task briefs and a persistent proposal tree |
+| Continuation | Inherit code and shadow from an ancestor branch | Revise hypothetical designs over a pinned code baseline |
+| Implementation | Write and run real code in isolated worktrees | No feature code or prototypes; optional probes inspect existing behavior |
+| Prerequisites | Initialized, git-tracked shadow and writable remote | A Git repository with a commit; no remote or initialized shadow required |
 
-**Design note:** skills are readable instructions backed by small helper
-scripts for deterministic work: initializing shadows, managing dream
-worktrees, validating artifacts, reconciling branches, repairing structure,
-and rendering viewer outputs. The installer copies both into the target repo.
+### Dream: learn by doing
 
-### The Dream Skill
+Experiments persist as `dream/<namespace>/<id>` branches. Future dreams can
+continue a previous experiment, inheriting its code and shadow rather than
+sibling branches. Reconciliation accumulates discoveries and experiment
+reports on the default branch.
 
-Dream is ShadowFrog's active-discovery mode. Each dream is an **experiment**:
-the agent implements real code, runs it, and persists the result as a **named
-git branch** pushed to a writable remote. The experiment branch is live,
-runnable code, but the primary output is the knowledge distilled into
-`.shadow/`.
+**Before running Dream, commit and push `.shadow/` and configure a remote
+that permits pushing `dream/...` branches and reconciled shadow updates.**
+Gitignored shadows cannot use Dream. Experiment code is **not merged
+automatically**; adopting it into the project is a manual curation step.
 
-- **Branch-based persistence**: each experiment becomes a `dream/<namespace>/<id>` branch
-- **Natural compounding**: future dreams branch from prior dream branches,
-  inheriting code + shadow from the ancestor chain
-- **Shadow follows lineage**: each branch has its ancestor's shadow, not
-  sibling branches. The default branch accumulates all discoveries during
-  reconciliation.
+See the [Dream workflow](skills/shadow-frog-dream/SKILL.md) for execution,
+tooling snapshots, reconciliation, and safe cleanup.
 
-The experiment mode can surface tacit knowledge that was not already recorded
-in the shadow. While you're away, the agent might try adding retry logic,
-parallelizing a pipeline, or refactoring auth into middleware, then distill
-what worked, what broke, and why into the shadow.
+### Nap: plan without implementing
 
-**Compounding dreams**: Every experiment saves a report and branch to the
-remote. Future dreams read past reports and can branch from prior experiment
-branches, continuing partially useful work, avoiding dead ends, and chaining
-discoveries across sessions. Dream #3 can branch from dream #1's code and pick
-up where it left off.
+Nap grows a resumable proposal tree and submits shortlisted paths to a strong
+independent judge. Exported tasks require a current accepted judgment and
+describe the complete change from a real code baseline, not assumed parent APIs.
+**Planning approval is not runtime validation.** The host runs the judge;
+the Python helper manages records and cannot authenticate reviewer identities.
 
-> The experiment code is not merged automatically. Turning a dream branch into
-> a PR is a manual curation step; the dream skill includes guidance for deciding
-> which experiments are worth proposing upstream.
+Default limits are **7 recorded nodes, 2 probes, 2 judge batches, and 2 selected
+tasks**, with no default depth cap. These configurable ceilings are not quotas:
+recorded rejections and failed probes count. They do not cap actual API spending.
+Keep proposals outside `.shadow/`, or in an initialized `.shadow/_meta/naps/`;
+they are not verified discoveries.
 
-### Lightweight Ideation with Nap
+Exports can be detailed **planning briefs** or concise **implementation
+handoffs**, with the same active requirements. Binding constraints are separate
+from design suggestions; nonblocking implementation risks are separate from
+questions that prevent planning approval.
 
-Nap reads focused source and optional shadow/dream evidence, refines a small
-shortlist, and runs only probes of existing behavior that can change a decision.
-It remains implementation-free: feature code and prototypes belong in Dream or
-downstream implementation work. It does not require a remote, a
-git-tracked shadow, or full shadow initialization.
+See the [Nap workflow and helper reference](skills/shadow-frog-nap/SKILL.md)
+for tree operations, review receipts, and exports.
 
-```
-/shadow-frog-nap
-/shadow-frog-nap mode=coherent
-```
+### Coherent parent-child exploration
 
-Default limits are 7 recorded nodes, 2 probes, 2 judge batches, and 2 selected tasks. There is
-no default depth cap; `max_depth` is an optional user limit (unset or `null`
-otherwise). These are configurable ceilings, not quotas; rejected attempts and failed
-probes count. The record validator does not enforce the host agent's actual
-API spending. Store records outside `.shadow/`, or under an already initialized
-`.shadow/_meta/naps/`, so proposals never become verified discoveries by accident.
-
-The bundled `nap.py` uses Python's standard library and Git, with no Bash
-dependency. It manages a persistent proposal tree: code stays at one
-pinned commit while children carry revised hypothetical design states. `@base`
-selects the code root; it is not an implemented parent feature.
-
-```text
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --init --base DEFAULT_REF
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --context @base
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --add IDEAS.json --parent @base
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --add CHILDREN.json --parent n1
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --review-packet n2 n3
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --record-review JUDGMENT.json
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --select n2
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export TASKS.md
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --export HANDOFF.md --audience implementation
-python .github/skills/shadow-frog-nap/nap.py RUN.json --repo REPO --mode coherent --trajectory n3
-```
-
-The host agent generates proposals and invokes a strong independent judge on
-the shortlist; the Python helper does not call a model. Accepted judgments are
-bound to the exact proposal, ancestor design state, mode and base commit.
-Unreviewed or stale approvals cannot make tasks ready/exportable. Adding
-unrelated siblings does not invalidate an existing approval.
-
-Updates allocate IDs, preserve parent proposal payloads, and use an exclusive
-lock plus atomic replacement. The same record resumes across agent sessions.
-Workers return submissions to one writer rather than editing the tree in
-parallel. Verdicts are planning judgments, not verified implementations, and
-recorded reviewer identities are not independently authenticated by the helper.
-
-The default export is a detailed **planning brief**. An implementation-audience
-handoff presents the same active requirements more concisely, with binding
-constraints separated from optional design suggestions and supporting evidence.
-Both explicitly distinguish accepted planning review from implementation and
-runtime validation, which Nap does not establish. Nonblocking implementation
-risks can be recorded separately from questions that prevent planning approval.
-
-Selected-path review asks what outcome the path now describes and which steps
-add capability, reduce uncertainty, or change a useful tradeoff. It does not
-require one goal for the entire tree or implementation of superseded ancestors.
-
-For Claude Code use `.claude/skills/`; on Windows, `py -3` can be used in
-place of `python`. See the [Nap skill](skills/shadow-frog-nap/SKILL.md) for
-the canonical record and readiness requirements.
-
-### Coherent Parent-Child Exploration
-
-Both Dream and Nap support `mode=coherent`; the default remains `broad`.
-Coherence applies to **each parent-child edge**, not a fixed tree-wide goal.
-Children may extend, integrate, challenge, replace, simplify, or offer
-alternatives to a parent's work. Ten children of one parent can pursue ten
-different worthwhile directions; sibling diversity is encouraged, not forced
-into a quota or a common feature.
+Dream and Nap default to `mode=broad`. Use `mode=coherent` to require a
+meaningful connection along each parent-child edge:
 
 ```
 /shadow-frog-dream mode=coherent
 /shadow-frog-nap mode=coherent
 ```
 
-Each coherent child records its own goal and an explicit parent connection.
-Dream relaxes its breadth/category rules for this mode, while preserving real
-execution and artifact requirements. Descendants wait for their parent;
-siblings can run in parallel in separate worktrees. Dream validation uses
-the selected mode, and reconciler cleanup retains coherent branches and their
-canonical index ancestors until explicit curation so task baselines remain
-available, including ancestors represented through supported lineage fallbacks.
+Children can extend, integrate, challenge, replace, simplify, or offer an
+alternative to their parent. Each has its own goal; siblings can pursue
+different directions, including on the same files. There is no fixed
+tree-wide goal or diversity quota.
 
-Before worktrees or branch switches, `dream-tools.py` pins the current helper
-bundle and instructions into a new external run directory. Its returned command
-arrays verify that snapshot before execution and supply the selected validation
-mode. Continuing an older dream therefore cannot silently select its older
-installed validator. The snapshot is host-local run state, not committed task
-data, and remains available while children or resumed work use it.
-
-All automatic branch pruning uses the pinned Python reconciler, including broad
-runs that recover pending coherent branches. If lineage metadata cannot be
-read, cleanup exits nonzero with repair guidance before deleting any branches.
-
-Nap compounds ideas and evidence, not implemented APIs. A task must stand
-alone at its pinned commit or be regenerated against a real implemented parent.
-Export a root-to-leaf trajectory rather than stacking siblings. A final brief
-contains the **active** requirements, not both a discarded design and its
-replacement. Structural validation cannot establish semantic coherence or
-feature feasibility; those still require agent review and appropriate evidence.
-
----
-
-## Installation
-
-ShadowFrog supports both **GitHub Copilot CLI** (the default) and **Claude
-Code**. The installer targets one agent's conventions at a time via
-`--agent`:
-
-| Agent | Skills | Hooks | Context |
-|-------|--------|-------|---------|
-| `copilot` (default) | `.github/skills/` | `.github/hooks/hooks.json` | `.github/copilot-instructions.md` |
-| `claude` | `.claude/skills/` | `.claude/settings.json` | `CLAUDE.md` |
-
-### Install into your repo
-
-ShadowFrog is installed **per repository**, not globally. This keeps its hooks
-limited to projects you have explicitly opted in, and it lets shadow knowledge
-and dream artifacts sync through that repository's normal git workflow.
-
-Prerequisites:
-
-- `git` and `python3`
-- GitHub Copilot CLI or Claude Code
-- A git repository as the target project
-- To use `/shadow-frog-dream`: a pushable git remote where you can create
-  `dream/...` branches. After init, `.shadow/` must be tracked by git.
-
-```bash
-cd /path/to/ShadowFrog
-# Choose one:
-./install.sh --project /path/to/your-repo                 # Copilot CLI (default)
-# ./install.sh --agent claude --project /path/to/your-repo  # Claude Code
-```
-
-On **Windows**, run the PowerShell equivalent (same flags, PowerShell style;
-no Bash shell needed):
-
-```powershell
-cd C:\path\to\ShadowFrog
-.\install.ps1 -Project C:\path\to\your-repo                 # Copilot CLI (default)
-# .\install.ps1 -Agent claude -Project C:\path\to\your-repo  # Claude Code
-```
-
-This installs skills, hooks, and agent instructions all at once.
-Use `--no-hooks` or `--no-context` (`-NoHooks` / `-NoContext` in PowerShell) to skip individual components.
-
-**After installing**, commit and push so future agent sessions find the skills.
-The installer prints the exact `git add` paths for your chosen agent. For
-Copilot CLI:
-
-```bash
-cd your-repo
-git add .github/skills/ .github/hooks/ .github/copilot-instructions.md
-git commit -m "Add ShadowFrog skills, hooks, and context"
-git push
-```
-
-For Claude Code, stage `.claude/skills/`, `.claude/hooks/`,
-`.claude/settings.json`, and `CLAUDE.md` instead.
-
----
-
-## Usage
-
-### 1. Initialize
-
-Open your project in Copilot CLI or Claude Code and run:
-
-```
-/shadow-frog-init
-```
-
-This scans the codebase, extracts symbols (functions, classes, constants), and
-creates `.shadow/` with a template for every file.
-
-After init, choose how `.shadow/` should live:
-
-| Mode | Use when | Tradeoff |
-|------|----------|----------|
-| **Committed** | You want team-shared memory and `/shadow-frog-dream` | Best for compounding knowledge; `.shadow/` travels through git |
-| **Gitignored** | You want local-only notes | Update, meditate, and viewer still work; dream is disabled |
-
-If you plan to run `/shadow-frog-dream`, commit `.shadow/` after init.
-
-### 2. Work Normally
-
-As you code and talk to the agent, ShadowFrog gives the agent places to record
-what would otherwise be lost:
-
-- **You share context** ("don't touch the retry logic, it's subtle") → agent writes it as a `source: user` discovery
-- **You debug together** → agent captures insights as `source: interaction`
-- **You commit** → before the next mutating agent action, the hook can notice
-  the shadow is behind HEAD and remind the agent to run `/shadow-frog-update`
-
-### 3. Update
-
-After significant changes:
-
-```
-/shadow-frog-update
-```
-
-Detects what changed via git diff, updates symbol headings, checks if existing
-discoveries still hold, and captures any unrecorded session knowledge.
-
-### 4. Dream
-
-Stepping away? Let the agent work while you're gone:
-
-```
-/shadow-frog-dream
-```
-
-The agent explores uncovered code areas, runs experiments in isolated
-worktrees, pushes results as persistent dream branches, and writes what it
-learns into the shadow. When you return, the shadow is richer and experiment
-code is accessible on named branches in the same remote you configured for
-the repo.
-
-> **Requires a git-tracked `.shadow/`.** Dream moves shadow updates through
-> git: experiment branches carry `.shadow/_dreams/` reports, manifests, and
-> diffs, then reconciliation commits the accumulated `.shadow/` updates back
-> to the default branch. If you chose "local only" (gitignored `.shadow/`)
-> during init, dream is disabled. `dream-setup.sh` will tell you. The other
-> skills (update, meditate, viewer) work either way.
-
-#### Remote requirements
-
-Dream needs a remote where it can push `dream/...` branches. For a repo you
-already work on, use your existing checkout and its normal remote.
-Dream branches are pushed to that remote under `dream/<namespace>/<id>`, and
-reconciliation commits shadow knowledge plus dream artifacts back to the
-default branch.
-
-If the repo's remote is not writable, configure a writable remote before
-running dream. If you only want private local notes, gitignore `.shadow/` and
-use update, meditate, and viewer. Dream is disabled because it depends on
-git-tracked shadow artifacts.
-
-The onboarding flow is:
-
-1. Install ShadowFrog into the existing repo checkout.
-2. Commit and push the installed skills, hooks, and context files.
-3. Run `/shadow-frog-init`.
-4. Commit and push `.shadow/`.
-5. Run `/shadow-frog-dream` when you want autonomous exploration.
-
-After that, shadow knowledge and dream artifacts sync through normal git:
-`.shadow/` lives on the default branch, while experiment code remains on
-`dream/...` branches until you manually curate anything worth upstreaming.
-
-### 5. Meditate
-
-Shadow getting noisy? Clean it up:
-
-```
-/shadow-frog-meditate
-```
-
-Scans for duplicate discoveries, merges near-duplicates, and resolves
-conflicting claims. Escalates hard conflicts to you.
-
-### 6. Browse
-
-Want to see what's in the shadow?
-
-```
-/shadow-frog-viewer --summary                  # counts + per-file breakdown
-/shadow-frog-viewer --search "auth"            # keyword search across all discoveries
-/shadow-frog-viewer --recent 5                 # most recent discoveries
-/shadow-frog-viewer --top src/auth.py          # top actionable discoveries for one file
-/shadow-frog-viewer --labels bug,security      # filter actionable discoveries by label
-/shadow-frog-viewer --prefs                    # all `_prefs.md` entries (project-wide)
-/shadow-frog-viewer --check-invariants         # audit structural integrity
-```
-
-Dream experiments are listed in `.shadow/_dreams/_index.md` (dream_id,
-category, verdict, title, branch, parent, tip_commit). To render an
-interactive view of the dream-branch tree (chains, fresh, and full-tree
-tabs), run the bundled script directly:
-
-```
-python3 .github/skills/shadow-frog-viewer/dream-lineage.py -o lineage.html
-# (Claude Code: .claude/skills/shadow-frog-viewer/dream-lineage.py)
-```
+Dream descendants wait for their implemented parent; coherent branches and
+their ancestors are retained as reproducible baselines until explicit curation.
+Nap compounds ideas, not implemented APIs. A combined task follows a
+root-to-leaf path and preserves the final active requirements, rather than
+stacking unrelated siblings or requiring both discarded and replacement designs.
+Combining sibling work requires an explicit integration experiment or proposal.
+Structural validation alone cannot establish semantic coherence or feasibility.
 
 ---
 
 ## How Discoveries Work
 
-Each discovery is anchored to a file or symbol and has these properties:
+For example, knowledge about `src/auth.py` lives at `.shadow/src/auth.py.md`;
+locations such as `src/auth.py::login` identify the relevant symbol.
+Cross-file discoveries live once in `_cross/`, with links from the involved
+per-file shadows.
+
+```
+your-repo/
+  src/auth.py
+  .shadow/
+    src/auth.py.md     file- and symbol-level discoveries
+    _cross/           cross-cutting discoveries
+    _prefs.md         project-wide preferences
+    _dreams/          experiment reports, manifests, and patches
+    _index.md         file inventory and counts
+    _meta/state.json  update state
+    .shadowignore     gitignore-style exclusions
+```
+
+Store **behavioral discoveries**, not API descriptions or chat transcripts.
+For example:
+
+**Agent exploration**:
+```markdown
+- authenticate_user() silently returns None on expired tokens
+  instead of raising. 3 of 7 callers don't check the return value.
+  _(verified, source: exploration, labels: [bug])_
+```
+
+**User knowledge**:
+```markdown
+- The retry logic here took 3 iterations to get right -- it handles
+  a subtle race condition during rolling deployments. Do not simplify.
+  _(verified, source: user)_
+```
+
+**Collaborative work**:
+```markdown
+- While debugging issue #42, discovered that process_batch() silently
+  drops items exceeding 1MB -- logged at DEBUG level only.
+  _(verified, source: interaction)_
+```
 
 | Property | Values | Meaning |
 |----------|--------|---------|
@@ -513,52 +251,48 @@ Each discovery is anchored to a file or symbol and has these properties:
 | 4 | `uncertain` | Plausible but unconfirmed. |
 | 5 | `refuted` | Known wrong; skip. |
 
-### Searching the Shadow
-
-```bash
-cat .shadow/src/auth.py.md                                    # read a file's shadow
-cat .shadow/_prefs.md                                         # project-wide preferences
-grep -rl "src/auth.py::" .shadow/_cross/                       # cross-cutting discoveries
-grep -rl "error.handling\|exception" .shadow/ --include="*.md" # search by topic
-grep -r "source: user" .shadow/ --include="*.md"               # all user knowledge
-```
+See the [worked coupon example](examples/coupon-demo/README.md) for a real
+shadow, and the [core skill](skills/shadow-frog/SKILL.md) for the canonical
+formats and reference rules.
 
 ---
 
-## Repository Structure
+## Installation Options
 
-For contributors, the main directories are:
+The installer copies readable skill instructions, their helper scripts, hooks,
+and agent context. It targets one agent's conventions at a time:
+
+| Agent | Skills | Hooks | Context |
+|-------|--------|-------|---------|
+| `copilot` (default) | `.github/skills/` | `.github/hooks/hooks.json` | `.github/copilot-instructions.md` |
+| `claude` | `.claude/skills/` | `.claude/settings.json` | `CLAUDE.md` |
+
+Use `--no-hooks` or `--no-context` (`-NoHooks` / `-NoContext` in PowerShell) to
+skip individual components. On Windows, `py -3` can be used when invoking
+Python helpers. Full helper usage is in the linked skill references above.
+
+---
+
+## Contributing
 
 | Path | Purpose |
 |------|---------|
-| `skills/` | The seven ShadowFrog skills and their helper scripts |
-| `hook-templates/` | Copilot CLI and Claude Code hook configs plus shared hook scripts |
-| `examples/coupon-demo/` | Tiny worked example with a real `.shadow/` |
-| `eval/` | Evaluation methodology and results dashboard |
-| `tests/` | Pytest suite for installer behavior, hooks, and skill helpers |
+| `skills/` | The seven skills and their helper scripts |
+| `hook-templates/` | Agent hook configs and shared scripts |
+| `examples/coupon-demo/` | Worked example with a real `.shadow/` |
+| `eval/` | [Evaluation methodology](eval/README.md) and [results dashboard](eval/results_dashboard.html) |
+| `tests/` | Installer, hook, and helper regression coverage |
 
----
-
-## Tests
-
-ShadowFrog's test suite exercises the real Python scripts and shell hooks
-against temporary shadow trees and git repositories, without mocked helper
-layers. Nap and coherence coverage includes diverse siblings, parent cycles,
-recorded budgets, final-contract exports, installed layouts, and operation
-without Bash on PATH.
-
-Run the suite locally:
+Install development dependencies and run the suite:
 
 ```bash
-pip install -r requirements-dev.txt  # pytest, pytest-cov, pathspec
-python3 -m pytest                   # all tests
-python3 -m pytest tests/skills/      # just the skill-script tests
-python3 -m pytest -k viewer          # everything matching "viewer"
-python3 -m pytest --cov=skills       # coverage report
+pip install -r requirements-dev.txt
+python3 -m pytest
 ```
 
-Test layout mirrors the source layout: `tests/skills/shadow_frog_viewer/`
-tests `skills/shadow-frog-viewer/`, etc.
+Tests use temporary shadow trees and Git repositories. Their layout mirrors
+the source: `tests/skills/shadow_frog_viewer/` covers
+`skills/shadow-frog-viewer/`, for example.
 
 ---
 
