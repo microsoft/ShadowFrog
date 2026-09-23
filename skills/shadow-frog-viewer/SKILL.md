@@ -52,35 +52,14 @@ No arguments defaults to `--summary`.
 ### Examples
 
 ```bash
-# Quick overview
-python3 shadow-viewer.py
-
-# Everything about auth (files, symbols, text, cross-cutting)
-python3 shadow-viewer.py --search auth
-
-# Find token-related knowledge
+# Search file names, symbols, discoveries, cross-cutting entries, and preferences
 python3 shadow-viewer.py --search "token expiry"
-
-# 5 most recent discoveries
-python3 shadow-viewer.py --recent 5
-
-# All known bugs
-python3 shadow-viewer.py --labels bug
 
 # Security and performance issues
 python3 shadow-viewer.py --labels security,performance
 
-# Top actionable discoveries for a single file (used by the preToolUse hook)
-python3 shadow-viewer.py --top src/auth.py
-
-# Same, but broaden label filter and show up to 5 entries
+# Broaden the per-file label filter and show up to 5 entries
 python3 shadow-viewer.py --top src/auth.py --top-labels bug,security,performance --top-limit 5
-
-# Team preferences
-python3 shadow-viewer.py --prefs
-
-# Structural audit (run before commits or after dream reconciliation)
-python3 shadow-viewer.py --check-invariants
 ```
 
 ## Dream Lineage Visualization
@@ -151,12 +130,7 @@ find .shadow -name '*.md' -not -path '*/_meta/*' -printf '%T@ %p\n' | sort -rn |
 
 ## Responding to the User
 
-After running a view, present the results clearly:
-- For `--summary`: show the output directly, highlight anything notable
-- For `--search`: summarize key findings, group by relevance
-- For `--recent`: present the discoveries conversationally
-- For `--top`: typically called by the preToolUse hook before a file is
-  edited; output is intentionally short and pre-formatted. If invoked
-  manually, present as-is.
+- Preserve `--top` output as-is; it is intentionally compact and pre-formatted
+  for the preToolUse hook.
 - If the shadow is empty or has no discoveries, suggest running
   `/shadow-frog-dream` to populate it

@@ -17,19 +17,6 @@ Shadow hygiene — deduplicate, merge, and resolve conflicts across the
 entire `.shadow/` knowledge base. Prerequisite: `.shadow/` exists with
 discoveries.
 
-## Why Meditate?
-
-Over time, shadows accumulate noise:
-- **Duplicates**: the same insight written differently by different sessions
-- **Near-duplicates**: one discovery is a subset of another
-- **Conflicts**: two discoveries contradict each other (code may have changed,
-  or one was wrong)
-- **Cross-scope duplicates**: a per-file discovery and a `_cross/` entry
-  saying the same thing
-
-This noise confuses downstream agents and dilutes signal. Meditate cleans
-it up.
-
 ## Phase 1: Scan
 
 Use parallel subagents to scan the shadow. Each subagent handles a batch
@@ -52,12 +39,15 @@ reduce scope by 80%+.
 For each per-file shadow (e.g., `src/auth.py.md`):
 
 1. Read all discoveries under each `## symbol` heading
-2. For each pair of discoveries under the **same symbol**, classify:
+2. Compare discoveries under the **same symbol** by behavioral meaning,
+   not wording:
    - **Duplicate**: same behavioral claim, different wording
    - **Near-duplicate**: one discovery is a subset/refinement of the other
    - **Conflict**: the two discoveries make contradicting claims
    - **Distinct**: genuinely different insights — no action needed
 3. Record each finding as a structured action (see below)
+
+Overlapping `Also involves:` refs can help identify related claims.
 
 ### Scan Output Format
 
@@ -97,18 +87,6 @@ After per-file scanning:
    or `_cross/` entry duplicates it
 4. Record cross-scope findings the same way
 
-### Scanning Guidelines
-
-- Compare claims semantically, not just textually. "Returns None on
-  expired tokens" and "Silently returns None when token expires" are
-  duplicates.
-- Two discoveries about the same function but covering different
-  behaviors are **distinct**, not duplicates. E.g., "returns None on
-  expired tokens" vs "uses constant-time comparison" — these are
-  unrelated observations about the same function.
-- Pay attention to `Also involves:` — two discoveries with overlapping
-  `Also involves:` refs are more likely related.
-
 ## Phase 2: Resolve
 
 Process each finding by type.
@@ -121,21 +99,6 @@ Combine into a single discovery:
 - Keep the **stronger** status: `verified` > `uncertain` > `refuted`
 - Merge `Also involves:` refs (union of both)
 - Delete the weaker entry
-
-Example:
-```
-BEFORE (two entries under same symbol):
-- authenticate_user() returns None on expired tokens.
-  _(verified, source: exploration)_
-- When the token is expired, authenticate_user silently returns None
-  instead of raising. 3 of 7 callers don't check.
-  _(verified, source: exploration)_
-
-AFTER (merged):
-- authenticate_user() silently returns None on expired tokens instead
-  of raising. 3 of 7 callers don't check the return value.
-  _(verified, source: exploration)_
-```
 
 ### Near-Duplicates → Absorb
 

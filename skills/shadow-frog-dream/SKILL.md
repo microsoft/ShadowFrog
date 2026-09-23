@@ -432,23 +432,14 @@ codebases (<30 source files), minimum 6 tasks across 4+ categories.
 
 ### The 6 Investigation Categories
 
-| Category | What to look for | Priority signals |
-|----------|-----------------|-----------------|
-| **Investigation** | Under-explored files, shallow coverage, uncertain discoveries | Files with 0-2 discoveries, import chains not traced, `uncertain` entries |
-| **Bug hunting** | Defects, edge cases, race conditions | Error-handling code, concurrency, unvalidated inputs |
-| **Feature design** | New capabilities, missing functionality | TODOs, FIXMEs, user-facing gaps, integration opportunities |
-| **Refactoring** | Structural improvements, duplication | God classes, copy-paste patterns, high-coupling files |
-| **Optimization** | Algorithmic efficiency, performance | Hot paths, nested loops, repeated I/O, missing caches |
-| **Security audit** | Vulnerabilities, unsafe patterns | Auth code, data handling, deserialization, user inputs |
-
-| Category | What to experiment |
-|----------|-------------------|
-| **Investigation** | Write assertion-based tests proving/disproving behavior hypotheses |
-| **Bug hunting** | Fuzz inputs, trigger error paths, reproduce race conditions |
-| **Feature design** | Implement the feature, run it, evaluate integration |
-| **Refactoring** | Do the refactor, run existing tests, measure complexity |
-| **Optimization** | Benchmark, profile, implement optimization, measure before/after |
-| **Security audit** | Craft adversarial inputs, test injection vectors (local only) |
+| Category | Priority signals | Experiment |
+|----------|------------------|------------|
+| **Investigation** | Files with 0-2 discoveries, untraced import chains, `uncertain` entries | Test behavior hypotheses with assertions |
+| **Bug hunting** | Error handling, concurrency, unvalidated inputs | Fuzz inputs, trigger error paths, reproduce races |
+| **Feature design** | TODOs, FIXMEs, user-facing gaps, integration opportunities | Implement the feature, run it, evaluate integration |
+| **Refactoring** | God classes, duplication, high coupling | Refactor, run existing tests, measure complexity |
+| **Optimization** | Hot paths, nested loops, repeated I/O, missing caches | Profile, optimize, measure before/after |
+| **Security audit** | Auth, data handling, deserialization, user inputs | Test adversarial inputs and injection vectors locally |
 
 **Exception — user-directed focus**: If the user specifies a focus area
 (e.g., "dream focus on security"), allocate ALL tasks to that category.
@@ -474,7 +465,8 @@ Tasks (by category):
 
 ### Diversity Rules
 
-In broad mode, prevent fixation (exploring the same files while leaving most untouched):
+In broad mode, prefer breadth over depth: more files with 2-3 discoveries over
+one file with 20. Prevent fixation with these rules:
 
 1. **Max 2 tasks per source file** (unless prior dream left concrete follow-up)
 2. **≥30% of tasks on uncovered files** (from coverage map)
@@ -498,22 +490,8 @@ Also include the selected **mode**. Coherent tasks additionally carry their
 own **goal** and **parent_connection**, not a shared sibling/tree objective.
 Category still describes the experiment, but coherent mode has no category quota.
 
-Good examples (one per category):
-- **Investigation**: "Write assertion harness for request lifecycle —
-  instrument each layer to log entry/exit and reveal implicit contracts"
-- **Bug hunting**: "Fuzz the CSV parser with malformed inputs — what
-  crashes or silently corrupts?"
-- **Feature design**: "Implement retry logic with exponential backoff —
-  does it handle transient failures without masking permanent ones?"
-- **Refactoring**: "Extract 5 duplicate auth checks into middleware —
-  run tests, measure if it simplifies without breaking special cases"
-- **Optimization**: "Benchmark the hot path, implement LRU cache for
-  repeated lookups — measure before/after wall time"
-- **Security audit**: "Craft SQL injection payloads for user-facing
-  endpoints — does parameterized query hold under nested quotes?"
-
-Bad examples: "Look at the code", "Trace the flow", "Review error
-handling", "Improve code quality"
+For example, "Fuzz the CSV parser with malformed inputs to reproduce crashes
+or silent corruption" is a concrete experiment; "Review error handling" is not.
 
 ### Feature Design: Motivation Required
 
@@ -561,14 +539,10 @@ but the branch persists on the remote.
 
 ### Reading Before Implementing
 
-You must understand the code before changing it. For each task:
-
-1. Read the source file(s) and their shadows (existing discoveries)
-2. Read shadows of referenced/referencing files
-3. Understand the current behavior, edge cases, and implicit contracts
-
-Reading is *preparation*, not the deliverable. The deliverable is code
-written, code run, results recorded.
+Before implementing, read the target source and its shadow, plus shadows of
+referenced/referencing files. Identify current behavior, edge cases, and
+implicit contracts. Reading is preparation; the deliverable is code written
+and run, with results recorded.
 
 ### Experiment Setup
 
@@ -623,10 +597,8 @@ or design, rather than being unrelated work parked on the same branch.
 
 ### Run
 
-1. Implement the experiment — write real code, run tests/builds
-2. Note what worked, broke, surprised
-3. Debug if needed — the struggle produces the best discoveries
-4. Record results as you go
+Implement the experiment, run tests/builds, and debug as needed. Record what
+worked, failed, or surprised you as you go.
 
 ### Write Shadow Discoveries
 
@@ -655,15 +627,7 @@ Find the `##`/`###` heading for the symbol, then:
 
 After writing each discovery, evaluate whether it deserves any of the
 five actionable labels from `/shadow-frog` (`bug`, `security`,
-`performance`, `feature-gap`, `tech-debt`). Apply labels when:
-
-| Label | Apply when the discovery describes... |
-|-------|---------------------------------------|
-| `bug` | A defect, silent failure, off-by-one, race, incorrect result, edge case that misbehaves, validate-then-use ordering hazard |
-| `security` | Injection vector, unsafe default, missing auth/authz check, sensitive value logged, untrusted input reaching unsafe sink |
-| `performance` | Measured bottleneck, O(N²) where N is large, repeated I/O that could batch, missing cache, blocking call on hot path |
-| `feature-gap` | Missing capability the codebase clearly needs, asymmetric API (e.g., reads but no writes) |
-| `tech-debt` | Duplication, dead code, leaky abstraction, vestigial parameter, inconsistent naming |
+`performance`, `feature-gap`, `tech-debt`), using that skill's definitions.
 
 Rules:
 - Apply labels to BOTH the in-file discovery markdown AND the
@@ -677,7 +641,7 @@ Rules:
 - Do not apply labels speculatively. The label says "an engineer should
   act on this." If you wouldn't act on it, don't label it.
 
-Examples:
+Example:
 
 ```
 - /api/upload accepts paths from request body without normalization,
@@ -685,13 +649,6 @@ Examples:
   _(verified, source: exploration, labels: [bug, security])_
   Dream report: `_dreams/20260518-161200Z-upload-traversal/`
 ```
-
-```
-- HttpClient.send retries 3x on transient failures.
-  _(verified, source: exploration)_
-  Dream report: `_dreams/20260518-163000Z-retry-audit/`
-```
-(No label — pure behavioral knowledge, no action implied.)
 
 `dream-validate.py` emits non-blocking warnings when discovery text
 contains label-signal keywords but no label is set. Treat those
@@ -715,26 +672,14 @@ back-pointers in each file's `## Cross-References` section.
 #### Discovery Quality
 
 Discoveries must be **self-contained process knowledge** — understandable
-with just the base codebase. Someone reading main's shadow should understand
-the insight without checking out the dream branch. Capture **how to do it**,
-**what you learned**, and **what to avoid** — not what was built. The branch
-preserves the artifact; the shadow preserves the wisdom.
+from the base codebase without checking out the dream branch. Capture what
+was learned, how to apply it, and what to avoid, not a description of the
+experiment-only artifact.
 
-Good (behavioral insights about existing code):
-- "functools.lru_cache is not thread-safe for initialization — two
-  threads can trigger duplicate expensive computations on first call."
-- "agent.py's retry loop catches all exceptions including OOM, masking
-  fatal errors that should crash immediately."
-- "To add a new eval metric, register in METRIC_MAP at metrics.py:25
-  and implement the Metric interface — missing either causes a silent
-  no-op in the pipeline."
-
-Bad (descriptions of new code):
-- "The implemented PluginFramework has PluginRegistry, PluginManager,
-  and 7 lifecycle hooks." — describes branch-only artifact.
-- "Provides RewardShaper with 4 methods, Welford normalizer, and
-  GAE-lambda estimation." — feature spec, not behavioral insight.
-- "Complete tested module with 58 passing tests." — verdict, not discovery.
+- **Good:** "agent.py's retry loop catches all exceptions including OOM,
+  masking fatal errors that should crash immediately."
+- **Bad:** "The implemented PluginFramework has PluginRegistry, PluginManager,
+  and 7 lifecycle hooks." This describes a branch-only artifact.
 
 Per-file discoveries should reference the dream report:
 
@@ -1202,17 +1147,6 @@ git cherry-pick <tip_commit>
 # Option 3: Apply the patch (if branch was pruned but commit exists)
 git show <tip_commit> | git apply
 ```
-
-## Guidance
-
-- **Always experiment.** Implementation reveals what reading cannot.
-- **Small tasks, big lessons.** 30-minute experiment > 3 hours reading.
-- **Fail forward.** "Tried X, broke because Y" is extremely valuable.
-- **Broad mode: breadth over depth.** More files with 2-3 discoveries > one file with 20.
-- **No descriptions.** "Catches all exceptions including OOM" yes.
-  "This function authenticates users" no.
-- **Compound deliberately.** Read parent's report. Build on findings.
-- **Branches are cheap, shadow is expensive.** Push freely, write carefully.
 
 ## Experiment Completion Criteria
 

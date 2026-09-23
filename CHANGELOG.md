@@ -7,6 +7,15 @@ shadow knowledge bases for any codebase.
 
 ---
 
+## Unreleased
+
+### Changed
+- **More concise skill instructions** — condensed repeated guidance and
+  examples in the core, Dream, Meditate, Update, and Viewer skills while
+  preserving data formats, policy limits, and safety gates.
+
+---
+
 ## 2026-09-22
 
 ### Added

@@ -24,30 +24,20 @@ to that code location.
 **Every time you work on code in a repo with `.shadow/`:**
 
 1. **Read `_prefs.md` first** — it contains project-wide conventions,
-   user preferences, and things the user explicitly wants to avoid.
-   Violating a preference wastes the user's time.
-2. **Read `_cross/` discoveries** — these are the highest-value findings,
-   spanning multiple files. List `_cross/` and read any files whose titles
-   relate to the area you're working in. Cross-cutting discoveries reveal
-   hidden contracts, interaction bugs, and design patterns that per-file
-   shadows alone cannot capture.
-3. **Check `_dreams/` for experiment results** — `_dreams/_index.md` lists
-   autonomous exploration experiments. Read reports relevant to your task —
-   they contain verified bug analyses, attempted fixes, and architectural
-   insights. Dreams may contain knowledge not yet distilled into per-file
-   shadows, so always check when investigating a bug or unfamiliar area.
-4. **Before editing any file**: read its shadow (`.shadow/<path>.md`),
-   check `_cross/` for cross-cutting discoveries about it, and apply
-   what you learn. The shadow contains known bugs, edge cases, and
-   implicit contracts discovered by previous sessions.
-   **Note**: `_index.md` discovery counts may be stale — always check
-   per-file shadows and `_cross/` directly rather than relying solely on
-   the index summary.
+   user preferences, and things to avoid.
+2. **Read relevant `_cross/` discoveries** — list `_cross/` and read entries
+   whose titles relate to the current area, including cross-file contracts
+   and interactions.
+3. **Check `_dreams/_index.md`** and read relevant experiment reports,
+   especially when investigating bugs or unfamiliar code. They may contain
+   findings not yet distilled into per-file shadows.
+4. **Before editing a file**, read its shadow (`.shadow/<path>.md`) and
+   relevant `_cross/` entries, then apply the discoveries.
+   `_index.md` counts may be stale; inspect the actual shadows and `_cross/`.
 5. **When the user explains something about code** (gotcha, design intent,
    warning, history): write a `source: user` discovery to the shadow
-   immediately. Do not ask where to put it — resolve the `file::symbol`
-   anchor yourself by searching `_index.md`, shadow files, and session
-   context (current file, recent edits).
+   immediately. Resolve its `file::symbol` anchor from `_index.md`, shadows,
+   and session context; do not ask where to put it.
 6. **When the user states a preference or convention** (not tied to any
    specific file): write it to `_prefs.md` immediately.
 7. **After code changes**: run `/shadow-frog-update`
