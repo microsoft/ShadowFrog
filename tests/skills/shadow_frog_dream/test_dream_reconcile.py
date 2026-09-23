@@ -637,8 +637,8 @@ def test_read_indexed_dream_ids_returns_empty_when_missing(dream_reconcile, tmp_
 def test_read_indexed_branches_parses_table(dream_reconcile, tmp_path):
     _write_index(tmp_path)
     rows = dream_reconcile._read_indexed_branches(str(tmp_path))
-    assert ("dream/p/20260101-000000Z-alpha", "20260101-000000Z-alpha") in rows
-    assert ("dream/p/20260102-000000Z-beta", "20260102-000000Z-beta") in rows
+    assert ("dream/p/20260101-000000Z-alpha", "20260101-000000Z-alpha", "main") in rows
+    assert ("dream/p/20260102-000000Z-beta", "20260102-000000Z-beta", "main") in rows
     assert len(rows) == 3
 
 
@@ -732,6 +732,7 @@ def test_cleanup_branches_keeps_prefix_only_branch_to_prevent_data_loss(
 
     # Mirror artifacts for SHORT id (so safety check 1 passes).
     _seed_dream_artifacts(tmp_git_repo, short_id)
+    _seed_dream_artifacts(tmp_git_repo, longer_id)
 
     manifests = [(f"dream/proj/{short_id}", short_id, {})]
 
@@ -750,7 +751,15 @@ def test_cleanup_branches_keeps_when_artifacts_missing(
     _add_bare_remote(tmp_git_repo, env)
 
     dream_id = "20260420-141500Z-missing-artifacts"
-    _write_index(tmp_git_repo)  # index doesn't matter — artifacts check fires first
+    _write_index(
+        tmp_git_repo,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {dream_id} | bug hunting | useful | Missing | dream/proj/{dream_id} | main | abc1234 |\n",
+    )
+    directory = tmp_git_repo / ".shadow" / "_dreams" / dream_id
+    directory.mkdir(parents=True)
+    (directory / "manifest.json").write_text("{}", encoding="utf-8")
 
     manifests = [(f"dream/proj/{dream_id}", dream_id, {})]
     deleted, kept = dream_reconcile.cleanup_branches(
@@ -790,7 +799,12 @@ def test_cleanup_branches_refuses_with_uncommitted_shadow(
     _add_bare_remote(tmp_git_repo, env)
 
     dream_id = "20260420-150000Z-dirty"
-    _write_index(tmp_git_repo)
+    _write_index(
+        tmp_git_repo,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {dream_id} | bug hunting | useful | Dirty | dream/proj/{dream_id} | main | abc1234 |\n",
+    )
     _seed_dream_artifacts(tmp_git_repo, dream_id)  # uncommitted .shadow/ changes
 
     manifests = [(f"dream/proj/{dream_id}", dream_id, {})]
@@ -2230,6 +2244,221 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
     post = _git("ls-remote", "--heads", "origin", branch,
                 cwd=tmp_git_repo, env=env).stdout
     assert branch not in post
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("child_in_batch", [False, True])
+def test_cleanup_keeps_coherent_child_and_its_broad_parent(
+    dream_reconcile, tmp_git_repo, child_in_batch,
+):
+    """Indexed coherent descendants protect parents even after reconciliation."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    parent_id = "20260420-060000Z-coherent-parent"
+    child_id = "20260420-060100Z-coherent-child"
+    parent_manifest = _default_manifest(parent_id)
+    parent = make_dream_branch(tmp_git_repo, env, "proj", parent_id, parent_manifest)
+    child_manifest = _default_manifest(child_id)
+    child_manifest.update(mode="coherent", parent_branch=parent)
+    child = make_dream_branch(tmp_git_repo, env, "proj", child_id, child_manifest)
+    for dream_id, manifest in ((parent_id, parent_manifest), (child_id, child_manifest)):
+        _seed_dream_artifacts(tmp_git_repo, dream_id)
+        (tmp_git_repo / ".shadow" / "_dreams" / dream_id / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8",
+        )
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {parent_id} | feature design | useful | Parent | {parent} | main | abc1234 |\n"
+        f"| {child_id} | feature design | useful | Child | {child} | {parent} | abc1234 |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconciled coherent tree", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+    batch = [(parent, parent_id, parent_manifest)]
+    if child_in_batch:
+        batch.append((child, child_id, {}))
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo), batch, "proj",
+    )
+    assert (deleted, kept) == (0, len(batch))
+    remaining = _git("ls-remote", "--heads", "origin", cwd=tmp_git_repo, env=env).stdout
+    assert parent in remaining
+    assert child in remaining
+
+
+def test_coherent_retention_traverses_ancestors_without_fixing_sibling_goals(
+    dream_reconcile, tmp_path,
+):
+    manifests = [
+        ("dream/p/root", "root", {"parent_branch": "main"}),
+        ("dream/p/middle", "middle", {"parent_branch": "dream/p/root"}),
+        ("dream/p/child", "child", {
+            "mode": "coherent", "goal": "A distinct direction",
+            "parent_branch": "dream/p/middle",
+        }),
+        ("dream/p/other", "other", {"parent_branch": "main"}),
+    ]
+    retained = dream_reconcile.coherent_branch_refs(str(tmp_path), manifests)
+    assert retained == {"dream/p/root", "dream/p/middle", "dream/p/child"}
+
+
+def test_cleanup_refuses_when_indexed_manifest_cannot_be_read(
+    dream_reconcile, tmp_path,
+):
+    _write_index(
+        tmp_path,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        "| missing | feature design | useful | Missing | dream/p/missing | main | abc1234 |\n",
+    )
+    with pytest.raises(dream_reconcile.CoherentLineageError, match="Restore.*manifest"):
+        dream_reconcile.cleanup_branches(
+            str(tmp_path), [("dream/p/missing", "missing", {})], "p", dry_run=True,
+        )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "parent_form",
+    ["string", "list", "base_branch", "parent_dream_id", "builds_on", "report"],
+)
+def test_cleanup_uses_resolved_index_lineage(
+    dream_reconcile, tmp_git_repo, monkeypatch, parent_form,
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    monkeypatch.setenv("DREAM_WORKTREE_BASE", str(tmp_git_repo.parent / "private-worktrees"))
+    root_id = "20260921-010000Z-root"
+    middle_id = "20260921-010100Z-middle"
+    child_id = "20260921-010200Z-child"
+    root_manifest = _default_manifest(root_id)
+    root = make_dream_branch(
+        tmp_git_repo, env, "proj", root_id, root_manifest, report=_default_report(root_id),
+    )
+    middle_manifest = _default_manifest(middle_id)
+    middle_manifest["parent_branch"] = None
+    if parent_form == "string":
+        middle_manifest["parent_branch"] = root
+    elif parent_form == "list":
+        middle_manifest["parent_branch"] = [root]
+    elif parent_form == "base_branch":
+        middle_manifest["base_branch"] = root
+    elif parent_form == "parent_dream_id":
+        middle_manifest["parent_dream_id"] = root_id
+    elif parent_form == "builds_on":
+        middle_manifest["builds_on"] = [root_id]
+    middle_report = _default_report(middle_id).replace(
+        "category: bug hunting", f"parent_branch: {root}\ncategory: bug hunting",
+    )
+    middle = make_dream_branch(
+        tmp_git_repo, env, "proj", middle_id, middle_manifest, report=middle_report,
+    )
+    child_manifest = _default_manifest(child_id)
+    child_manifest.update(mode="coherent", goal="Extend the middle", parent_branch=middle)
+    child = make_dream_branch(
+        tmp_git_repo, env, "proj", child_id, child_manifest, report=_default_report(child_id),
+    )
+    manifests = [
+        (root, root_id, root_manifest),
+        (middle, middle_id, middle_manifest),
+        (child, child_id, child_manifest),
+    ]
+    dream_reconcile.mirror_reports(str(tmp_git_repo), manifests)
+    dream_reconcile.update_index(str(tmp_git_repo), manifests)
+    rows = dream_reconcile._read_indexed_branches(str(tmp_git_repo))
+    assert (middle, middle_id, root) in rows
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile resolved lineage", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+    assert dream_reconcile.cleanup_branches(
+        str(tmp_git_repo), [(branch, dream_id, {}) for branch, dream_id, _ in manifests],
+        "proj",
+    ) == (0, 3)
+    remaining = _git("ls-remote", "--heads", "origin", cwd=tmp_git_repo, env=env).stdout
+    assert all(branch in remaining for branch in (root, middle, child))
+
+
+def test_retention_honors_repaired_index_over_historical_manifest(
+    dream_reconcile, tmp_path,
+):
+    manifests = [
+        ("dream/p/root", "root", {"parent_branch": "main"}),
+        ("dream/p/middle", "middle", {"parent_branch": "main"}),
+        ("dream/p/child", "child", {
+            "mode": "coherent", "parent_branch": "dream/p/middle",
+        }),
+    ]
+    parents = ["main", "dream/p/root", "dream/p/middle"]
+    rows = [
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |",
+        "|----------|----------|---------|-------|--------|--------|------------|",
+    ]
+    for (branch, dream_id, manifest), parent in zip(manifests, parents):
+        _seed_dream_artifacts(tmp_path, dream_id)
+        (tmp_path / ".shadow" / "_dreams" / dream_id / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8",
+        )
+        rows.append(f"| {dream_id} | feature design | useful | T | {branch} | {parent} | abc1234 |")
+    _write_index(tmp_path, "\n".join(rows) + "\n")
+    assert dream_reconcile.coherent_branch_refs(str(tmp_path), manifests) == {
+        "dream/p/root", "dream/p/middle", "dream/p/child",
+    }
+
+
+@pytest.mark.parametrize(
+    "parent_fields",
+    [{"parent_branch": ["dream/p/root"]}, {"base_branch": "dream/p/root"}],
+)
+def test_unindexed_retention_reuses_parent_resolution(dream_reconcile, tmp_path, parent_fields):
+    manifests = [
+        ("dream/p/root", "root", {"parent_branch": "main"}),
+        ("dream/p/middle", "middle", parent_fields),
+        ("dream/p/child", "child", {"mode": "coherent", "parent_branch": "dream/p/middle"}),
+    ]
+    assert "dream/p/root" in dream_reconcile.coherent_branch_refs(str(tmp_path), manifests)
+
+
+def test_retention_does_not_assume_missing_ancestor_metadata_is_a_root(
+    dream_reconcile, tmp_path,
+):
+    with pytest.raises(ValueError, match="Missing lineage metadata"):
+        dream_reconcile.coherent_branch_refs(str(tmp_path), [
+            ("dream/p/child", "child", {
+                "mode": "coherent", "parent_branch": "dream/other/parent",
+            }),
+        ])
+
+
+def test_cli_lineage_failure_is_nonzero_and_actionable(tmp_git_repo):
+    _seed_repo(tmp_git_repo)
+    _write_index(
+        tmp_git_repo,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        "| missing | feature design | useful | Missing | dream/p/missing | main | abc1234 |\n",
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_git_repo), "--cleanup-branches", "--namespace", "p"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "Restore" in result.stderr
+    assert "_index.md" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_indexed_dream_id_cannot_escape_archive(dream_reconcile, tmp_path):
+    _write_index(
+        tmp_path,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        "| ../escape | feature design | useful | Bad | dream/p/bad | main | abc1234 |\n",
+    )
+    with pytest.raises(ValueError, match="Invalid indexed dream_id"):
+        dream_reconcile.coherent_branch_refs(str(tmp_path), [])
 
 
 @pytest.mark.slow

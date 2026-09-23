@@ -64,6 +64,11 @@ def dream_validate(repo_root):
 
 
 @pytest.fixture(scope="session")
+def dream_tools(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-dream/dream-tools.py")
+
+
+@pytest.fixture(scope="session")
 def dream_coverage(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-dream/dream-coverage.py")
 
@@ -76,6 +81,16 @@ def dream_lineage(repo_root):
 @pytest.fixture(scope="session")
 def meditate_repair(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-meditate/meditate-repair.py")
+
+
+@pytest.fixture(scope="session")
+def coherence(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog/_coherence.py")
+
+
+@pytest.fixture(scope="session")
+def nap(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-nap/nap.py")
 
 
 # --- Filesystem fixtures ---
