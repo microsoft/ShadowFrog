@@ -165,13 +165,13 @@ class TestFindShadowDir:
         result = dream_lineage.find_shadow_dir(str(shadow))
         assert result == str(shadow)
 
-    def test_hint_nonexistent_falls_through(self, dream_lineage, tmp_path, monkeypatch):
-        """When hint doesn't exist, falls through to cwd-based detection."""
+    def test_hint_nonexistent_is_not_silently_replaced(self, dream_lineage, tmp_path, monkeypatch):
+        """An explicit invalid input must not select another repository's shadow."""
         monkeypatch.chdir(tmp_path)
         shadow = tmp_path / ".shadow"
         shadow.mkdir()
-        result = dream_lineage.find_shadow_dir("/nonexistent/path")
-        assert result == ".shadow" or result == str(shadow)
+        with pytest.raises(dream_lineage.LineageError, match="--shadow-dir"):
+            dream_lineage.find_shadow_dir(str(tmp_path / "missing"))
 
 
 # ---------------------------------------------------------------------------
@@ -889,13 +889,12 @@ class TestGenerateHtmlEdgeCases:
         assert "<template id=" not in html
 
     def test_missing_dreams_dir_exits(self, dream_lineage, tmp_path):
-        """generate_html → load_index sys.exit(1) when _index.md is missing."""
+        """A missing required index raises an actionable input error."""
         shadow = tmp_path / ".shadow"
         shadow.mkdir()
         out = tmp_path / "out.html"
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(dream_lineage.LineageError, match="_index.md"):
             dream_lineage.generate_html(str(shadow), str(out))
-        assert exc.value.code == 1
 
     def test_dream_in_index_but_dir_missing(self, dream_lineage, tmp_path, capsys):
         """If a dream is in _index.md but its folder is missing, render anyway."""
@@ -919,7 +918,7 @@ class TestGenerateHtmlEdgeCases:
         assert "<template id=" not in html
 
     def test_malformed_index_rows_skipped(self, dream_lineage, tmp_path, capsys):
-        """Lines with fewer than 8 pipe-delimited parts are silently ignored."""
+        """Malformed rows do not prevent rendering the valid experiment."""
         shadow = tmp_path / ".shadow"
         dreams = shadow / "_dreams"
         dreams.mkdir(parents=True)
@@ -1220,3 +1219,139 @@ class TestTreeDepthCycleGuard:
         out = tmp_path / "lineage.html"
         dream_lineage.generate_html(shadow, out)
         assert out.exists()
+
+
+@pytest.mark.slow
+class TestLineageDiagnostics:
+    def _fixture(self, tmp_path):
+        shadow = tmp_path / ".shadow"
+        did = "20250101-120000Z-diagnostics"
+        branch = f"dream/proj/{did}"
+        _build_dreams(
+            shadow, [(did, "investigation", "useful", "Diagnostics", branch, "main", "abc")],
+        )
+        return shadow, shadow / "_dreams" / did
+
+    def _run(self, shadow, output, cwd):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--shadow-dir", str(shadow), "-o", str(output)],
+            cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+
+    @pytest.mark.parametrize("failure", [
+        "explicit-shadow", "index-encoding", "index-directory",
+        "output-directory", "output-parent", "output-encoding",
+    ])
+    def test_required_failures_are_actionable_and_do_not_claim_success(self, tmp_path, failure):
+        shadow, dream = self._fixture(tmp_path)
+        output = tmp_path / "lineage.html"
+        output.write_text("previous report\n", encoding="utf-8")
+        expected = output
+        if failure == "explicit-shadow":
+            shadow = tmp_path / "missing-shadow"
+            expected = shadow
+        elif failure == "index-encoding":
+            expected = shadow / "_dreams/_index.md"
+            expected.write_bytes(b"\xff")
+        elif failure == "index-directory":
+            expected = shadow / "_dreams/_index.md"
+            expected.unlink()
+            expected.mkdir()
+        elif failure == "output-directory":
+            output = tmp_path / "output-directory"
+            output.mkdir()
+            expected = output
+        elif failure == "output-parent":
+            output = tmp_path / "missing-parent/lineage.html"
+            expected = output
+        else:
+            (dream / "manifest.json").write_text(
+                json.dumps({"tests_passed": "\ud800"}), encoding="utf-8",
+            )
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 1
+        assert "ERROR:" in result.stderr and repr(str(expected)) in result.stderr
+        assert "retry" in result.stderr.lower() or "rerun" in result.stderr.lower()
+        assert "Traceback" not in result.stderr
+        assert "Wrote " not in result.stdout
+        assert (tmp_path / "lineage.html").read_text(encoding="utf-8") == "previous report\n"
+
+    @pytest.mark.parametrize("failure,field", [
+        ("manifest-json", "manifest.json"),
+        ("manifest-object", "manifest.json"),
+        ("manifest-parent", "parent_branch"),
+        ("manifest-discoveries", "discoveries"),
+        ("report-encoding", "report.md"),
+        ("report-directory", "report.md"),
+        ("index-row", "_index.md"),
+        ("index-duplicate", "_index.md"),
+    ])
+    def test_recoverable_omissions_warn_with_context(self, tmp_path, failure, field):
+        shadow, dream = self._fixture(tmp_path)
+        output = tmp_path / "lineage.html"
+        manifest = dream / "manifest.json"
+        if failure == "manifest-json":
+            manifest.write_text("{broken", encoding="utf-8")
+        elif failure == "manifest-object":
+            manifest.write_text("[]", encoding="utf-8")
+        elif failure == "manifest-parent":
+            manifest.write_text(json.dumps({"parent_branch": {"wrong": "type"}}), encoding="utf-8")
+        elif failure == "manifest-discoveries":
+            manifest.write_text(json.dumps({"discoveries": None}), encoding="utf-8")
+        elif failure == "report-encoding":
+            (dream / "report.md").write_bytes(b"\xff")
+        elif failure == "report-directory":
+            (dream / "report.md").mkdir()
+        elif failure == "index-row":
+            with (shadow / "_dreams/_index.md").open("a", encoding="utf-8") as stream:
+                stream.write("| malformed row\n")
+        else:
+            index = shadow / "_dreams/_index.md"
+            with index.open("a", encoding="utf-8") as stream:
+                stream.write(index.read_text(encoding="utf-8").splitlines()[-1] + "\n")
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert output.exists() and "Wrote " in result.stdout
+        assert "WARNING:" in result.stderr and field in result.stderr
+        assert repr(str(shadow))[1:-1] in result.stderr
+        assert "rerun" in result.stderr.lower()
+        assert "Traceback" not in result.stderr
+
+    def test_missing_optional_files_are_not_errors(self, tmp_path):
+        shadow, _ = self._fixture(tmp_path)
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert result.stderr == ""
+
+    @pytest.mark.parametrize("parent", [False, 0, [], {}, ["dream/proj/parent"]])
+    def test_invalid_parent_types_warn_without_crashing(self, tmp_path, parent):
+        shadow, dream = self._fixture(tmp_path)
+        (dream / "manifest.json").write_text(
+            json.dumps({"parent_branch": parent}), encoding="utf-8",
+        )
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert "WARNING:" in result.stderr and "parent_branch" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_literal_html_metadata_is_not_reported_as_an_error(self, tmp_path):
+        shadow, dream = self._fixture(tmp_path)
+        (dream / "manifest.json").write_text(
+            json.dumps({"tests_passed": '<img src=x onerror="alert(1)">'}),
+            encoding="utf-8",
+        )
+        output = tmp_path / "lineage.html"
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 0 and result.stderr == ""
+        assert "&lt;img" in output.read_text(encoding="utf-8")
+
+    def test_unreachable_cycle_warns_instead_of_silently_omitting_nodes(self, tmp_path):
+        shadow = tmp_path / ".shadow"
+        _build_dreams(shadow, [
+            ("a", "investigation", "useful", "A", "dream/p/a", "dream/p/b", "a"),
+            ("b", "investigation", "useful", "B", "dream/p/b", "dream/p/a", "b"),
+        ])
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert "WARNING:" in result.stderr and "parent" in result.stderr.lower()
+        assert "_index.md" in result.stderr

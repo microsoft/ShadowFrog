@@ -16,6 +16,10 @@ shadow knowledge bases for any codebase.
   and Viewer skills while preserving data formats, policy limits, and safety gates.
 
 ### Fixed
+- **Lineage error feedback** — required input/output failures now name the
+  affected path and repair action on stderr. Recoverable metadata omissions
+  and malformed rows produce visible warnings instead of silent fallbacks;
+  invalid explicit shadow paths no longer select a different shadow.
 - **Lineage HTML escaping** — render experiment names (including branch fallbacks)
   and manifest test counts as literal text in timeline and compact tree views,
   without changing stored metadata or empty/zero count display behavior (#37).
