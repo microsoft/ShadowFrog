@@ -296,7 +296,7 @@ def flatten_chain(branch, meta, children, depth=0):
 def node_html(branch, meta, children, with_report=True):
     """Render a single node as a flat timeline row."""
     info = meta.get(branch, {})
-    short = info.get("short", branch)
+    short = htmlmod.escape(info.get("short", branch))
     cat = info.get("cat", "unknown")
     color = CAT_COLORS.get(cat, "#607D8B")
     verdict = VERDICT_MAP.get(info.get("verdict", ""), "—")
@@ -308,7 +308,10 @@ def node_html(branch, meta, children, with_report=True):
 
     sid = stable_id(branch)
 
-    test_badge = f'<span class="badge test">{tests} tests</span>' if tests else ""
+    test_badge = (
+        f'<span class="badge test">{htmlmod.escape(str(tests))} tests</span>'
+        if tests else ""
+    )
     disc_badge = f'<span class="badge disc">{disc} disc</span>' if disc else ""
 
     report_btn = ""
@@ -337,7 +340,7 @@ def node_html(branch, meta, children, with_report=True):
 def compact_node(branch, meta, children, prefix="", is_last=True):
     """Render a single line in the compact tree view."""
     info = meta.get(branch, {})
-    short = info.get("short", branch)
+    short = htmlmod.escape(info.get("short", branch))
     cat = info.get("cat", "unknown")
     color = CAT_COLORS.get(cat, "#607D8B")
     verdict = VERDICT_MAP.get(info.get("verdict", ""), "—")
@@ -346,7 +349,10 @@ def compact_node(branch, meta, children, prefix="", is_last=True):
     report = info.get("full_report", "")
 
     connector = "└── " if is_last else "├── "
-    test_info = f' <span class="ct-test">{tests}t</span>' if tests else ""
+    test_info = (
+        f' <span class="ct-test">{htmlmod.escape(str(tests))}t</span>'
+        if tests else ""
+    )
 
     sid = stable_id(branch)
     report_btn = ""

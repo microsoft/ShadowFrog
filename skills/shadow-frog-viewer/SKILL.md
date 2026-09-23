@@ -83,6 +83,8 @@ python3 .github/skills/shadow-frog-viewer/dream-lineage.py --shadow-dir /path/to
 
 The HTML groups compounding chains and fresh experiments, includes a full
 lineage tree, and supports expanding each experiment's report.
+Experiment names and test-count metadata render as literal text, not HTML;
+escaping happens at rendering time without changing the stored metadata.
 
 ## Fallback: Shell One-Liners
 

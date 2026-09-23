@@ -15,6 +15,11 @@ shadow knowledge bases for any codebase.
   repeated guidance and examples in the core, Dream, Init, Meditate, Update,
   and Viewer skills while preserving data formats, policy limits, and safety gates.
 
+### Fixed
+- **Lineage HTML escaping** — render experiment names (including branch fallbacks)
+  and manifest test counts as literal text in timeline and compact tree views,
+  without changing stored metadata or empty/zero count display behavior (#37).
+
 ---
 
 ## 2026-09-22
