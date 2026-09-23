@@ -9,6 +9,12 @@ shadow knowledge bases for any codebase.
 
 ## Unreleased
 
+### Fixed
+- **Reconciliation path containment** — validate untrusted manifest destinations
+  and filesystem aliases before writing discoveries, cross-references, or
+  archives. Unsafe paths fail explicitly, including during dry runs, rather
+  than modifying files outside the shadow tree.
+
 ### Changed
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed
