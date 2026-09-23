@@ -1,8 +1,9 @@
 ---
 name: shadow-frog-viewer
 description: >-
-  Browse and query the shadow knowledge base: overview, search for files
-  or symbols or text, view preferences, or see recent discoveries.
+  Browse and query the shadow knowledge base with bounded, citation-ranked
+  retrieval: search files, symbols, or text, expand individual discoveries,
+  page through preferences, or see recent discoveries.
   Invoke when the user wants to see what's in the shadow, get an
   overview, or find specific knowledge.
 scripts:
@@ -31,11 +32,13 @@ python3 .claude/skills/shadow-frog-viewer/shadow-viewer.py [options]
 | Command | What it shows |
 |---------|--------------|
 | `--summary` | Overview: counts, source/status/label breakdown, per-file table, cross-cutting titles (default) |
-| `--search QUERY` | Universal search — matches file names, symbol names, and discovery text. Includes cross-cutting and preferences |
-| `--prefs` | Project-wide preferences |
-| `--recent [N]` | N most recent discoveries with full content (default: 10) |
-| `--labels LABEL` | Discoveries filtered by label (e.g., `bug`, `security`, `bug,performance`) |
-| `--top FILE` | Top actionable discoveries for FILE — concise output (default: 3 entries, ~600 chars) suitable for the preToolUse hook. Includes both per-file shadow entries and any `_cross/` discoveries that reference FILE. Verified discoveries rank first. |
+| `--search QUERY` | Bounded search across paths, symbols, text, cross-cutting entries, and preferences |
+| `--symbol FILE::SYMBOL` | Bounded discoveries at an exact symbol, plus matching cross-cutting refs; use `File-Level` for a file-level section |
+| `--get ID` | Expand one current discovery returned by a content view |
+| `--prefs` | Project-wide preferences; follow all pages before treating them as complete |
+| `--recent [N]` | Most recent discovery previews by file mtime (default page size: 10) |
+| `--labels LABEL` | Bounded discoveries matching labels (e.g., `bug`, `security`, `bug,performance`) |
+| `--top FILE` | Hook-sized actionable previews (default: up to 3 entries, 600 characters). Includes per-file and cross-cutting findings; trust/status precedes citation score. |
 | `--check-invariants` | Audit structural integrity — bidirectional cross-references, label/source/category enum compliance, heading format, no-orphan-back-pointer. Exits 0 if clean, 1 with one violation per line. Run after dream reconciliation or before commit. |
 
 No arguments defaults to `--summary`.
@@ -45,9 +48,15 @@ No arguments defaults to `--summary`.
 | Flag | Effect |
 |------|--------|
 | `--shadow-dir DIR` | Override .shadow/ location (default: auto-detect from CWD) |
+| `--limit N` | Positive page size for search, symbol, labels, or preferences (default: 10) |
+| `--max-chars N` | Hard output cap, including metadata/newline (default: 4000; minimum 256, or 0 for explicit uncapped output). Use `--top-max-chars` with `--top`. |
+| `--cursor TOKEN` | Continue the same view and filters using the returned ordering snapshot |
+| `--text-offset N` | Continue a long `--get` result at the returned character offset |
+| `--event-id ID` | Optional retry ID: each discovery counts at most once per ID (1-128 letters/digits or `. _ : -`). Default: a new event per invocation. |
+| `--no-record` | Do not increase citation scores; existing scores still rank results, and pagination may store a local snapshot |
 | `--top-labels LABELS` | Comma-separated label filter for `--top` (default: `bug,security`). Empty string disables label filtering. |
 | `--top-limit N` | Max discoveries to show in `--top` (default: 3) |
-| `--top-max-chars N` | Hard cap on `--top` total output length (default: 600). Use 0 for no cap. |
+| `--top-max-chars N` | Hard cap on `--top` total output length (default: 600; minimum 256). Use 0 for no cap. |
 
 ### Examples
 
@@ -55,12 +64,67 @@ No arguments defaults to `--summary`.
 # Search file names, symbols, discoveries, cross-cutting entries, and preferences
 python3 shadow-viewer.py --search "token expiry"
 
+# Inspect one symbol without loading its entire shadow
+python3 shadow-viewer.py --symbol src/auth.py::UserAuth.validate --limit 5
+
+# Expand a returned id, or continue the same search with its returned cursor
+python3 shadow-viewer.py --get DISCOVERY_ID
+python3 shadow-viewer.py --search "token expiry" --cursor CURSOR_TOKEN
+
 # Security and performance issues
 python3 shadow-viewer.py --labels security,performance
 
 # Broaden the per-file label filter and show up to 5 entries
 python3 shadow-viewer.py --top src/auth.py --top-labels bug,security,performance --top-limit 5
 ```
+
+### Citation Score and Retrieval Contract
+
+Replace `DISCOVERY_ID` and `CURSOR_TOKEN` with the exact values returned by the helper.
+
+Content views (`search`, `symbol`, `get`, `prefs`, `labels`, `recent`, `top`)
+show an `id` and one `citation_score`. Every discovery starts at zero by
+default, regardless of which workflow wrote it. The helper increments only
+entries whose content it emits, once per retrieval event. Scanning/matching,
+summary statistics, invariant audits, and raw file reads do not count.
+Displayed scores are the values **before** the current read. A citation here
+measures helper exposure, not proven usefulness, correctness, or LLM influence.
+Agents must not manually edit counters or add them to discovery metadata.
+
+Exact search matches and source trust/status rank ahead of citation history;
+recent views also prioritize mtime. Within a tied tier, higher scores rank
+first, reserving room for a zero-score entry within tied tiers when the page
+and character budget can fit multiple entries.
+Popularity never overrides a refuted status or authorizes dropping a constraint.
+Use targeted searches and additional pages for deduplication rather than
+assuming the popular shortlist is exhaustive.
+
+The `d_...` ID is a content fingerprint of kind, file/symbol anchor, normalized
+claim text, and related refs. Metadata-only status/source/label changes keep it;
+rewording, renaming, or merging claims/refs can create a new zero-score identity.
+Scores are not fuzzily transferred or summed during Meditate. Removed identities
+can remain in the local ledger but cannot be expanded unless their claim exists.
+
+Scores live in SQLite under the repository's **common Git directory** at
+`shadowfrog/citations.sqlite3`, shared by its local worktrees. Different shadow
+roots in the same repo have separate scopes. Outside Git, the cache lives under
+`$XDG_STATE_HOME/shadowfrog/citations` (Windows: `$LOCALAPPDATA`), falling back to
+`~/.local/state/shadowfrog/citations`. It contains identities/counters/events,
+not discovery bodies. It is local metadata, not a tracked or multi-machine DB;
+Markdown and its format remain authoritative and unchanged.
+
+Transactions prevent lost increments from concurrent agents. Reuse `--event-id`
+when retrying one retrieval; do not reuse it for unrelated visits. A failed
+stdout emission is not recorded. Ledger failures warn on stderr, return the
+knowledge, and show unknown scores as `?` when scores cannot be read.
+Do not report those failed increments as successful.
+
+Pagination snapshots freeze ordering despite score changes and expire after
+24 hours. Keep the original view/filters with `--cursor`; a changed knowledge
+snapshot requires restarting the query. For a large claim, `--get` prints the
+next `--text-offset`. Character limits bound helper output, not token counts;
+the helper can still scan the underlying Markdown locally. If the ledger is
+unavailable, narrow the query until pagination can be restored.
 
 ## Dream Lineage Visualization
 

@@ -32,6 +32,7 @@ ShadowFrog/
     shadow-frog-viewer/          Browse and query the shadow knowledge base
       SKILL.md                   Query instructions + shell fallbacks
       shadow-viewer.py           Python helper script
+      _citations.py              Atomic local citation ledger and retrieval cursors
       dream-lineage.py           Dream lineage visualization
   hook-templates/
     shadow-frog-hooks.json       Copilot CLI hook config (sessionStart, preToolUse)
@@ -115,6 +116,20 @@ Preference (`_prefs.md` — project-wide, no file/symbol anchor):
 - Observe-based: read source at `file::symbol`, trace logic, confirm claim.
 - Do-based: write and run a short test/script to confirm or refute.
 - `source: user` and `source: interaction` → always `verified`.
+
+### Citation-Aware Retrieval
+
+- Keep the discovery grammar unchanged: viewer fingerprints and `citation_score`
+  are derived/local metadata, not additional Markdown fields.
+- Scores start at zero and increment only for content emitted by a retrieval
+  view, once per entry/event. They measure exposure, not verified usefulness.
+- Use the common-Git SQLite ledger for multiprocess/worktree updates; do not
+  rewrite shadow files on reads. Telemetry failures must warn without hiding
+  knowledge. Summary/audit/parser-only operations do not increment scores.
+- Rank relevance and trust ahead of scores; preserve room for zero-score entries.
+  Page large results, expand by ID, and never use only the shortlist for dedup.
+- Fingerprints bind kind, anchor, normalized claim and refs. Metadata-only edits
+  retain identity; rewritten/merged claims and renamed anchors may reset scores.
 
 ### Dedup
 - Before writing, read existing discoveries at the target symbol.

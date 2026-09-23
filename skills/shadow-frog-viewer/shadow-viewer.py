@@ -11,10 +11,17 @@ Views:
     --recent [N]            N most recent discoveries with content (default: 10)
     --labels LABEL          Show discoveries by label (bug, security, etc.)
     --top FILE              Top actionable discoveries for FILE (hook-sized)
+    --symbol FILE::SYMBOL   Bounded knowledge for a specific symbol
+    --get ID                Expand one discovery by its retrieval identity
     --check-invariants      Report structural violations (exit 1 if any)
 
 Options:
     --shadow-dir DIR        Path to .shadow/ directory (default: auto-detect)
+    --limit N              Maximum results (default: 10)
+    --max-chars N          Output budget including metadata (default: 4000)
+    --cursor TOKEN         Continue a previous result snapshot
+    --no-record            Do not increment local citation scores
+    --event-id ID          Reuse an ID for retry-idempotent bookkeeping
 
 Exit codes:
     0  Success (possibly with warnings on stderr)
@@ -22,14 +29,28 @@ Exit codes:
 """
 
 import argparse
+from dataclasses import dataclass
+import hashlib
 import json
 import os
 import re
 import sys
+import sqlite3
+import subprocess
 import traceback
+import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from _citations import CitationStore, discovery_id, validate_event_id
+except ImportError as exc:
+    raise SystemExit("[shadow-viewer error] Missing citation helper/dependency; reinstall the complete Viewer skill") from exc
+finally:
+    sys.path.pop(0)
 
 
 _DISCOVERY_META_RE = re.compile(
@@ -425,13 +446,11 @@ def collect_all_discoveries(shadow_dir):
                 failed_files.append(
                     (str(sf), parsed["parse_errors"])
                 )
+            modified = _mtime(sf)
             for d in parsed["discoveries"]:
                 d.setdefault("file", parsed["source_file"])
                 d["shadow_path"] = str(sf.relative_to(shadow_dir))
-                try:
-                    d["shadow_mtime"] = os.path.getmtime(sf)
-                except OSError:
-                    d["shadow_mtime"] = 0.0
+                d["shadow_mtime"] = modified
                 all_disc.append(d)
         except Exception as e:
             msg = f"Failed to parse {sf}: {type(e).__name__}: {e}"
@@ -446,6 +465,327 @@ def collect_all_discoveries(shadow_dir):
 
 
 # --- View Functions ---
+
+@dataclass(frozen=True)
+class RetrievalOptions:
+    limit: int = 10
+    max_chars: int = 4000
+    cursor: str | None = None
+    event_id: str | None = None
+    record: bool = True
+    text_offset: int = 0
+
+    def __post_init__(self):
+        if type(self.limit) is not int or self.limit < 1:
+            raise ValueError("Result limit must be positive")
+        if type(self.max_chars) is not int or self.max_chars < 0 or (self.max_chars and self.max_chars < 256):
+            raise ValueError("Output budget must be at least 256 characters, or 0 for no cap")
+        if type(self.text_offset) is not int or self.text_offset < 0:
+            raise ValueError("Text offset must be nonnegative")
+        if self.event_id is not None:
+            validate_event_id(self.event_id)
+
+
+def _knowledge_entry(kind, file, symbol, text, data, refs=(), mtime=0):
+    anchor = f"{file}::{symbol}" if symbol else file
+    return {
+        "id": discovery_id(kind, anchor, text, refs),
+        "kind": kind, "file": file, "symbol": symbol, "anchor": anchor,
+        "text": text, "refs": list(refs), "mtime": mtime,
+        "status": data.get("status", "verified" if kind == "preference" else "?"),
+        "source": data.get("source", "?"), "labels": data.get("labels", []),
+        "title": data.get("title", ""), "category": data.get("category", "?"),
+        "dream_report": data.get("dream_report", ""),
+    }
+
+
+def _mtime(path):
+    try:
+        return path.stat().st_mtime
+    except OSError as exc:
+        warn(f"Modification time unavailable for {path}: {exc}; treating it as undated.")
+        return 0
+
+
+def _preference_entries(shadow_dir):
+    prefs = parse_prefs(shadow_dir)
+    modified = _mtime(shadow_dir / "_prefs.md") if prefs else 0
+    return _unique_entries([
+        _knowledge_entry(
+            "preference", "_prefs.md", "", pref.get("text", ""), pref,
+            mtime=modified,
+        )
+        for pref in prefs
+    ])
+
+
+def _unique_entries(entries):
+    # Duplicate claims at the same location have one identity and one score.
+    unique = {}
+    for entry in entries:
+        if not entry["text"].strip():
+            warn(f"Empty discovery at {entry['anchor']}; repair its text before retrieval.")
+            continue
+        prior = unique.get(entry["id"])
+        if prior is None or _trust(entry) < _trust(prior):
+            unique[entry["id"]] = entry
+    return list(unique.values())
+
+
+def _knowledge_entries(shadow_dir, source_file=None):
+    """Collect identities without recording a citation for parsing or matching."""
+    entries = []
+    if source_file is None:
+        discoveries = collect_all_discoveries(shadow_dir)
+    else:
+        if (
+            not source_file or ":" in source_file or "\\" in source_file
+            or any(part in ("", ".", "..") for part in source_file.split("/"))
+        ):
+            raise ValueError("Use a repository-relative source path with forward slashes")
+        path = shadow_dir / (source_file + ".md")
+        if not path.resolve().is_relative_to(shadow_dir.resolve()):
+            raise ValueError("Requested shadow resolves outside --shadow-dir")
+        parsed = parse_shadow_file(path) if path.is_file() else {"discoveries": []}
+        modified = _mtime(path) if parsed["discoveries"] else 0
+        discoveries = [
+            {**disc, "shadow_path": source_file + ".md", "shadow_mtime": modified}
+            for disc in parsed["discoveries"]
+        ]
+    for disc in discoveries:
+        file = Path(disc["shadow_path"]).as_posix()[:-3]
+        entries.append(_knowledge_entry(
+            "discovery", file, disc.get("symbol", "file-level"), disc.get("text", ""),
+            disc, disc.get("also_involves", []), disc.get("shadow_mtime", 0),
+        ))
+    for cross in parse_cross_cutting(shadow_dir):
+        refs = cross.get("refs", [])
+        if source_file is not None and not any(ref.split("::", 1)[0] == source_file for ref in refs):
+            continue
+        relative = "_cross/" + cross["file"]
+        entries.append(_knowledge_entry(
+            "cross-cutting", relative, "", cross.get("discovery", cross.get("title", "")),
+            cross, refs, _mtime(shadow_dir / relative),
+        ))
+    if source_file is None:
+        entries.extend(_preference_entries(shadow_dir))
+    return _unique_entries(entries)
+
+
+def _trust(entry):
+    if entry["status"] == "refuted":
+        return 5
+    if entry["source"] == "user":
+        return 0
+    if entry["source"] == "interaction":
+        return 1
+    return {"verified": 2, "uncertain": 3}.get(entry["status"], 4)
+
+
+def _rank_entries(entries, scores, limit, recent=False):
+    groups = defaultdict(list)
+    for entry in entries:
+        priority = ((-entry["mtime"],) if recent else ()) + (
+            entry.get("relevance", 0), _trust(entry),
+        )
+        groups[priority].append(entry)
+    result = []
+    for priority in sorted(groups):
+        group = groups[priority]
+        seen = sorted(
+            (entry for entry in group if scores.get(entry["id"], 0)),
+            key=lambda entry: -scores[entry["id"]],
+        )
+        unseen = [entry for entry in group if not scores.get(entry["id"], 0)]
+        # Reserve one slot per group/page-sized block for a zero-score entry.
+        width = max(2, limit)
+        while seen and unseen:
+            result.extend(seen[:width - 1])
+            del seen[:width - 1]
+            result.append(unseen.pop(0))
+        result.extend(seen)
+        result.extend(unseen)
+    return result
+
+
+def _citation_store(shadow_dir):
+    try:
+        return CitationStore.for_shadow(shadow_dir)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        warn(f"Citation tracking unavailable: {exc}. Knowledge is still returned; repair local Git/state access.")
+        return None
+
+
+def _clip(text, limit):
+    return text if len(text) <= limit else text[:max(0, limit - 3)] + "..."
+
+
+def _entry_preview(entry, score, style, group_count):
+    text = _clip(entry["text"].replace("\n", " "), 180)
+    anchor = _clip(entry["anchor"], 160)
+    identity = f"id={entry['id']} citation_score={score}"
+    metadata = f"({entry['status']}, source: {entry['source']})"
+    labels = ",".join(entry["labels"]) or "-"
+    if style == "top":
+        return f"- [{labels}] `{anchor}` ({entry['status']}) {identity}: {text}"
+    if style == "recent":
+        stamp = datetime.fromtimestamp(entry["mtime"]).strftime("%Y-%m-%d %H:%M")
+        heading = f"  [{stamp}] ({entry['kind']})"
+    elif entry["kind"] == "cross-cutting":
+        heading = f"Cross-cutting: {_clip(entry['title'], 120)}\n  Category: {entry['category']}"
+    elif entry["kind"] == "preference":
+        heading = f"Preferences [{entry['source']}]"
+    else:
+        heading = f"{_clip(entry['file'], 160)} ({group_count} matches)"
+    body = f"{heading}\n  {anchor}\n  {metadata} [{labels}]\n  {identity}\n  {text}"
+    if entry["refs"]:
+        label = "Refs" if entry["kind"] == "cross-cutting" else "Also involves"
+        body += f"\n  {label}: {_clip(', '.join(entry['refs']), 160)}"
+    if style == "labels" and len(entry["labels"]) > 1:
+        body += f"\n  Also labeled: {labels}"
+    return body
+
+
+def _emit_knowledge(shadow_dir, entries, header, options, *, style="search", request=""):
+    store = _citation_store(shadow_dir)
+    scores = {}
+    if store:
+        try:
+            scores = store.scores([entry["id"] for entry in entries])
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            warn(f"Cannot read citation scores: {exc}. Scores are unknown; repair the local ledger and retry.")
+            store = None
+    ranked = _rank_entries(entries, scores, options.limit, recent=style == "recent")
+    catalog = "" if style == "top" else hashlib.sha256(json.dumps(
+        sorted(entries, key=lambda entry: entry["id"]), sort_keys=True, ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    token = None
+    offset = 0
+    if options.cursor:
+        match = re.fullmatch(r"([0-9a-f]{32}):(\d+)", options.cursor)
+        if not match:
+            raise ValueError("Invalid cursor; copy the --cursor value from the previous response")
+        if store is None:
+            raise ValueError("Cannot resume cursor without the local ledger; repair it or restart the query")
+        token, offset = match.group(1), int(match.group(2))
+        ids = store.load_page(token, request, catalog)
+        by_id = {entry["id"]: entry for entry in entries}
+        ranked = [by_id[identity] for identity in ids]
+        if offset >= len(ranked):
+            raise ValueError("Cursor is past the available results; restart the query")
+
+    counts = defaultdict(int)
+    for entry in entries:
+        counts[entry["file"]] += 1
+    # Include the terminal newline and continuation instructions in the budget.
+    cap = options.max_chars
+    prefix = _clip(header, min(300, cap // 5)) if cap else header
+    reserve = 90 if style != "top" else 6
+    if cap and not options.cursor:
+        width = options.limit
+        while width > 1:
+            used = len(prefix) + reserve + 3
+            fits = 0
+            for entry in ranked[:width]:
+                score = scores.get(entry["id"], 0) if store else "?"
+                used += len(_entry_preview(entry, score, style, counts[entry["file"]])) + 1
+                if used > cap:
+                    break
+                fits += 1
+            if fits >= width:
+                break
+            width = max(1, fits)
+            ranked = _rank_entries(entries, scores, width, recent=style == "recent")
+    output = prefix
+    shown = []
+    for entry in ranked[offset:offset + options.limit]:
+        score = scores.get(entry["id"], 0) if store else "?"
+        block = _entry_preview(entry, score, style, counts[entry["file"]])
+        available = cap - len(output) - reserve - 3 if cap else len(block)
+        if cap and len(block) > available:
+            if shown:
+                break
+            identity = (
+                f"({entry['status']}, source: {entry['source']}) "
+                f"id={entry['id']} citation_score={score}: "
+            )
+            if available <= len(identity) + 4:
+                raise ValueError("Output budget cannot fit an entry; increase --max-chars")
+            block = identity + _clip(entry["text"], available - len(identity))
+        output += "\n" + block
+        shown.append(entry["id"])
+    next_offset = offset + len(shown)
+    if next_offset < len(ranked):
+        if style == "top":
+            output += "\n(...)"
+        else:
+            if token is None and store is not None:
+                try:
+                    token = store.save_page(request, catalog, [entry["id"] for entry in ranked])
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    warn(f"Cannot save pagination: {exc}. Repair the local ledger or narrow the query.")
+            if token:
+                output += f"\nMore: --cursor {token}:{next_offset} (same view)"
+            else:
+                output += "\nMore omitted: narrow the query (local ledger unavailable)."
+    if style != "top":
+        output += "\nExpand a claim: --get ID"
+    output = prefix.replace("{shown}", str(len(shown))) + output[len(prefix):]
+    if cap and len(output) + 1 > cap:
+        raise ValueError("Output budget cannot fit retrieval metadata; increase --max-chars")
+    print(output, flush=True)
+    if store and shown and options.record:
+        try:
+            store.record(shown, options.event_id or uuid.uuid4().hex)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            warn(f"Citation scores were not updated: {exc}. Reuse --event-id when retrying.")
+
+
+def view_get(shadow_dir, identity, *, options=None):
+    """Expand a current discovery, chunking long text without changing its ID."""
+    options = options or RetrievalOptions()
+    if not re.fullmatch(r"d_[0-9a-f]{32}", identity):
+        raise ValueError("--get requires the complete id=d_... value from a retrieval result")
+    entry = next((entry for entry in _knowledge_entries(shadow_dir) if entry["id"] == identity), None)
+    if entry is None:
+        raise ValueError("Discovery ID is absent or its claim changed; search again for its current ID")
+    store = _citation_store(shadow_dir)
+    score = "?"
+    if store:
+        try:
+            score = store.scores([identity]).get(identity, 0)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            warn(f"Cannot read citation score: {exc}. Repair the local ledger and retry.")
+            store = None
+    body = entry["anchor"] + "\n\n" + entry["text"]
+    if entry["labels"]:
+        body += "\nLabels: " + ", ".join(entry["labels"])
+    if entry["kind"] == "cross-cutting":
+        body += "\nCategory: " + entry["category"] + "\nTitle: " + entry["title"]
+    if entry["refs"]:
+        body += "\nRefs: " + ", ".join(entry["refs"])
+    if entry["dream_report"]:
+        body += "\nDream report: " + entry["dream_report"]
+    if options.text_offset >= len(body) and options.text_offset:
+        raise ValueError("--text-offset is past the end of this discovery")
+    header = (
+        f"id={identity} citation_score={score}\n"
+        f"({entry['status']}, source: {entry['source']})\n"
+    )
+    start = options.text_offset
+    available = options.max_chars - len(header) - 100 if options.max_chars else len(body)
+    if available < 1:
+        raise ValueError("Output budget cannot fit discovery content; increase --max-chars")
+    content = body[start:start + available]
+    output = header + content
+    if start + len(content) < len(body):
+        output += f"\nContinue: --get {identity} --text-offset {start + len(content)}"
+    print(output, flush=True)
+    if store and options.record:
+        try:
+            store.record([identity], options.event_id or uuid.uuid4().hex)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            warn(f"Citation score was not updated: {exc}. Reuse --event-id when retrying.")
 
 
 def view_summary(shadow_dir):
@@ -579,250 +919,87 @@ def view_summary(shadow_dir):
         warn(f"Failed to render state info: {e}")
 
 
-def view_search(shadow_dir, query):
-    """Universal search: matches file names, symbol names, and discovery text.
-
-    Also searches cross-cutting discoveries and preferences.
-    Results are grouped by match location for readability.
-    Each search domain (per-file, cross-cutting, prefs) is independent —
-    if one fails, the others still return results.
-    """
+def view_search(shadow_dir, query, *, options=None):
+    """Bounded search with stable continuation over matching knowledge identities."""
+    options = options or RetrievalOptions()
     query_lower = query.lower()
-    disc_matches = []
-    cross_matches = []
-    pref_matches = []
-    section_errors = []
-
-    # Search per-file shadows
-    try:
-        for sf in get_all_shadow_files(shadow_dir):
-            try:
-                parsed = parse_shadow_file(sf)
-                source_file = parsed["source_file"] or str(
-                    sf.relative_to(shadow_dir)
-                )
-                file_name_hit = query_lower in source_file.lower()
-
-                for d in parsed["discoveries"]:
-                    sym = d.get("symbol", "")
-                    text = d.get("text", "")
-                    sym_hit = query_lower in sym.lower()
-                    text_hit = query_lower in text.lower()
-                    also_hit = any(
-                        query_lower in ref.lower()
-                        for ref in d.get("also_involves", [])
-                    )
-
-                    if file_name_hit or sym_hit or text_hit or also_hit:
-                        disc_matches.append({
-                            "file": source_file,
-                            "symbol": sym,
-                            "text": text,
-                            "status": d.get("status", "?"),
-                            "source": d.get("source", "?"),
-                            "also_involves": d.get("also_involves", []),
-                            "match": (
-                                "file" if file_name_hit else
-                                "symbol" if sym_hit else
-                                "also_involves" if also_hit else "text"
-                            ),
-                        })
-            except Exception as e:
-                warn(f"Search: error processing {sf}: {e}")
-    except Exception as e:
-        msg = f"Search: failed to search per-file shadows: {e}"
-        warn(msg)
-        section_errors.append(msg)
-
-    # Search cross-cutting discoveries
-    try:
-        for e in parse_cross_cutting(shadow_dir):
-            title = e.get("title", "")
-            disc_text = e.get("discovery", "")
-            refs = e.get("refs", [])
-            if (query_lower in title.lower()
-                    or query_lower in disc_text.lower()
-                    or any(query_lower in r.lower() for r in refs)):
-                cross_matches.append(e)
-    except Exception as e:
-        msg = f"Search: failed to search cross-cutting: {e}"
-        warn(msg)
-        section_errors.append(msg)
-
-    # Search preferences
-    try:
-        for p in parse_prefs(shadow_dir):
-            if query_lower in p.get("text", "").lower():
-                pref_matches.append(p)
-    except Exception as e:
-        msg = f"Search: failed to search preferences: {e}"
-        warn(msg)
-        section_errors.append(msg)
-
-    total = len(disc_matches) + len(cross_matches) + len(pref_matches)
-    if total == 0:
-        print(f"No results for '{query}'.")
-        if section_errors:
-            print(f"Note: {len(section_errors)} search section(s) had errors "
-                  f"— results may be incomplete. Check stderr for details.")
+    if not query.strip():
+        raise ValueError("Search query must be nonempty")
+    matches = []
+    for entry in _knowledge_entries(shadow_dir):
+        fields = [entry["anchor"], entry["file"], entry["symbol"], entry["text"],
+                  entry["title"], *entry["refs"]]
+        if any(query_lower in field.lower() for field in fields):
+            entry["relevance"] = 0 if query_lower in [field.lower() for field in fields[:3]] else 1
+            matches.append(entry)
+    if not matches and not options.cursor:
+        print(_clip(f"No results for '{query}'.", options.max_chars - 1) if options.max_chars
+              else f"No results for '{query}'.")
         return
-
-    print(f"Search: '{query}' ({total} results)")
-    print("=" * 50)
-
-    # Per-file discoveries, grouped by file
-    if disc_matches:
-        try:
-            by_file = defaultdict(list)
-            for d in disc_matches:
-                by_file[d["file"]].append(d)
-
-            for file, discs in sorted(by_file.items()):
-                print(f"\n{file} ({len(discs)} matches)")
-                print("-" * (len(file) + 15))
-                for d in discs:
-                    sym = d["symbol"]
-                    print(f"  {file}::{sym}")
-                    print(f"  {d['text'][:120]}")
-                    print(f"  ({d['status']}, source: {d['source']})")
-                    if d.get("also_involves"):
-                        print(
-                            f"  Also involves: "
-                            f"{', '.join(d['also_involves'])}"
-                        )
-        except Exception as e:
-            warn(f"Search: failed to render per-file results: {e}")
-
-    # Cross-cutting
-    if cross_matches:
-        try:
-            print(f"\nCross-cutting ({len(cross_matches)} matches)")
-            print("-" * 30)
-            for e in cross_matches:
-                title = e.get("title", e.get("slug", "?"))
-                cat = e.get("category", "?")
-                status = e.get("status", "?")
-                source = e.get("source", "?")
-                print(f"\n  {title}")
-                print(f"  Category: {cat} | {status}, source: {source}")
-                print(f"  Refs: {', '.join(e.get('refs', [])[:5])}")
-                if e.get("discovery"):
-                    print(f"  {e['discovery'][:120]}")
-        except Exception as e:
-            warn(f"Search: failed to render cross-cutting results: {e}")
-
-    # Preferences
-    if pref_matches:
-        try:
-            print(f"\nPreferences ({len(pref_matches)} matches)")
-            print("-" * 30)
-            for p in pref_matches:
-                print(f"  [{p.get('source', '?')}] {p['text'][:120]}")
-        except Exception as e:
-            warn(f"Search: failed to render preference results: {e}")
+    _emit_knowledge(
+        shadow_dir, matches, f"Search: '{query}' ({len(matches)} results)", options,
+        request=json.dumps(["search", query_lower]),
+    )
 
 
-def view_prefs(shadow_dir):
-    """Show all preferences."""
-    try:
-        prefs = parse_prefs(shadow_dir)
-    except Exception as e:
-        error(f"Failed to parse preferences: {e}")
+def view_symbol(shadow_dir, anchor, *, options=None):
+    options = options or RetrievalOptions()
+    file, separator, symbol = anchor.partition("::")
+    if not separator or not symbol:
+        raise ValueError("--symbol requires file::symbol (use File-Level for a file-level section)")
+    symbol = "file-level" if symbol == "File-Level" else symbol
+    canonical = f"{file}::{symbol}"
+    matches = [
+        entry for entry in _knowledge_entries(shadow_dir, file)
+        if entry["anchor"] == canonical or canonical in entry["refs"]
+    ]
+    if not matches and not options.cursor:
+        print(_clip(f"No knowledge for '{anchor}'.", options.max_chars - 1)
+              if options.max_chars else f"No knowledge for '{anchor}'.")
         return
+    _emit_knowledge(
+        shadow_dir, matches, f"Knowledge for {anchor} ({len(matches)} results)", options,
+        request=json.dumps(["symbol", canonical]),
+    )
 
-    if not prefs:
+
+def view_prefs(shadow_dir, *, options=None):
+    """Page preferences without letting popular code discoveries hide directives."""
+    options = options or RetrievalOptions()
+    prefs = _preference_entries(shadow_dir)
+    if not prefs and not options.cursor:
         print("No preferences recorded yet.")
         return
-
-    print(f"Project Preferences ({len(prefs)} total)")
-    print("=" * 40)
-    for p in prefs:
-        try:
-            source = p.get("source", "?")
-            print(f"\n  [{source}] {p['text']}")
-        except Exception as e:
-            warn(f"Failed to render preference: {e}")
+    _emit_knowledge(shadow_dir, prefs, f"Project Preferences ({len(prefs)} total)", options, request="prefs")
 
 
-def view_labels(shadow_dir, label_filter):
+def view_labels(shadow_dir, label_filter, *, options=None):
     """Show discoveries filtered by label(s).
 
     label_filter can be a single label or comma-separated list.
     """
-    try:
-        filters = [l.strip().lower() for l in label_filter.split(",")]
-    except Exception as e:
-        error(f"Invalid label filter '{label_filter}': {e}")
+    options = options or RetrievalOptions()
+    filters = [label.strip().lower() for label in label_filter.split(",") if label.strip()]
+    if not filters:
+        raise ValueError("Supply at least one label with --labels")
+    matching = [
+        entry for entry in _knowledge_entries(shadow_dir)
+        if set(filters) & {label.lower() for label in entry["labels"]}
+    ]
+
+    if not matching and not options.cursor:
+        message = f"No discoveries with label(s): {', '.join(filters)}"
+        print(_clip(message, options.max_chars - 1) if options.max_chars else message)
         return
 
-    try:
-        all_disc = collect_all_discoveries(shadow_dir)
-    except Exception as e:
-        error(f"Failed to collect discoveries for label filtering: {e}")
-        return
-
-    # Also include cross-cutting discoveries with labels
-    try:
-        for entry in parse_cross_cutting(shadow_dir):
-            if entry.get("labels"):
-                all_disc.append({
-                    "file": f"_cross/{entry.get('file', '?')}",
-                    "symbol": entry.get("title", entry.get("slug", "?")),
-                    "text": entry.get("discovery", entry.get("title", "")),
-                    "status": entry.get("status", "?"),
-                    "source": entry.get("source", "?"),
-                    "labels": entry["labels"],
-                })
-    except Exception as e:
-        warn(f"Failed to include cross-cutting in label search: {e}")
-
-    matching = []
-    for d in all_disc:
-        try:
-            disc_labels = [l.lower() for l in d.get("labels", [])]
-            if any(f in disc_labels for f in filters):
-                matching.append(d)
-        except Exception as e:
-            warn(f"Failed to check labels on discovery in "
-                 f"{d.get('file', '?')}::{d.get('symbol', '?')}: {e}")
-
-    if not matching:
-        print(f"No discoveries with label(s): {', '.join(filters)}")
-        return
-
-    print(f"Discoveries with label(s): {', '.join(filters)} "
-          f"({len(matching)} results)")
-    print("=" * 50)
-
-    by_label = defaultdict(list)
-    for d in matching:
-        for lbl in d.get("labels", []):
-            if lbl.lower() in filters:
-                by_label[lbl.lower()].append(d)
-
-    for lbl in filters:
-        discs = by_label.get(lbl, [])
-        if not discs:
-            continue
-        print(f"\n[{lbl}] ({len(discs)} discoveries)")
-        print("-" * 30)
-        for d in discs:
-            try:
-                sym = d.get("symbol", "?")
-                src_file = d.get("file", "?")
-                print(f"  {src_file}::{sym}")
-                print(f"  {d['text'][:120]}")
-                print(f"  ({d.get('status', '?')}, "
-                      f"source: {d.get('source', '?')})")
-                all_labels = d.get("labels", [])
-                other = [l for l in all_labels if l.lower() != lbl]
-                if other:
-                    print(f"  Also labeled: {', '.join(other)}")
-            except Exception as e:
-                warn(f"Failed to render labeled discovery: {e}")
+    _emit_knowledge(
+        shadow_dir, matching,
+        f"Discoveries with label(s): {', '.join(filters)} ({len(matching)} results)",
+        options, style="labels", request=json.dumps(["labels", sorted(set(filters))]),
+    )
 
 
-def view_recent(shadow_dir, count=10):
+def view_recent(shadow_dir, count=10, *, options=None):
     """Show the N most recent discoveries (by shadow file mtime).
 
     Collects all discoveries across all shadow files, cross-cutting entries,
@@ -831,108 +1008,19 @@ def view_recent(shadow_dir, count=10):
     Each data source is independent — if cross-cutting fails, per-file
     discoveries still appear.
     """
-    all_items = []
-
-    # Per-file discoveries
-    try:
-        for sf in get_all_shadow_files(shadow_dir):
-            try:
-                mtime = os.path.getmtime(sf)
-                parsed = parse_shadow_file(sf)
-                source_file = parsed["source_file"] or str(
-                    sf.relative_to(shadow_dir)
-                )
-                for d in parsed["discoveries"]:
-                    all_items.append({
-                        "type": "discovery",
-                        "file": source_file,
-                        "symbol": d.get("symbol", "?"),
-                        "text": d.get("text", ""),
-                        "status": d.get("status", "?"),
-                        "source": d.get("source", "?"),
-                        "mtime": mtime,
-                    })
-            except Exception as e:
-                warn(f"Recent: failed to process {sf}: {e}")
-    except Exception as e:
-        warn(f"Recent: failed to list shadow files: {e}")
-
-    # Cross-cutting discoveries
-    try:
-        cross_entries = parse_cross_cutting(shadow_dir)
-        cross_by_file = defaultdict(list)
-        for e in cross_entries:
-            cross_by_file[e["file"]].append(e)
-
-        cross_dir = shadow_dir / "_cross"
-        if cross_dir.exists():
-            for cf in cross_dir.glob("*.md"):
-                try:
-                    mtime = os.path.getmtime(cf)
-                    for e in cross_by_file.get(cf.name, []):
-                        all_items.append({
-                            "type": "cross-cutting",
-                            "file": f"_cross/{cf.name}",
-                            "symbol": e.get("title", e.get("slug", "?")),
-                            "text": e.get("discovery", e.get("title", "")),
-                            "status": e.get("status", "?"),
-                            "source": e.get("source", "?"),
-                            "mtime": mtime,
-                        })
-                except Exception as e:
-                    warn(f"Recent: failed to process cross-cutting {cf}: {e}")
-    except Exception as e:
-        warn(f"Recent: failed to process cross-cutting discoveries: {e}")
-
-    # Preferences
-    try:
-        prefs_path = shadow_dir / "_prefs.md"
-        if prefs_path.exists():
-            mtime = os.path.getmtime(prefs_path)
-            for p in parse_prefs(shadow_dir):
-                all_items.append({
-                    "type": "preference",
-                    "file": "_prefs.md",
-                    "symbol": "-",
-                    "text": p.get("text", ""),
-                    "status": "-",
-                    "source": p.get("source", "?"),
-                    "mtime": mtime,
-                })
-    except Exception as e:
-        warn(f"Recent: failed to process preferences: {e}")
-
-    all_items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
-
-    if not all_items:
+    options = options or RetrievalOptions(limit=count)
+    all_items = _knowledge_entries(shadow_dir)
+    if not all_items and not options.cursor:
         print("No discoveries found.")
         return
 
-    shown = all_items[:count]
-    print(f"Most Recent Discoveries (top {count})")
-    print("=" * 50)
-    for item in shown:
-        try:
-            ts = datetime.fromtimestamp(
-                item.get("mtime", 0)
-            ).strftime("%Y-%m-%d %H:%M")
-            kind = item.get("type", "?")
-            sym = item.get("symbol", "?")
-
-            print(f"\n  [{ts}] ({kind})")
-            if kind == "preference":
-                print(f"  {item.get('text', '')[:120]}")
-                print(f"  source: {item.get('source', '?')}")
-            else:
-                print(f"  {item.get('file', '?')}::{sym}")
-                print(f"  {item.get('text', '')[:120]}")
-                print(f"  ({item.get('status', '?')}, "
-                      f"source: {item.get('source', '?')})")
-        except Exception as e:
-            warn(f"Recent: failed to render item: {e}")
+    _emit_knowledge(
+        shadow_dir, all_items, f"Most Recent Discoveries (top {count})",
+        options, style="recent", request="recent",
+    )
 
 
-def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
+def view_top(shadow_dir, file_path, labels_filter, limit, max_chars, *, options=None):
     """Show the top N actionable discoveries for a single source file.
 
     Designed for the preToolUse hook: concise output suitable for
@@ -940,82 +1028,29 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
     file. Pulls from both the per-file shadow and any _cross/ entries
     whose refs touch this file.
 
-    Ranking: verified > uncertain > refuted; within a tier, source
-    order is preserved. Output is hard-capped at max_chars (the trailing
-    "(...)" marker still fits).
+    Trust/status precedes citation score. Output, including the final newline,
+    is hard-capped; only entries actually emitted are counted.
     """
     norm = file_path.strip()
     if norm.startswith("./"):
         norm = norm[2:]
-    shadow_path = shadow_dir / f"{norm}.md"
     label_set = {l.strip().lower() for l in labels_filter.split(",") if l.strip()}
-
-    candidates = []
-
-    if shadow_path.is_file():
-        try:
-            parsed = parse_shadow_file(shadow_path)
-            for d in parsed.get("discoveries", []):
-                disc_labels = {l.lower() for l in d.get("labels", [])}
-                if label_set and not (disc_labels & label_set):
-                    continue
-                candidates.append({
-                    "kind": "file",
-                    "anchor": d.get("symbol") or "file-level",
-                    "text": d.get("text", "").strip(),
-                    "status": d.get("status", "?"),
-                    "labels": sorted(disc_labels),
-                })
-        except Exception as e:
-            warn(f"--top: failed parsing {shadow_path}: {e}")
-
-    try:
-        for entry in parse_cross_cutting(shadow_dir):
-            refs = entry.get("refs", []) or []
-            if not any(r.split("::", 1)[0].strip() == norm for r in refs):
-                continue
-            cross_labels = {l.lower() for l in entry.get("labels", [])}
-            if label_set and not (cross_labels & label_set):
-                continue
-            candidates.append({
-                "kind": "cross",
-                "anchor": f"_cross/{entry.get('file', entry.get('slug', '?'))}",
-                "text": (entry.get("discovery") or entry.get("title") or "").strip(),
-                "status": entry.get("status", "?"),
-                "labels": sorted(cross_labels),
-            })
-    except Exception as e:
-        warn(f"--top: failed scanning _cross/: {e}")
+    options = options or RetrievalOptions(limit=limit, max_chars=max_chars)
+    candidates = [
+        entry for entry in _knowledge_entries(shadow_dir, norm)
+        if not label_set or label_set & {label.lower() for label in entry["labels"]}
+    ]
 
     if not candidates:
         labels_disp = ",".join(sorted(label_set)) if label_set else "any"
-        print(
-            f"No actionable discoveries ({labels_disp}) for {norm}."
-        )
+        message = f"No actionable discoveries ({labels_disp}) for {norm}."
+        print(_clip(message, max_chars - 1) if max_chars else message)
         return
-
-    tier = {"verified": 0, "uncertain": 1, "refuted": 2}
-    candidates.sort(key=lambda d: tier.get(d.get("status", "?"), 3))
-
-    shown = candidates[:limit]
-    header = (
-        f"Top {len(shown)} of {len(candidates)} actionable discoveries "
-        f"for {norm}:"
+    _emit_knowledge(
+        shadow_dir, candidates,
+        f"Top {{shown}} of {len(candidates)} actionable discoveries for {norm}:",
+        options, style="top", request=json.dumps(["top", norm, sorted(label_set)]),
     )
-    lines = [header]
-    for d in shown:
-        labels = ",".join(d["labels"]) if d["labels"] else "—"
-        anchor = d["anchor"]
-        text = d["text"].replace("\n", " ").strip()
-        lines.append(
-            f"- [{labels}] `{anchor}` ({d['status']}): {text}"
-        )
-
-    out = "\n".join(lines)
-    if max_chars and len(out) > max_chars:
-        truncated = out[: max_chars - 6].rstrip()
-        out = truncated + "\n(...)"
-    print(out)
 
 
 def view_check_invariants(shadow_dir):
@@ -1269,6 +1304,8 @@ def main():
             "--search", metavar="QUERY",
             help="Universal search: files, symbols, and discovery text",
         )
+        views.add_argument("--symbol", metavar="FILE::SYMBOL", help="Knowledge for an exact symbol and its cross-cutting refs")
+        views.add_argument("--get", metavar="ID", help="Expand a discovery returned by the viewer")
         views.add_argument(
             "--prefs", action="store_true",
             help="Show project-wide preferences",
@@ -1327,8 +1364,44 @@ def main():
                 "(default: 600). Use 0 for no cap."
             ),
         )
+        parser.add_argument("--limit", type=int, help="Results per page for search/symbol/labels/prefs (default: 10)")
+        parser.add_argument("--max-chars", type=int, help="Retrieval output budget (default: 4000; 0 disables cap)")
+        parser.add_argument("--cursor", help="Continue the same view/filters with a frozen result ordering")
+        parser.add_argument("--event-id", help="Retry token; an entry counts once per token (default: fresh event)")
+        parser.add_argument("--no-record", action="store_true", help="Do not increment citation scores")
+        parser.add_argument("--text-offset", type=int, help="Continue long --get output at this character offset")
 
         args = parser.parse_args()
+        retrieval = (
+            args.top is not None or args.search is not None or args.symbol is not None
+            or args.get is not None or args.prefs or args.labels is not None or args.recent is not None
+        )
+        if not retrieval and (
+            args.limit is not None or args.max_chars is not None or args.cursor
+            or args.event_id is not None or args.no_record or args.text_offset is not None
+        ):
+            parser.error("Retrieval options require --search, --symbol, --get, --top, --prefs, --labels, or --recent")
+        if args.text_offset is not None and args.get is None:
+            parser.error("--text-offset requires --get")
+        if args.cursor and (args.get is not None or args.top is not None):
+            parser.error("--cursor is for paged search/symbol/labels/prefs/recent; use --text-offset with --get")
+        if args.limit is not None and (args.top is not None or args.recent is not None or args.get is not None):
+            parser.error("Use --top-limit or --recent N instead of --limit; --get returns one discovery")
+        if args.max_chars is not None and args.top is not None:
+            parser.error("Use --top-max-chars with --top")
+        try:
+            options = RetrievalOptions(
+                limit=args.top_limit if args.top is not None else (
+                    args.recent if args.recent is not None else (args.limit if args.limit is not None else 10)
+                ),
+                max_chars=args.top_max_chars if args.top is not None else (
+                    args.max_chars if args.max_chars is not None else 4000
+                ),
+                cursor=args.cursor, event_id=args.event_id, record=not args.no_record,
+                text_offset=args.text_offset or 0,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
 
         # Find shadow dir
         if args.shadow_dir:
@@ -1355,22 +1428,27 @@ def main():
         # Dispatch
         if args.check_invariants:
             sys.exit(view_check_invariants(shadow_dir))
-        if args.top:
+        if args.top is not None:
             view_top(
                 shadow_dir,
                 args.top,
                 args.top_labels,
                 args.top_limit,
                 args.top_max_chars,
+                options=options,
             )
-        elif args.search:
-            view_search(shadow_dir, args.search)
+        elif args.search is not None:
+            view_search(shadow_dir, args.search, options=options)
+        elif args.symbol is not None:
+            view_symbol(shadow_dir, args.symbol, options=options)
+        elif args.get is not None:
+            view_get(shadow_dir, args.get, options=options)
         elif args.prefs:
-            view_prefs(shadow_dir)
-        elif args.labels:
-            view_labels(shadow_dir, args.labels)
+            view_prefs(shadow_dir, options=options)
+        elif args.labels is not None:
+            view_labels(shadow_dir, args.labels, options=options)
         elif args.recent is not None:
-            view_recent(shadow_dir, args.recent)
+            view_recent(shadow_dir, args.recent, options=options)
         else:
             view_summary(shadow_dir)
 
@@ -1379,6 +1457,9 @@ def main():
     except KeyboardInterrupt:
         error("Interrupted by user.")
         sys.exit(130)
+    except (ValueError, sqlite3.Error) as exc:
+        error(f"{exc}. Correct the request or repair the local citation ledger, then retry.")
+        sys.exit(1)
     except Exception as e:
         error(
             f"Unexpected error: {type(e).__name__}: {e}\n"

@@ -1,9 +1,8 @@
 r"""Tests for `skills/shadow-frog-viewer/shadow-viewer.py`.
 
-Philosophy: USE REAL FILES (per `minimal-mocking-tests`). The viewer is a
-pure-read tool — every test either constructs a small shadow tree on
-disk and calls a viewer function, or exercises the CLI via subprocess
-against the `coupon_demo` fixture.
+Philosophy: USE REAL FILES (per `minimal-mocking-tests`). Retrieval does not
+edit shadow Markdown; local citation bookkeeping is isolated by the fixtures.
+Tests construct shadow trees or exercise the CLI against `coupon_demo`.
 
 Test categories:
   * In-process function tests (no `@pytest.mark.slow`): exercise
@@ -1390,7 +1389,9 @@ class TestViewLabels:
         self, shadow_viewer, coupon_demo, capsys
     ):
         sd = coupon_demo / ".shadow"
-        shadow_viewer.view_labels(sd, "bug")
+        shadow_viewer.view_labels(
+            sd, "bug", options=shadow_viewer.RetrievalOptions(limit=20, max_chars=8000),
+        )
         out = capsys.readouterr().out
         # Cross-cutting entries are prefixed with `_cross/<file>` in the
         # file column.

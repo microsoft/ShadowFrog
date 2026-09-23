@@ -23,16 +23,17 @@ to that code location.
 
 **Every time you work on code in a repo with `.shadow/`:**
 
-1. **Read `_prefs.md` first** — it contains project-wide conventions,
-   user preferences, and things to avoid.
+1. **Read preferences first** with the viewer's `--prefs`, following all pages.
+   `_prefs.md` contains project-wide conventions, user preferences, and things to avoid.
 2. **Read relevant `_cross/` discoveries** — list `_cross/` and read entries
    whose titles relate to the current area, including cross-file contracts
    and interactions.
 3. **Check `_dreams/_index.md`** and read relevant experiment reports,
    especially when investigating bugs or unfamiliar code. They may contain
    findings not yet distilled into per-file shadows.
-4. **Before editing a file**, read its shadow (`.shadow/<path>.md`) and
-   relevant `_cross/` entries, then apply the discoveries.
+4. **Before editing a file**, query its shadow (`.shadow/<path>.md`) with
+   `--symbol file::symbol` or `--top FILE`, and search relevant `_cross/`
+   knowledge. Expand matching entries and follow pages as needed, then apply them.
    `_index.md` counts may be stale; inspect the actual shadows and `_cross/`.
 5. **When the user explains something about code** (gotcha, design intent,
    warning, history): write a `source: user` discovery to the shadow
@@ -41,6 +42,25 @@ to that code location.
 6. **When the user states a preference or convention** (not tied to any
    specific file): write it to `_prefs.md` immediately.
 7. **After code changes**: run `/shadow-frog-update`
+
+## Bounded Knowledge Retrieval
+
+Prefer the `/shadow-frog-viewer` helper over loading an entire large shadow.
+It returns short previews, discovery IDs, and one `citation_score`; `--get ID`
+expands an entry, and returned cursors continue a stable result ordering.
+Citation scores count content emitted by the helper, not proven use in reasoning.
+Do not manually increment scores or put them into Markdown: the helper records
+visits atomically in local state shared across worktrees. New discoveries from
+Dream, Update, conversation capture, or manual writes implicitly start at zero.
+
+Use relevance and trust first, then citation history; a popular claim is not
+automatically correct. Never omit relevant user constraints because of a low
+score. A shortlist is not a complete symbol history. Follow all preference pages
+and use targeted searches/pagination when completeness matters.
+If retrieval warns that telemetry failed, knowledge remains usable but the
+count may be missing. Reuse `--event-id` for retries; `--no-record` is available
+for inspection that should not affect ranking. Raw reads remain possible but
+are not counted. See the Viewer skill for identity and pagination semantics.
 
 ## Directory Layout
 
@@ -171,7 +191,7 @@ When to write to `_prefs.md` vs per-file shadow vs `_cross/`:
 
 ## Discovery Format
 
-Per-file discoveries (no IDs — anchored by their `file::symbol` heading):
+Per-file discoveries (no stored IDs — anchored by their `file::symbol` heading):
 ```
 - <behavioral statement>
   _(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
@@ -336,8 +356,9 @@ types, or static properties.
 
 Before writing any discovery, follow this procedure:
 
-1. **Read before write**: Read all existing discoveries under the target
-   `file::symbol`. If an existing discovery makes the same behavioral
+1. **Read before write**: Query the target `file::symbol` and search for the
+   specific claim, expanding candidates and following pages when needed.
+   Do not infer absence from a citation-ranked shortlist. If an existing discovery makes the same behavioral
    claim (even if worded differently) → update the existing one. If the
    new one extends an existing one → merge into a single richer entry.
    If they conflict → investigate the code, keep the correct one, mark

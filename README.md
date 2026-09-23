@@ -110,12 +110,20 @@ For example, use Viewer to find relevant knowledge or audit its structure:
 
 ```
 /shadow-frog-viewer --search "auth"
+/shadow-frog-viewer --symbol src/auth.py::login
 /shadow-frog-viewer --top src/auth.py
 /shadow-frog-viewer --check-invariants
 ```
 
 The [Viewer reference](skills/shadow-frog-viewer/SKILL.md) also covers summaries,
 recent discoveries, label filters, preferences, and interactive dream-lineage HTML.
+
+Knowledge retrieval is bounded and pageable, with IDs for expanding individual
+claims. A single local `citation_score` counts helper exposures, not proven
+usefulness; relevance and trust outrank popularity. Scores are updated safely
+across local Git worktrees without editing shadow Markdown or requiring a vector
+index. New claims start at zero. See the Viewer reference for retries, local
+storage, and the limits of this signal.
 
 ---
 

@@ -98,6 +98,14 @@ At a high level, we found that ShadowFrog performed strongly on knowledge retrie
 
 ## Limitations
 
+Citation scores are local counts of discovery content emitted by the viewer,
+not proof that an agent used it, that it improved an outcome, or that it is true.
+Raw file reads and failed ledger updates are not counted. Scores can be biased
+by prior ranking and repeated exposure; relevance, provenance, and verification
+remain more important. Bounded results may omit relevant knowledge, so agents
+must follow pagination and inspect preferences rather than treating a shortlist
+as exhaustive. Claim rewrites and renames may create fresh zero-score identities.
+
 ShadowFrog was developed for research and experimental purposes. Further testing and validation are needed before considering its application in commercial or real-world scenarios.
 
 ShadowFrog was designed and tested using the English language. Performance in other languages may vary and should be assessed by someone who is both an expert in the expected outputs and a native speaker of that language.

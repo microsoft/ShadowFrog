@@ -9,7 +9,17 @@ shadow knowledge bases for any codebase.
 
 ## Unreleased
 
+### Added
+- **Single-score knowledge retrieval (draft)** — derived discovery fingerprints,
+  zero-default local citation scores, and concurrent-safe SQLite bookkeeping
+  shared across Git worktrees. Bounded search/symbol views, stable pagination,
+  and individual expansion avoid loading entire large shadow sections.
+  Citation scores measure emitted content, not correctness or proven usefulness.
+
 ### Changed
+- Retrieval views now show IDs/scores and paginate by default. Preferences
+  remain separately accessible, trust and relevance precede popularity, and
+  hooks remain fail-open while surfacing citation warnings.
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed
   repeated guidance and examples in the core, Dream, Init, Meditate, Update,

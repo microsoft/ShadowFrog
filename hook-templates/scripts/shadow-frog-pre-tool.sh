@@ -188,6 +188,8 @@ if viewer:
         )
         if r.returncode == 0:
             sys.stdout.write(r.stdout.strip())
+            if r.stderr.strip():
+                sys.stdout.write("\n[ShadowFrog] Viewer reported a warning; rerun it directly for details. Citation updates may be unavailable.")
     except Exception:
         pass
 PYEOF

@@ -154,6 +154,24 @@ class TestPreToolHappyPath:
         assert hso["hookEventName"] == "PreToolUse"
         assert hso["additionalContext"] == data["additionalContext"]
 
+    def test_citation_failure_is_visible_but_never_denies_edit(self, coupon_demo, tmp_path):
+        _fix_state_json_for_test(coupon_demo)
+        ledger = coupon_demo / ".git/shadowfrog/citations.sqlite3"
+        ledger.parent.mkdir()
+        ledger.write_bytes(b"invalid sqlite")
+        dedup = tmp_path / "dedup"
+        dedup.mkdir()
+        result = run_hook(
+            {"tool_name": "edit", "tool_input": {"file_path": "cart.py"}},
+            cwd=coupon_demo, env_extra={"SHADOWFROG_TMP_DIR": str(dedup)},
+        )
+        assert result.returncode == 0
+        context = json.loads(result.stdout)["additionalContext"]
+        assert "Actionable discoveries" in context
+        assert "citation_score=?" in context
+        assert "Viewer reported a warning" in context
+        assert ledger.read_bytes() == b"invalid sqlite"
+
 
 @pytest.mark.slow
 @pytest.mark.integration
