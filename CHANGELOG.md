@@ -7,7 +7,7 @@ shadow knowledge bases for any codebase.
 
 ---
 
-## Unreleased
+## 2026-09-22
 
 ### Added
 - **Audience-aware Nap handoffs** — detailed planning briefs and concise
