@@ -139,6 +139,17 @@ def test_cursor_freezes_ids_not_scores(citations, tmp_path):
         store.load_page("0" * 32, "request", "catalog")
 
 
+def test_pagination_stores_query_hash_not_search_text(citations, tmp_path):
+    store = citations.CitationStore(tmp_path / "citations.sqlite3", ".shadow")
+    query = "distinctive search phrase about the code"
+    cursor = store.save_page(query, "catalog", ["d_" + "a" * 32])
+    with sqlite3.connect(store.path) as db:
+        stored = db.execute("SELECT request FROM pages").fetchone()[0]
+    assert stored != query and len(stored) == 64
+    assert store.load_page(cursor, query, "catalog") == ["d_" + "a" * 32]
+    assert query.encode() not in store.path.read_bytes()
+
+
 def test_expired_cursor_gives_restart_guidance(citations, tmp_path):
     store = citations.CitationStore(tmp_path / "citations.sqlite3", ".shadow")
     cursor = store.save_page("q", "c", ["d_" + "a" * 32])

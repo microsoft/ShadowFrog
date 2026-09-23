@@ -140,6 +140,7 @@ class CitationStore:
 
     def save_page(self, request, catalog, ids):
         token = uuid.uuid4().hex
+        request = hashlib.sha256(request.encode("utf-8")).hexdigest()
         with self._connection() as db, db:
             db.execute("DELETE FROM pages WHERE created < ?", (time.time() - PAGE_TTL,))
             db.execute(
@@ -149,6 +150,7 @@ class CitationStore:
         return token
 
     def load_page(self, token, request, catalog):
+        request = hashlib.sha256(request.encode("utf-8")).hexdigest()
         with self._connection() as db:
             row = db.execute(
                 "SELECT request, catalog, ids, created FROM pages WHERE token=? AND scope=?",
