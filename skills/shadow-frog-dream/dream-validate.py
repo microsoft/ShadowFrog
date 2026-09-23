@@ -245,7 +245,7 @@ def main():
             errors.append(
                 "manifest declares discoveries but report.md frontmatter "
                 "is missing `base_commit` — cannot verify shadow files were "
-                "updated. Add base_commit (full SHA emitted by dream-setup.sh)."
+                "updated. Add base_commit (full SHA emitted by dream-setup.py)."
             )
         else:
             base = bm_match.group(1)

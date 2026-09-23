@@ -9,6 +9,12 @@ shadow knowledge bases for any codebase.
 
 ## Unreleased
 
+### Added
+- **Cross-platform Dream setup** — `dream-setup.py` replaces the Bash entry
+  point with JSON output and a canonical native temporary root. Setup and
+  reconciliation share namespace resolution; pinned tooling includes the new
+  helpers, and cleanup receives the resolved root explicitly.
+
 ### Changed
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed

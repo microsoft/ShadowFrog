@@ -185,7 +185,7 @@ fi
 # Shape: $BASE/<ns>/dream-<slug>. We use `find` to keep this fast on large
 # bases. `-mindepth 2 -maxdepth 2` matches exactly that level.
 # `-mmin +N` requires modification time older than N minutes (avoids racing
-# with a fresh `dream-setup.sh` mid-creation).
+# with a fresh `dream-setup.py` mid-creation).
 removed=0
 kept=0
 refused=0

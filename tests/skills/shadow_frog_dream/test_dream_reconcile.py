@@ -642,6 +642,22 @@ def test_read_indexed_branches_parses_table(dream_reconcile, tmp_path):
     assert len(rows) == 3
 
 
+def test_read_indexed_branches_filters_namespace(dream_reconcile, tmp_path):
+    _write_index(
+        tmp_path,
+        INDEX_FIXTURE.replace(
+            "dream/p/20260103-000000Z-gamma",
+            "dream/other/20260103-000000Z-gamma",
+        ),
+    )
+
+    rows = dream_reconcile._read_indexed_branches(str(tmp_path), "p")
+
+    assert len(rows) == 2
+    assert all(branch.startswith("dream/p/") for branch, _, _ in rows)
+    assert all(parent == "main" for _, _, parent in rows)
+
+
 # ===========================================================================
 # verify_reconciliation — PREFIX FALSE-PASS regression
 # ===========================================================================
@@ -2247,6 +2263,68 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
 
 
 @pytest.mark.slow
+def test_cleanup_branches_keeps_branch_when_local_delete_fails(
+    dream_reconcile, tmp_git_repo, monkeypatch, capsys
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260420-050050Z-local-failure"
+    branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
+                               _default_manifest(dream_id))
+    _seed_dream_artifacts(tmp_git_repo, dream_id)
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    original_run = dream_reconcile.subprocess.run
+
+    def reject_local_delete(args, **kwargs):
+        if args == ["git", "branch", "-D", branch]:
+            return subprocess.CompletedProcess(args, 1, "", "branch is in use")
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(dream_reconcile.subprocess, "run", reject_local_delete)
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo),
+        [(branch, dream_id, _default_manifest(dream_id))],
+        "proj",
+        dry_run=False,
+    )
+
+    assert deleted == 0
+    assert kept == 1
+    assert f"Failed to delete local {branch}: branch is in use" in capsys.readouterr().out
+
+
+@pytest.mark.slow
+def test_cleanup_branches_keeps_manifest_outside_namespace(
+    dream_reconcile, tmp_git_repo, capsys
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260420-050075Z-outside"
+    branch = f"dream/other/{dream_id}"
+
+    deleted, kept = dream_reconcile.cleanup_branches(
+        str(tmp_git_repo),
+        [(branch, dream_id, _default_manifest(dream_id))],
+        "proj",
+        dry_run=True,
+    )
+
+    assert deleted == 0
+    assert kept == 1
+    assert f"KEEPING {branch} — outside namespace proj" in capsys.readouterr().out
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("child_in_batch", [False, True])
 def test_cleanup_keeps_coherent_child_and_its_broad_parent(
     dream_reconcile, tmp_git_repo, child_in_batch,
@@ -2406,6 +2484,37 @@ def test_retention_honors_repaired_index_over_historical_manifest(
     assert dream_reconcile.coherent_branch_refs(str(tmp_path), manifests) == {
         "dream/p/root", "dream/p/middle", "dream/p/child",
     }
+
+
+def test_namespace_cleanup_keeps_parent_of_another_namespaces_coherent_child(
+    dream_reconcile, tmp_path,
+):
+    parent = "dream/p/root"
+    child = "dream/other/child"
+    manifests = [
+        (parent, "root", {"parent_branch": "main"}),
+        (child, "child", {"mode": "coherent", "parent_branch": parent}),
+    ]
+    rows = [
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |",
+        "|----------|----------|---------|-------|--------|--------|------------|",
+    ]
+    for branch, dream_id, manifest in manifests:
+        _seed_dream_artifacts(tmp_path, dream_id)
+        (tmp_path / ".shadow" / "_dreams" / dream_id / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8",
+        )
+        rows.append(
+            f"| {dream_id} | feature design | useful | T | {branch} | "
+            f"{manifest['parent_branch']} | abc1234 |"
+        )
+    _write_index(tmp_path, "\n".join(rows) + "\n")
+    assert dream_reconcile._read_indexed_branches(str(tmp_path), "p") == [
+        (parent, "root", "main"),
+    ]
+    assert dream_reconcile.cleanup_branches(
+        str(tmp_path), [manifests[0]], "p", dry_run=True,
+    ) == (0, 1)
 
 
 @pytest.mark.parametrize(
@@ -2917,6 +3026,47 @@ def test_cli_namespace_from_dotenv_file(tmp_git_repo):
 
 @pytest.mark.slow
 @pytest.mark.integration
+def test_cli_namespace_strips_dotenv_quotes(tmp_git_repo):
+    """Setup and reconciliation must resolve quoted .env values identically."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    (tmp_git_repo / ".env").write_text(
+        'DREAM_NAMESPACE="fromdotenv"\n', encoding="utf-8"
+    )
+    full_env = _cli_env()
+    full_env.pop("DREAM_NAMESPACE", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
+        capture_output=True, text=True, env=full_env, encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Namespace: fromdotenv" in result.stdout
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize("task_info", ["[]", '"not an object"', '{"dream_namespace": 1}'])
+def test_cli_rejects_invalid_task_info_namespace(tmp_git_repo, task_info):
+    """Setup and reconciliation must reject invalid task configuration alike."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    (tmp_git_repo / "TASK_INFO.json").write_text(task_info, encoding="utf-8")
+    full_env = _cli_env()
+    full_env.pop("DREAM_NAMESPACE", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_git_repo), "--dry-run"],
+        capture_output=True, text=True, env=full_env, encoding="utf-8",
+    )
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.integration
 def test_cli_namespace_from_task_info_json(tmp_git_repo):
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
@@ -3053,6 +3203,54 @@ def test_cli_cleanup_branches_after_reconcile(tmp_git_repo):
     post = _git("ls-remote", "--heads", "origin", branch,
                 cwd=tmp_git_repo, env=env).stdout
     assert branch not in post
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+def test_cli_cleanup_branches_never_deletes_other_namespace(tmp_git_repo):
+    """Review 02: post-push cleanup is scoped to the requested namespace."""
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    inside_id = "20260420-065100Z-inside"
+    outside_id = "20260420-065200Z-outside"
+    inside_branch = make_dream_branch(
+        tmp_git_repo, env, "inside", inside_id, _default_manifest(inside_id)
+    )
+    outside_branch = make_dream_branch(
+        tmp_git_repo, env, "outside", outside_id, _default_manifest(outside_id)
+    )
+    _seed_dream_artifacts(tmp_git_repo, inside_id)
+    _seed_dream_artifacts(tmp_git_repo, outside_id)
+    _write_index(
+        tmp_git_repo,
+        "# Dream Experiments\n\n"
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {inside_id} | test | useful | Inside | {inside_branch} | main | deadbeef |\n"
+        f"| {outside_id} | test | useful | Outside | {outside_branch} | main | deadbeef |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), str(tmp_git_repo),
+            "--namespace", "inside", "--cleanup-branches",
+        ],
+        capture_output=True, text=True, env=_cli_env(), encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Deleted: 1, Kept: 0" in result.stdout
+    assert not _git(
+        "ls-remote", "--heads", "origin", inside_branch,
+        cwd=tmp_git_repo, env=env,
+    ).stdout.strip()
+    assert outside_branch in _git(
+        "ls-remote", "--heads", "origin", outside_branch,
+        cwd=tmp_git_repo, env=env,
+    ).stdout
 
 
 @pytest.mark.slow
@@ -3522,16 +3720,14 @@ def test_cleanup_branches_worktree_gc_skips_unparseable_dream_id(
 # ===========================================================================
 # Cross-deletion guard for slug-collision (S2 from 5-model review panel)
 # ===========================================================================
-# Worktree paths are slug-only (see dream-setup.sh:165), but dream_ids
+# Worktree paths are slug-only (see dream-setup.py), but dream_ids
 # include a timestamp. So two dreams with the same slug at different
 # times share a worktree path. If dream A is reconciled AFTER dream B has
 # reclaimed the shared path, A's GC must NOT delete B's live worktree.
 
 
 class TestRegisteredWorktreeBranch:
-    """Unit-level coverage of _registered_worktree_branch — the helper
-    that lets the GC distinguish 'our worktree' from 'someone else's
-    worktree at the same shared path'."""
+    """Coverage of registration states used by fail-closed worktree cleanup."""
 
     @pytest.mark.slow
     def test_returns_branch_for_registered_path(
@@ -3541,10 +3737,12 @@ class TestRegisteredWorktreeBranch:
         wt = tmp_path / "wt"
         _git("worktree", "add", "-q", "-b", "feature-x", str(wt),
              cwd=tmp_git_repo, env=env)
-        branch = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(wt)
         )
-        assert branch == "feature-x"
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "feature-x"
+        )
 
     @pytest.mark.slow
     def test_returns_none_for_unregistered_path(
@@ -3552,10 +3750,10 @@ class TestRegisteredWorktreeBranch:
     ):
         _seed_repo(tmp_git_repo)
         # A path that's not registered as a worktree at all.
-        branch = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(tmp_path / "nope")
         )
-        assert branch is None
+        assert registration == dream_reconcile.WorktreeRegistration("unregistered")
 
     @pytest.mark.slow
     def test_matches_through_symlink(
@@ -3569,10 +3767,100 @@ class TestRegisteredWorktreeBranch:
         _git("worktree", "add", "-q", "-b", "feature-y", str(real_wt),
              cwd=tmp_git_repo, env=env)
         make_symlink(link_wt, real_wt)
-        branch_via_link = dream_reconcile._registered_worktree_branch(
+        registration = dream_reconcile._registered_worktree_branch(
             str(tmp_git_repo), str(link_wt)
         )
-        assert branch_via_link == "feature-y"
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "feature-y"
+        )
+
+    @pytest.mark.slow
+    def test_returns_detached_for_detached_worktree(
+        self, dream_reconcile, tmp_git_repo, tmp_path
+    ):
+        env = _seed_repo(tmp_git_repo)
+        wt = tmp_path / "detached-wt"
+        _git("worktree", "add", "-q", "-b", "feature-detached", str(wt),
+             cwd=tmp_git_repo, env=env)
+        _git("checkout", "-q", "--detach", cwd=wt, env=env)
+
+        registration = dream_reconcile._registered_worktree_branch(
+            str(tmp_git_repo), str(wt)
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration("detached")
+
+    @pytest.mark.slow
+    def test_gc_preserves_detached_worktree(self, dream_reconcile, tmp_git_repo,
+                                            tmp_path, monkeypatch, capsys):
+        """Review 02: detached ownership must fail closed, not force-remove."""
+        env = _seed_repo(tmp_git_repo)
+        base = tmp_path / "wt-base"
+        worktree = base / "proj" / "dream-same"
+        worktree.parent.mkdir(parents=True)
+        branch = "dream/proj/20260420-110000Z-same"
+        _git("worktree", "add", "-q", "-b", branch, str(worktree),
+             cwd=tmp_git_repo, env=env)
+        _git("checkout", "-q", "--detach", cwd=worktree, env=env)
+        marker = worktree / "uncommitted-work.txt"
+        marker.write_text("preserve me\n", encoding="utf-8")
+        monkeypatch.setenv("DREAM_WORKTREE_BASE", str(base))
+
+        dream_reconcile._gc_worktree_after_merge(
+            str(tmp_git_repo),
+            "proj",
+            "20260420-100000Z-same",
+            "dream/proj/20260420-100000Z-same",
+        )
+
+        assert marker.read_text(encoding="utf-8") == "preserve me\n"
+        assert "detached ownership" in capsys.readouterr().out
+
+    def test_returns_indeterminate_when_git_query_fails(
+        self, dream_reconcile, tmp_git_repo, tmp_path, monkeypatch
+    ):
+        _seed_repo(tmp_git_repo)
+        original_run = dream_reconcile.subprocess.run
+
+        def failed_query(args, **kwargs):
+            if args == ["git", "worktree", "list", "--porcelain"]:
+                return subprocess.CompletedProcess(args, 1, "", "git failed")
+            return original_run(args, **kwargs)
+
+        monkeypatch.setattr(dream_reconcile.subprocess, "run", failed_query)
+        registration = dream_reconcile._registered_worktree_branch(
+            str(tmp_git_repo), str(tmp_path / "candidate")
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration("indeterminate")
+
+    def test_matches_case_insensitively_when_platform_requires_it(
+        self, dream_reconcile, monkeypatch
+    ):
+        result = subprocess.CompletedProcess(
+            ["git", "worktree", "list", "--porcelain"],
+            0,
+            "worktree C:\\Dreams\\Dream-Same\n"
+            "HEAD deadbeef\n"
+            "branch refs/heads/dream/proj/20260420-110000Z-same\n",
+            "",
+        )
+        monkeypatch.setattr(
+            dream_reconcile.subprocess, "run", lambda *args, **kwargs: result
+        )
+        monkeypatch.setattr(dream_reconcile.os.path, "abspath", lambda path: path)
+        monkeypatch.setattr(dream_reconcile.os.path, "realpath", lambda path: path)
+        monkeypatch.setattr(
+            dream_reconcile.os.path, "normcase", lambda path: path.lower()
+        )
+
+        registration = dream_reconcile._registered_worktree_branch(
+            "repo", "c:\\dreams\\dream-same"
+        )
+
+        assert registration == dream_reconcile.WorktreeRegistration(
+            "attached", "dream/proj/20260420-110000Z-same"
+        )
 
 
 @pytest.mark.slow
@@ -3613,7 +3901,7 @@ def test_cleanup_branches_does_not_clobber_concurrent_slug_collision(
     _git("commit", "-q", "-m", "reconcile A", cwd=tmp_git_repo, env=env)
     _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
 
-    # Dream B claims the shared path. (In production, dream-setup.sh's
+    # Dream B claims the shared path. (In production, dream-setup.py's
     # idempotent pre-clean would have already wiped any stale A worktree.)
     shared_path = base / "proj" / "dream-same"
     shared_path.parent.mkdir(parents=True)

@@ -83,6 +83,32 @@ def test_pin_from_each_installed_layout(tmp_git_repo, tmp_path, agent_dir):
     assert not Path(packet["skill_dir"]).is_relative_to(tmp_git_repo)
     result = invoke(packet, "coverage", "--help")
     assert result.returncode == 0, result.stderr
+    git(tmp_git_repo, "add", "-A")
+    git(tmp_git_repo, "commit", "-q", "-m", "installed tooling")
+    git(tmp_git_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    worktree_root = tmp_path / "worktrees"
+    env = os.environ.copy()
+    env.update(DREAM_GC_AUTO="0", DREAM_WORKTREE_BASE=str(worktree_root))
+    setup = subprocess.run(
+        [
+            packet["commands"]["validate"][0], packet["helper_paths"]["dream-setup.py"],
+            "--repo-root", str(tmp_git_repo), "--slug", "pinned-setup",
+            "--namespace", "pin-test", "--dry-run",
+        ],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert setup.returncode == 0, setup.stderr
+    context = json.loads(setup.stdout)
+    assert context["dream_ns"] == "pin-test"
+    assert Path(context["worktree_root"]) == worktree_root.resolve()
+    result = invoke(
+        packet, "reconcile", "--dry-run", "--namespace", context["dream_ns"],
+        "--worktree-base", context["worktree_root"], cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Namespace: pin-test" in result.stdout
+    for helper in ("_dream_namespace.py", "_worktree_paths.py"):
+        assert Path(packet["helper_paths"][helper]).is_file()
 
 
 def test_pin_refuses_existing_or_in_repository_output(tmp_git_repo, tmp_path):

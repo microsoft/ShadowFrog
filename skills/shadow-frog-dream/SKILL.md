@@ -15,7 +15,7 @@ scripts:
   - dream-coverage.py
   - dream-validate.py
   - dream-reconcile.py
-  - dream-setup.sh
+  - dream-setup.py
   - dream-cleanup.sh
   - dream-gc.sh
 ---
@@ -94,24 +94,27 @@ the dream branch, pushed to the remote, then read back by the reconciler via
 `git show origin/<branch> .shadow/...`. If `.shadow/` is gitignored (the
 "local only" option in `shadow-frog-init`), `git add -A` silently skips those
 files, nothing reaches the remote, and the reconciler finds no manifest —
-**every discovery is lost without warning**. `dream-setup.sh` runs
-`git check-ignore .shadow` up front and refuses to start if it's ignored.
+**every discovery is lost without warning**. `dream-setup.py` runs
+`git check-ignore` on a new `.shadow/_dreams/` child path up front and refuses
+to start if it's ignored.
 Use `shadow-frog-update` instead for local-only shadows.
 
 ### Path Isolation
 
 ```
-WORKTREE_BASE = /tmp/shadowfrog-dreams/<DREAM_NS>/
+WORKTREE_BASE = <system-temp>/shadowfrog-dreams/<DREAM_NS>/
 WORKTREE_DIR  = $WORKTREE_BASE/dream-<SLUG>
 ```
 
-- Worktrees are ALWAYS in `/tmp/shadowfrog-dreams/<DREAM_NS>/`, NEVER in
-  the project directory. This prevents conflicts between parallel agents
-  and keeps the main repo clean.
+- Worktrees are ALWAYS in the system temp directory under
+  `shadowfrog-dreams/<DREAM_NS>/`, NEVER in the project directory. This
+  prevents conflicts between parallel agents and keeps the main repo clean.
 - `DREAM_NS` (namespace) isolates branches per task/instance. Resolved
   from: `DREAM_NAMESPACE` env → `TASK_INFO.json` → `.env` → repo basename.
-- Override only with `DREAM_WORKTREE_BASE` env var if `/tmp` is too small.
-- `dream-setup.sh` computes and enforces all paths. Use it.
+- Override only with `DREAM_WORKTREE_BASE` env var if the system temp volume is
+  too small. Relative overrides are resolved to an absolute path before setup
+  emits the lifecycle context.
+- `dream-setup.py` computes and enforces all paths. Use it.
 
 ### Branch Naming
 
@@ -223,8 +226,9 @@ The packet contains:
 - `mode`, `repo_root`, and the absolute pinned `skill_dir` (`SKILL_DIR` below).
 
 Execute command arrays as arguments, not shell code. Append only the operation's
-arguments: `[DREAM_ID, WORKTREE_DIR]` for validation, `["--namespace", DREAM_NS]`
-for reconciliation, and optionally `["--cleanup-branches"]` after committing and
+arguments: `[DREAM_ID, WORKTREE_DIR]` for validation,
+`["--namespace", DREAM_NS, "--worktree-base", WORKTREE_ROOT]` for reconciliation,
+and optionally `["--cleanup-branches"]` after committing and
 pushing reconciliation. The dispatcher supplies the pinned validation mode and
 rejects mode overrides. It checks the manifest digest and all captured file
 hashes before executing the helper, preserving its output and exit status.
@@ -243,18 +247,23 @@ Re-pin on a different host rather than reusing host-specific interpreter paths.
 | Script | Purpose | When to use |
 |--------|---------|-------------|
 | `dream-tools.py` | Pins current tooling and dispatches checked Python helpers | **Before worktrees** and for every validation/reconciliation/coverage call |
-| `dream-setup.sh` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
+| `dream-setup.py` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
 | `dream-validate.py` | Validates artifacts before push (hard gate) | **Phase 5** — before `git push` |
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
 | `dream-coverage.py` | Computes exploration coverage map | **Phase 2** — task planning for diversity |
 | `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
-| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.sh` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs |
+| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs. On Windows, automatic sweeping remains disabled until `dream-gc.py` replaces the POSIX-only helper. |
 
-The shared `shadow-frog/_coherence.py` is captured beside the Dream tools.
+The shared `shadow-frog/_coherence.py`, `_dream_namespace.py`, and
+`_worktree_paths.py` are captured with the Dream tools.
 Never rediscover these Python helpers relative to `WORKTREE_DIR`. All scripts
-support `--help`. Setup/cleanup/GC still have their current lifecycle interfaces;
-the tool snapshot does not port remaining shell scripts or bypass their safety
-checks. Use a native Python port when it is present in the installed bundle.
+support `--help`. Setup returns JSON only. Consume it through the host's native
+JSON tools, not shell exports. The remaining cleanup/GC shell scripts keep their
+safety gates; use their Python ports when available.
+
+In shell recipes, `PYTHON_BIN` is the captured interpreter (the first element
+of `commands.validate`) and `SKILL_DIR` is the pinned `skill_dir`. Pass these
+values explicitly; shell variables do not persist across tool calls.
 
 ## Phase 1: Preflight and Assess
 
@@ -264,17 +273,15 @@ checks. Use a native Python port when it is present in the installed bundle.
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-# 0. Auto-detect DREAM_NAMESPACE
-if [ -z "${DREAM_NAMESPACE:-}" ]; then
-    if [ -f TASK_INFO.json ]; then
-        DREAM_NAMESPACE=$(python3 -c "import json; print(json.load(open('TASK_INFO.json')).get('dream_namespace',''))" 2>/dev/null)
-        export DREAM_NAMESPACE
-    elif [ -f .env ]; then
-        DREAM_NAMESPACE=$(grep '^DREAM_NAMESPACE=' .env | head -1 | cut -d'=' -f2-)
-        export DREAM_NAMESPACE
-    fi
-fi
-[ -n "${DREAM_NAMESPACE:-}" ] && echo "Dream namespace: $DREAM_NAMESPACE"
+# 0. Resolve DREAM_NAMESPACE with the same parser setup/reconciliation use.
+DREAM_NAMESPACE="$("$PYTHON_BIN" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from _dream_namespace import resolve_dream_namespace
+print(resolve_dream_namespace(sys.argv[2]))
+' "$SKILL_DIR" "$REPO_ROOT")" || exit 1
+export DREAM_NAMESPACE
+echo "Dream namespace: $DREAM_NAMESPACE"
 
 # 1. Detect default branch
 DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
@@ -542,26 +549,27 @@ and run, with results recorded.
 
 ### Experiment Setup
 
-Use `dream-setup.sh` to create worktrees (handles all path computation,
+Use `dream-setup.py` to create worktrees (handles all path computation,
 namespace resolution, worktree creation, and validation):
 
-Use the absolute setup helper in the pinned packet. For the current shell
-entry point, request JSON rather than shell exports:
+Use the absolute setup helper from `helper_paths["dream-setup.py"]` with the
+captured Python interpreter. The equivalent command shape is:
 
 ```text
-bash PINNED_SKILL/dream-setup.sh --slug t01-csv-fuzzer --repo-root REPO_ROOT --print-json
-bash PINNED_SKILL/dream-setup.sh --slug t03-extend --repo-root REPO_ROOT --base-branch dream/<ns>/<prior-id> --print-json
+python PINNED_SKILL/dream-setup.py --slug t01-csv-fuzzer --repo-root REPO_ROOT
+python PINNED_SKILL/dream-setup.py --slug t03-extend --repo-root REPO_ROOT --base-branch dream/<ns>/<prior-id>
 ```
 
-Use the Python setup port when available. Keep the returned `repo_root`,
+Check the exit code before consuming JSON. Keep the returned `repo_root`,
 `default_branch`, `dream_ns`, `dream_id`, `branch_name`, `parent_branch`,
-`worktree_dir`, `worktree_base`, `base_commit`, `run_prefix`, and `slug` in the
-agent's task state. Uppercase names in the remaining recipes refer to these
-values, not to shell variables that persist across tool calls.
+`worktree_dir`, `worktree_root`, `worktree_base`, `base_commit`, `run_prefix`,
+and `slug` in the agent's task state. Uppercase names in later recipes refer
+to these values. Forward the canonical `worktree_root` to reconciliation
+as `--worktree-base` and to shell cleanup/GC as `DREAM_WORKTREE_BASE`.
 
-**If `dream-setup.sh` fails or is not found:** Apply the Script Failure
+**If `dream-setup.py` fails or is not found:** Apply the Script Failure
 Recovery rule (diagnose the pinned script and retry safely). Common causes:
-missing git remote, branch already exists, `/tmp` permissions.
+missing git remote, branch already exists, or temp-directory permissions.
 
 Do not infer the current tool location from the experimental worktree. The
 packet and its outside-repository snapshot remain authoritative, even if the
@@ -857,13 +865,14 @@ the orchestrator discovers pushed branches from the remote.
 ### Worktree Cleanup
 
 ```bash
-bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
+DREAM_WORKTREE_BASE="$WORKTREE_ROOT" \
+    bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
 ```
 
 `dream-cleanup.sh` does the equivalent of `git worktree remove --force`
 followed by `git worktree prune`, with a safety-gated `rm -rf` fallback if
 worktree removal silently fails. The fallback only accepts paths matching
-`${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
+`<worktree_root>/<ns>/dream-<slug>`
 exactly; any other path is refused.
 
 Remove as you go. If push failed, keep the worktree.
@@ -911,7 +920,7 @@ rich area and the second half keeps digging there instead of spreading.
    snapshot; subagents never fetch independently.
 7. Manifest anchors use bare symbol names (reconciler normalizes)
 8. Thread `RUN_PREFIX` into every subagent prompt
-9. Include `WORKTREE_BASE` and `DREAM_NS` in every subagent prompt
+9. Include `WORKTREE_ROOT`, `WORKTREE_BASE`, and `DREAM_NS` in every subagent prompt
 10. Dream artifacts MUST use subdirectory format — flat files are a
     completion criteria violation (see Critical Invariants → Artifact Format)
 11. Thread the selected mode and pinned tool packet into every prompt. For
@@ -938,9 +947,9 @@ git fetch origin --prune
 
 ```
 
-Then execute `commands.reconcile + ["--namespace", DREAM_NS]`. It already names
-the original repository and the pinned helper, so checking out the default
-branch cannot downgrade the tooling.
+Then execute `commands.reconcile + ["--namespace", DREAM_NS, "--worktree-base",
+WORKTREE_ROOT]`. It already names the original repository and the pinned helper,
+so checking out the default branch cannot downgrade the tooling.
 
 On an error, diagnose the pinned source and repair the reported artifacts or
 preconditions before retrying. Do not fall back to a worktree-local reconciler
@@ -984,7 +993,7 @@ There is **one automatic pruning path in either mode**. After reconciliation
 is committed and pushed, execute:
 
 ```text
-commands.reconcile + ["--namespace", DREAM_NS, "--cleanup-branches"]
+commands.reconcile + ["--namespace", DREAM_NS, "--worktree-base", WORKTREE_ROOT, "--cleanup-branches"]
 ```
 
 This is argument-array notation, not shell code. The command verifies persisted
@@ -1025,7 +1034,7 @@ exited). Only run this once the agent has asserted no more dreams are
 starting **in this namespace**:
 
 ```bash
-bash "$SKILL_DIR/dream-gc.sh" \
+DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
     --task-complete --namespace "$DREAM_NS" \
     --repo-root "$REPO_ROOT" --min-age-min 0
 ```
@@ -1074,14 +1083,14 @@ as well. There is no automatic expiry for coherent task baselines.
 ### Worktree Pruning
 
 Dream worktrees live OUTSIDE the repo at
-`${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>/`. There
+`${DREAM_WORKTREE_BASE:-<system-temp>/shadowfrog-dreams}/<ns>/dream-<slug>/`. There
 are four places they get cleaned up:
 
 1. **`dream-cleanup.sh`** — called by the agent after each `git push` (see
    "Worktree Cleanup" earlier in this skill). Removes ONE worktree.
 2. **`dream-reconcile.py --cleanup-branches`** — after deleting a merged
    branch, also `rm -rf`s its worktree directory. No extra command needed.
-3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.sh` invokes this
+3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.py` invokes this
    sweeper at the start of each new dream, throttled by a per-namespace
    `.last-gc` tombstone to run at most once per `DREAM_GC_INTERVAL_MIN`
    minutes (default 60). Catches orphaned worktrees.
@@ -1113,7 +1122,7 @@ are four places they get cleaned up:
 
    ```bash
    # At the end of the dream loop, before the final summary:
-   bash "$SKILL_DIR/dream-gc.sh" \
+   DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
        --task-complete \
        --namespace "$DREAM_NS" \
        --repo-root "$REPO_ROOT" \
