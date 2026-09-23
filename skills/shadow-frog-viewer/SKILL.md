@@ -81,14 +81,8 @@ python3 .github/skills/shadow-frog-viewer/dream-lineage.py -o my-lineage.html
 python3 .github/skills/shadow-frog-viewer/dream-lineage.py --shadow-dir /path/to/.shadow
 ```
 
-The HTML file has three tabs:
-- **🌳 Chains** — compounding chains as tree cards, sorted by depth
-- **📋 Fresh** — non-compounding experiments grouped by category
-- **🗂️ Full Tree** — compact view of the entire lineage in one tree
-
-Each node shows the experiment's category icon, name, verdict, test count,
-and discovery count. Click "▶ Show report" to expand the full experiment
-report inline.
+The HTML groups compounding chains and fresh experiments, includes a full
+lineage tree, and supports expanding each experiment's report.
 
 ## Fallback: Shell One-Liners
 

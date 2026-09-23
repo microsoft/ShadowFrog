@@ -31,8 +31,7 @@ Not every file needs scanning. To reduce cost:
 - **Always scan files with 5+ discoveries** — highest duplicate risk
 
 For the first meditate after a large dream run, most files will need
-scanning. For incremental meditation after small updates, this can
-reduce scope by 80%+.
+scanning.
 
 ### Per-File Scan
 

@@ -369,9 +369,6 @@ dream reports** in `_dreams/`.
 
 ### Build Exploration Coverage Map
 
-File-level coverage breadth is the strongest predictor of dream success
-(r²=0.63 vs bugs found), NOT dream count (r²=0.04).
-
 Run the packet's `commands.coverage`. It already contains the pinned
 interpreter/tool version and the original repository path.
 
@@ -391,8 +388,7 @@ For several, append repeated `--scope` argument pairs.
 In broad mode, when using `--scope`, the per-category task quotas (Phase 2) still apply
 but are interpreted against the scoped subset. Don't use scoped
 exploration as the default — pick it only when there's a concrete reason
-to concentrate effort. Unscoped diversity remains the strongest
-predictor of useful discoveries.
+to concentrate effort.
 
 ### Review Past Dreams (Required)
 
@@ -865,11 +861,9 @@ bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
 ```
 
 `dream-cleanup.sh` does the equivalent of `git worktree remove --force`
-followed by `git worktree prune`, but ALSO falls back to a safety-gated
-`rm -rf` if `git worktree remove` silently fails — the failure mode that
-leaked tens of dream worktrees per AFK session under the previous inline
-snippet (see bug-worktree-leak.md). The rm fallback ONLY fires for paths
-that match `${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
+followed by `git worktree prune`, with a safety-gated `rm -rf` fallback if
+worktree removal silently fails. The fallback only accepts paths matching
+`${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
 exactly; any other path is refused.
 
 Remove as you go. If push failed, keep the worktree.
@@ -1090,9 +1084,7 @@ are four places they get cleaned up:
 3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.sh` invokes this
    sweeper at the start of each new dream, throttled by a per-namespace
    `.last-gc` tombstone to run at most once per `DREAM_GC_INTERVAL_MIN`
-   minutes (default 60). Catches orphans from crashed dreams, machine
-   reboots, OOM-killed agents — the long tail of cleanup failures that
-   accumulated GBs of leaked worktrees on long-running fleets.
+   minutes (default 60). Catches orphaned worktrees.
 
    Env knobs (all optional, sensible defaults):
      - `DREAM_GC_AUTO=0` — disable the auto-trigger entirely
