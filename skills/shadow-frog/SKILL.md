@@ -8,7 +8,8 @@ description: >-
   debugging, or investigating code. When the user shares important
   context, write it to the shadow immediately. Invoke shadow-frog-init
   to create it, shadow-frog-update to refresh it, shadow-frog-dream
-  for autonomous exploration, shadow-frog-meditate for shadow hygiene,
+  for autonomous experiments, shadow-frog-nap for lightweight feature-task
+  ideation, shadow-frog-meditate for shadow hygiene,
   or shadow-frog-viewer to browse it.
 ---
 
@@ -23,30 +24,20 @@ to that code location.
 **Every time you work on code in a repo with `.shadow/`:**
 
 1. **Read `_prefs.md` first** — it contains project-wide conventions,
-   user preferences, and things the user explicitly wants to avoid.
-   Violating a preference wastes the user's time.
-2. **Read `_cross/` discoveries** — these are the highest-value findings,
-   spanning multiple files. List `_cross/` and read any files whose titles
-   relate to the area you're working in. Cross-cutting discoveries reveal
-   hidden contracts, interaction bugs, and design patterns that per-file
-   shadows alone cannot capture.
-3. **Check `_dreams/` for experiment results** — `_dreams/_index.md` lists
-   autonomous exploration experiments. Read reports relevant to your task —
-   they contain verified bug analyses, attempted fixes, and architectural
-   insights. Dreams may contain knowledge not yet distilled into per-file
-   shadows, so always check when investigating a bug or unfamiliar area.
-4. **Before editing any file**: read its shadow (`.shadow/<path>.md`),
-   check `_cross/` for cross-cutting discoveries about it, and apply
-   what you learn. The shadow contains known bugs, edge cases, and
-   implicit contracts discovered by previous sessions.
-   **Note**: `_index.md` discovery counts may be stale — always check
-   per-file shadows and `_cross/` directly rather than relying solely on
-   the index summary.
+   user preferences, and things to avoid.
+2. **Read relevant `_cross/` discoveries** — list `_cross/` and read entries
+   whose titles relate to the current area, including cross-file contracts
+   and interactions.
+3. **Check `_dreams/_index.md`** and read relevant experiment reports,
+   especially when investigating bugs or unfamiliar code. They may contain
+   findings not yet distilled into per-file shadows.
+4. **Before editing a file**, read its shadow (`.shadow/<path>.md`) and
+   relevant `_cross/` entries, then apply the discoveries.
+   `_index.md` counts may be stale; inspect the actual shadows and `_cross/`.
 5. **When the user explains something about code** (gotcha, design intent,
    warning, history): write a `source: user` discovery to the shadow
-   immediately. Do not ask where to put it — resolve the `file::symbol`
-   anchor yourself by searching `_index.md`, shadow files, and session
-   context (current file, recent edits).
+   immediately. Resolve its `file::symbol` anchor from `_index.md`, shadows,
+   and session context; do not ask where to put it.
 6. **When the user states a preference or convention** (not tied to any
    specific file): write it to `_prefs.md` immediately.
 7. **After code changes**: run `/shadow-frog-update`
@@ -364,10 +355,61 @@ before creating a new entry. Only create `_cross/<slug>.md` for
 discoveries spanning **3+ files** — otherwise use per-file entries with
 `Also involves:` references.
 
+## Dream and Nap Parent Connections
+
+Both skills accept `mode=broad` (default) or `mode=coherent`. Broad mode
+explores distinct opportunities. Coherent mode regularizes **parent-child
+edges**, not an entire tree: every child has its own `goal`, and siblings
+are encouraged to pursue diverse worthwhile directions. There is no fixed
+tree-wide goal, same-feature requirement, or sibling file-disjointness rule.
+
+A child explains which parent capability, observation, limitation, or decision
+motivates it. Extending, integrating, challenging, replacing, simplifying, and
+offering an alternative are all valid. Technical independence is not itself
+disqualifying; a substantive connection matters more than shared vocabulary.
+Challenges are optional, not a quota.
+
+Use this `parent_connection` object in coherent child dream manifests and nap
+nodes (the parent identifier is stored separately, not duplicated here):
+
+```json
+{
+  "relation": "replace",
+  "basis": "The parent's offset checkpoint can replay output after a crash.",
+  "delta": "Use idempotent chunk commits while retaining streaming delivery.",
+  "preserves": ["Bounded memory", "The user-facing resume contract"],
+  "supersedes": ["Offset-only checkpoint design"]
+}
+```
+
+`relation` is `extend`, `integrate`, `challenge`, `replace`, `simplify`, or
+`alternative`. `basis` and `delta` are nonempty text. `preserves` and
+`supersedes` are lists of nonempty strings; empty lists are allowed except
+that `replace` must name at least one superseded decision. Roots use null
+or omit the connection. Broad mode does not require a connection, but an
+explicit connection must still follow this format.
+
+The shared Python helper `_coherence.py` checks structure only. The agent
+must judge actual relevance, evidence, and task quality. Superseding a design
+does not retroactively refute a historical fact or authorize rewriting user
+requirements. Keep historical reports; use meditate to resolve contradictory
+shadow claims rather than inventing unsupported dream-manifest operations.
+
+Nap parents are ideas/evidence, not implemented APIs. Task exports must pin a
+real code baseline separately from idea lineage. Export a root-to-leaf path
+for a trajectory, not stacked siblings; a final task uses its final active
+requirements rather than all superseded ancestor designs.
+
+Nap task export requires current acceptance from a strong independent judge;
+see `/shadow-frog-nap` for the record and review workflow. The host runs the
+judge; the helper checks approval bindings, not reviewer authenticity or
+semantic truth. Approval is planning confidence, not execution proof.
+
 ## Related Skills
 
 - `/shadow-frog-init` — create `.shadow/` for a new repo
 - `/shadow-frog-update` — refresh shadows after changes or from conversation
 - `/shadow-frog-dream` — autonomous exploration and experimentation while user is AFK
+- `/shadow-frog-nap` — implementation-free, source-grounded feature-task ideation within a work budget
 - `/shadow-frog-meditate` — deduplicate, merge, and resolve conflicting discoveries
 - `/shadow-frog-viewer` — browse and query the shadow (overview, search, preferences, recent)

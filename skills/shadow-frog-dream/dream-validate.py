@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate dream artifacts before commit.
 
-Usage: python3 dream-validate.py DREAM_ID [WORKTREE_DIR]
+Usage: python dream-validate.py DREAM_ID [WORKTREE_DIR] [--mode broad|coherent]
        python3 dream-validate.py --help
 
 Checks:
@@ -20,16 +20,28 @@ Checks:
      human PR reviewers can read the discoveries in context)
  11. Non-blocking label-triage warnings (bug/security/performance signal
      phrases in discovery text without matching labels)
+ 12. Requested mode matches the manifest; coherent parent connections and
+     report metadata are structurally complete (not a semantic coherence score)
 
 Exits 0 on success, 1 on ANY validation failure.
 This is the hard gate — agents MUST NOT commit/push if this fails.
 """
 
+import argparse
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shadow-frog"))
+try:
+    from _coherence import MODES, validate_connection
+except ImportError as exc:
+    raise SystemExit("ERROR: Missing shared shadow-frog/_coherence.py; reinstall the full skill set") from exc
+finally:
+    sys.path.pop(0)
 
 
 def main():
@@ -42,8 +54,13 @@ def main():
         print(__doc__)
         sys.exit(0 if args else 1)
 
-    dream_id = args[0]
-    worktree = args[1] if len(args) > 1 else os.getcwd()
+    parser = argparse.ArgumentParser(description="Validate dream artifacts before push.")
+    parser.add_argument("dream_id")
+    parser.add_argument("worktree", nargs="?", default=os.getcwd())
+    parser.add_argument("--mode", choices=MODES, default="broad")
+    options = parser.parse_args(args)
+    dream_id = options.dream_id
+    worktree = options.worktree
 
     errors = []
     warnings = []
@@ -125,6 +142,34 @@ def main():
         for e in errors:
             print(f"ERROR: {e}")
         sys.exit(1)
+
+    if not isinstance(manifest, dict):
+        print("ERROR: manifest.json must be an object")
+        sys.exit(1)
+
+    mode = manifest.get("mode", "broad")
+    if mode != options.mode:
+        errors.append(f"Requested mode '{options.mode}' does not match manifest mode '{mode}'")
+    parent_branch = manifest.get("parent_branch")
+    dream_parent = (
+        parent_branch if isinstance(parent_branch, str) and parent_branch.startswith("dream/")
+        else None
+    )
+    errors.extend(validate_connection(
+        mode, manifest.get("goal"), dream_parent, manifest.get("parent_connection"),
+    ))
+    if mode == "coherent":
+        if not isinstance(parent_branch, str) or not parent_branch.strip():
+            errors.append("Coherent parent_branch must be a nonempty branch name")
+        if parent_branch == manifest.get("branch"):
+            errors.append("Coherent dream cannot be its own parent_branch")
+        frontmatter = m.group(1) if m else ""
+        for field, expected in (("mode", "coherent"), ("parent_branch", parent_branch)):
+            match = re.search(
+                rf'^{field}:\s*["\']?(.+?)["\']?\s*$', frontmatter, re.M,
+            )
+            if not match or match.group(1) != expected:
+                errors.append(f"Coherent report {field} must match manifest {field}")
 
     manifest_did = manifest.get('dream_id', '')
     if manifest_did != dream_id:

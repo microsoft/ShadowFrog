@@ -8,8 +8,10 @@ description: >-
   to persistent dream branches, and push to the configured remote. Dreams compound
   across sessions: future experiments branch from prior dream branches,
   building a tree of progressively deeper work. Invoke when the user is
-  AFK or asks for a dream run.
+  AFK or asks for a dream run. Use mode=coherent to ground each child in
+  its parent while encouraging diverse siblings, challenges, and alternatives.
 scripts:
+  - dream-tools.py
   - dream-coverage.py
   - dream-validate.py
   - dream-reconcile.py
@@ -24,6 +26,61 @@ Autonomous experimentation while the user is away. Every task is an
 **experiment** — implement real code in a worktree, run it, persist as a
 **named git branch** pushed to a remote the user can write to. Dream's unique value is
 implementation experience that **compounds across sessions**.
+
+## Modes: Broad or Coherent
+
+Accept `mode=broad` (default) or `mode=coherent`, for example
+`/shadow-frog-dream mode=coherent`. Resolve the requested mode before planning.
+Carry it into every task/subagent prompt, manifest, report, and validation
+invocation. Use `/shadow-frog-nap` instead when the desired deliverable is a
+lightweight feature-task brief rather than an executed experiment.
+
+**Broad mode** keeps the category, coverage, and breadth rules below.
+
+**Coherent mode regularizes parent-child edges, not siblings or a whole tree.**
+Each child has its own `goal` and identifies a parent capability, finding,
+limitation, or design decision motivating its work. It can extend, integrate,
+challenge, replace, simplify, or offer an alternative. The shared
+`parent_connection` format is defined in `/shadow-frog`.
+
+- Ten children of one parent may pursue ten different worthwhile directions.
+  Sibling summaries help avoid duplicates; they do not impose a common goal,
+  file-disjointness requirement, or fixed diversity quota.
+- Technical independence is not an automatic rejection. A justified alternative
+  can be coherent even without calling the parent's modules. Shared keywords,
+  a parent ID, or merely touching the same file are not enough.
+- A challenge needs a reason or evidence; do not manufacture flaws to lengthen
+  a chain. Preserve unchanged user requirements and name superseded decisions.
+- There is no fixed tree-wide feature objective. Direction can evolve through
+  substantive local transitions. Stop a path when no useful continuation exists.
+- Descendants wait for their actual parent implementation. Siblings may run in
+  parallel in separate worktrees, including on the same files. Refresh the
+  selected parent branch/tip after each accepted step rather than relying on
+  the session-start branch snapshot for newly created parents.
+
+**Precedence:** in coherent mode, skip category minimums, uncovered-file quotas,
+saturation-driven parent rejection, unique-file/directory checks, mid-session
+breadth replanning, disjoint-file assignments, and the "breadth over depth"
+preference below. Follow the user's total work budget; absent one, use 12
+experiments as a ceiling, not a quota. All execution, artifact, reconciliation,
+and worktree safety requirements still apply.
+
+Before launching each child, record its parent branch and resolved commit,
+own goal, and intended connection. Give it the parent's report, manifest,
+relevant source/evidence, and short sibling summaries. Do not claim sibling
+features are inherited code. Seeds from the base branch have no parent
+connection; importing a prior dream uses that dream's actual branch.
+
+**Completion review:** explain what the parent made possible or revealed to be
+inadequate, the child's concrete delta, and why the result is useful. For a
+replacement, compare the old/new behavior against the relevant constraints.
+Structural validation cannot judge semantic coherence.
+
+Coherent branches and their canonical index ancestors are retained by the
+pinned reconciler for continued exploration and reproducible task baselines.
+Every mode uses that same guarded pruning path. Explicit later curation may
+remove branches only after checking references and preserving required commits.
+Worktrees can still be cleaned up normally after successful pushes.
 
 ## Critical Invariants
 
@@ -78,9 +135,11 @@ NEVER flat files (`_dreams/<DREAM_ID>.md`). Flat files break the pipeline.
 
 ### RUN_PREFIX
 
-All python/pytest commands MUST use the `RUN_PREFIX` resolved during
-preflight. When `RUN_PREFIX="uv run"`, use `$RUN_PREFIX python3 ...`.
-Bare `python3` or `pytest` without prefix is a violation when non-empty.
+Repository code and tests MUST use the `RUN_PREFIX` resolved during preflight.
+When `RUN_PREFIX="uv run"`, use it for the repository's Python/pytest commands.
+ShadowFrog's standard-library helpers instead use the interpreter and absolute
+command arguments captured by `dream-tools.py`; their tooling version must not
+come from the historical experiment checkout.
 
 ### Reconciliation is Mandatory
 
@@ -90,7 +149,7 @@ reconciling — losing all discoveries.
 
 **Two modes:**
 - **Parallel mode (default):** Launch a batch of 3-4 sub-agents → wait
-  for all to push → run `dream-reconcile.py "$REPO_ROOT"` ONCE at the end
+  for all to push → run the pinned `commands.reconcile` ONCE at the end
   of the batch. The reconciler auto-discovers every un-reconciled dream
   branch in the namespace — you do NOT pass branch names. One call merges
   every pushed branch.
@@ -104,11 +163,14 @@ each batch or each individual dream.
 
 ### Script Failure Recovery
 
-All helper scripts (`dream-setup.py`, `dream-reconcile.py`,
-`dream-validate.py`) are **self-documenting**. If a script fails or is
-unavailable: **read the script source**, understand what it does, and adapt
-its logic manually for your situation. Never skip steps just because a
-script errored — the steps still need to happen.
+The pinned helpers are self-documenting. Diagnose errors by reading their
+current sources, fix the reported prerequisite or artifact, and retry the same
+checked command. Never substitute worktree-local helpers, downgrade the mode,
+skip validation, or imitate branch deletion manually.
+
+If the tooling snapshot is missing or changed, stop. Restore or pin a fresh
+complete bundle from the current installation in the controller checkout, not
+from a historical dream. Do not edit a snapshot to make its hash checks pass.
 
 ```
 Pushable remote
@@ -135,17 +197,56 @@ dream run; the user must configure one first.
 
 ## Helper Scripts
 
-This skill bundles 6 helper scripts. Find them in the skill directory:
+This skill bundles 7 helper scripts. **Pin current tooling before creating or
+entering an experiment worktree, or switching the controller's code branch.**
+Historical branches can contain older helpers that silently ignore new flags.
 
-```bash
-SKILL_DIR=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -d "$DIR" ] && SKILL_DIR="$DIR" && break
-done
+Locate `dream-tools.py` beside this currently loaded skill in the controller's
+`.github/skills/shadow-frog-dream/` or `.claude/skills/shadow-frog-dream/`.
+Choose a new directory in the host's run/session workspace, **outside both the
+target repository and the skill-source repository**:
+
+```text
+python CURRENT_SKILL/dream-tools.py pin --repo-root REPO_ROOT --output EXTERNAL_RUN_TOOLS --mode coherent
 ```
+
+Use `--mode broad` for a broad run. The command copies the current Dream and
+core helpers/instructions, atomically writes `tooling.json` after copying, and
+prints a JSON control packet. Save the packet in the external run workspace
+and pass it unchanged to every child. This is host-local tooling, not a shadow
+discovery or task artifact; never commit it into the target repository.
+
+The packet contains:
+- `commands.validate`, `commands.reconcile`, `commands.coverage`: absolute
+  argument arrays, including the captured interpreter, snapshot runner, and
+  manifest digest. Reconcile/coverage already include `REPO_ROOT`.
+- `helper_paths`: absolute paths to the bundled lifecycle scripts/modules.
+- `instructions`: current core/Dream skill copies children must use for the
+  workflow, rather than the old copies in their code worktrees.
+- `mode`, `repo_root`, and the absolute pinned `skill_dir` (`SKILL_DIR` below).
+
+Execute command arrays as arguments, not shell code. Append only the operation's
+arguments: `[DREAM_ID, WORKTREE_DIR]` for validation,
+`["--namespace", DREAM_NS, "--worktree-base", WORKTREE_ROOT]` for reconciliation,
+and optionally `["--cleanup-branches"]` after committing and
+pushing reconciliation. The dispatcher supplies the pinned validation mode and
+rejects mode overrides. It checks the manifest digest and all captured file
+hashes before executing the helper, preserving its output and exit status.
+
+For example, the equivalent native command shape for validation is:
+
+```text
+python PINNED_SKILL/dream-tools.py run --digest PIN_DIGEST validate DREAM_ID WORKTREE_DIR
+```
+
+`PINNED_SKILL` and `PIN_DIGEST` come from the packet; do not fabricate them.
+Keep the snapshot while children or resumed work reference it. The run workspace
+owns its eventual cleanup; this helper never recursively deletes directories.
+Re-pin on a different host rather than reusing host-specific interpreter paths.
 
 | Script | Purpose | When to use |
 |--------|---------|-------------|
+| `dream-tools.py` | Pins current tooling and dispatches checked Python helpers | **Before worktrees** and for every validation/reconciliation/coverage call |
 | `dream-setup.py` | Creates worktree + branch with namespace isolation | **Phase 3** — start of every experiment |
 | `dream-validate.py` | Validates artifacts before push (hard gate) | **Phase 5** — before `git push` |
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
@@ -153,68 +254,16 @@ done
 | `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
 | `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs. On Windows, automatic sweeping remains disabled until `dream-gc.py` replaces the POSIX-only helper. |
 
-**Usage patterns:**
+The shared `shadow-frog/_coherence.py`, `_dream_namespace.py`, and
+`_worktree_paths.py` are captured with the Dream tools.
+Never rediscover these Python helpers relative to `WORKTREE_DIR`. All scripts
+support `--help`. Setup returns JSON only. Consume it through the host's native
+JSON tools, not shell exports. The remaining cleanup/GC shell scripts keep their
+safety gates; use their Python ports when available.
 
-```bash
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
-[ -n "$PYTHON_BIN" ] || { echo "ERROR: python3/python not found"; exit 1; }
-
-# Setup: creates the worktree and prints its context as JSON on stdout.
-SETUP_JSON="$("$PYTHON_BIN" "$SKILL_DIR/dream-setup.py" --slug t01-my-experiment)" || exit 1
-
-# Consume setup JSON into the shell variables used by the steps below.
-# The NUL-delimited stream preserves every valid filesystem path byte without
-# evaluating JSON as shell code.
-while IFS= read -r -d '' key && IFS= read -r -d '' value; do
-    case "$key" in
-        REPO_ROOT|DEFAULT_BRANCH|DREAM_NS|DREAM_ID|BRANCH_NAME|PARENT_BRANCH|WORKTREE_DIR|WORKTREE_ROOT|WORKTREE_BASE|BASE_COMMIT|RUN_PREFIX|SLUG)
-            printf -v "$key" '%s' "$value"
-            export "$key"
-            ;;
-    esac
-done < <(printf '%s' "$SETUP_JSON" | "$PYTHON_BIN" -c '
-import json, sys
-data = json.load(sys.stdin)
-out = sys.stdout.buffer
-for env_key, json_key in (
-    ("REPO_ROOT", "repo_root"),
-    ("DEFAULT_BRANCH", "default_branch"),
-    ("DREAM_NS", "dream_ns"),
-    ("DREAM_ID", "dream_id"),
-    ("BRANCH_NAME", "branch_name"),
-    ("PARENT_BRANCH", "parent_branch"),
-    ("WORKTREE_DIR", "worktree_dir"),
-    ("WORKTREE_ROOT", "worktree_root"),
-    ("WORKTREE_BASE", "worktree_base"),
-    ("BASE_COMMIT", "base_commit"),
-    ("RUN_PREFIX", "run_prefix"),
-    ("SLUG", "slug"),
-):
-    out.write(env_key.encode() + b"\0" + data[json_key].encode() + b"\0")
-')
-
-# Validate: hard gate before push
-"$PYTHON_BIN" "$SKILL_DIR/dream-validate.py" "$DREAM_ID" "$WORKTREE_DIR"
-
-# Reconcile: merge all dream branches into main
-"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
-    --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT"
-# After `git push` succeeds, optionally clean up reconciled branches.
-# Cleanup REFUSES to run if `.shadow/` has uncommitted changes, or unless
-# HEAD is already on origin/<default-branch> — so the canonical flow is:
-#   reconcile → git add .shadow/ && git commit && git push → re-run --cleanup-branches
-"$PYTHON_BIN" "$SKILL_DIR/dream-reconcile.py" "$REPO_ROOT" \
-    --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT" --cleanup-branches
-
-# Coverage: show which files still need exploration
-"$PYTHON_BIN" "$SKILL_DIR/dream-coverage.py" "$REPO_ROOT"
-
-# All scripts support --help.
-```
-
-If a script is not found or fails, read its source — they are
-self-documenting. Adapt the steps manually if needed (see each phase for
-inline fallback instructions).
+In shell recipes, `PYTHON_BIN` is the captured interpreter (the first element
+of `commands.validate`) and `SKILL_DIR` is the pinned `skill_dir`. Pass these
+values explicitly; shell variables do not persist across tool calls.
 
 ## Phase 1: Preflight and Assess
 
@@ -299,9 +348,8 @@ fi
 **If any check prints ERROR, STOP.** Do not use `exit 1` — check output
 and stop at the agent level.
 
-(`RUN_PREFIX` MUST be threaded into every subagent prompt — see Critical
-Invariants above. Bare `python3`/`pytest` without prefix = completion
-criteria violation.)
+(`RUN_PREFIX` MUST be threaded into every subagent prompt for repository
+code/tests. Helper commands use the pinned packet's interpreter instead.)
 
 ### Snapshot Branch State
 
@@ -328,17 +376,8 @@ dream reports** in `_dreams/`.
 
 ### Build Exploration Coverage Map
 
-File-level coverage breadth is the strongest predictor of dream success
-(r²=0.63 vs bugs found), NOT dream count (r²=0.04).
-
-```bash
-# Find and run the coverage script
-COVERAGE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-coverage.py" ] && COVERAGE_SCRIPT="$DIR/dream-coverage.py" && break
-done
-[ -n "$COVERAGE_SCRIPT" ] && python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" || echo "WARNING: dream-coverage.py not found"
-```
+Run the packet's `commands.coverage`. It already contains the pinned
+interpreter/tool version and the original repository path.
 
 **Coverage definition:** A file is "covered" only when its shadow has
 ≥1 behavioral discovery (line starting with `- `). Placeholder-only = NOT covered.
@@ -350,24 +389,23 @@ frontier of bugs, a newly-added module, a subsystem the user just
 flagged) deserves a focused dream session. All counts (totals, %,
 saturated, fan-in, per-dir) are computed over the scoped subset only.
 
-```bash
-# Scope to one subtree
-python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" --scope src/auth/
+For one subtree, append `["--scope", "src/auth/"]` to `commands.coverage`.
+For several, append repeated `--scope` argument pairs.
 
-# Scope to multiple subtrees in one pass
-python3 "$COVERAGE_SCRIPT" "$REPO_ROOT" --scope src/auth/ --scope src/db/
-```
-
-When using `--scope`, the per-category task quotas (Phase 2) still apply
+In broad mode, when using `--scope`, the per-category task quotas (Phase 2) still apply
 but are interpreted against the scoped subset. Don't use scoped
 exploration as the default — pick it only when there's a concrete reason
-to concentrate effort. Unscoped diversity remains the strongest
-predictor of useful discoveries.
+to concentrate effort.
 
 ### Review Past Dreams (Required)
 
+In coherent mode, use the index to select parents, then read the selected
+parent reports/manifests and relevant ancestor evidence. Do not reread every
+report or reject a useful parent merely because its files are well covered.
+
 When compoundable experiments exist (preflight step 9):
-- Read each report: `cat .shadow/_dreams/<dream_id>/report.md`
+- Broad mode: read the candidate reports. Coherent mode: read the selected
+  parent's report/manifest and the relevant ancestor evidence.
 - Choose which to continue (extending, fixing, integrating)
 - Note `dead_end` experiments to avoid repeating
 - Trace lineage via the `parent` column in `_dreams/_index.md`
@@ -377,9 +415,12 @@ When compoundable experiments exist (preflight step 9):
 1. Read the parent's `report.md` AND `manifest.json`
 2. Verify the parent has a non-empty `patch.diff` (prose-only parents
    are low-value — prefer parents with working code)
-3. Identify at least one specific file or function you plan to modify/extend
-4. Check the parent's area isn't saturated (8+ discoveries) — if it is,
-   start fresh from main unless you have a concrete new angle
+3. Broad mode: identify a specific file/function to modify or extend.
+   Coherent mode: identify the parent capability, finding, or decision that
+   motivates the child; a technically independent alternative is allowed.
+4. Broad mode: check saturation (8+ discoveries) and prefer a fresh target
+   unless there is a concrete new angle. Coherent mode has no saturation gate;
+   assess whether the proposed continuation adds useful evidence or capability.
 5. Log your compounding intent: "I will extend parent's retry logic in
    `src/http.py` to handle connection timeouts" — vague "continue
    exploring" is NOT compounding
@@ -389,28 +430,19 @@ branch from main.
 
 ## Phase 2: Plan
 
-Generate a concrete plan. **Target 12 tasks (2 per category).** On small
+In broad mode, generate a concrete plan. **Target 12 tasks (2 per category).** On small
 codebases (<30 source files), minimum 6 tasks across 4+ categories.
 
 ### The 6 Investigation Categories
 
-| Category | What to look for | Priority signals |
-|----------|-----------------|-----------------|
-| **Investigation** | Under-explored files, shallow coverage, uncertain discoveries | Files with 0-2 discoveries, import chains not traced, `uncertain` entries |
-| **Bug hunting** | Defects, edge cases, race conditions | Error-handling code, concurrency, unvalidated inputs |
-| **Feature design** | New capabilities, missing functionality | TODOs, FIXMEs, user-facing gaps, integration opportunities |
-| **Refactoring** | Structural improvements, duplication | God classes, copy-paste patterns, high-coupling files |
-| **Optimization** | Algorithmic efficiency, performance | Hot paths, nested loops, repeated I/O, missing caches |
-| **Security audit** | Vulnerabilities, unsafe patterns | Auth code, data handling, deserialization, user inputs |
-
-| Category | What to experiment |
-|----------|-------------------|
-| **Investigation** | Write assertion-based tests proving/disproving behavior hypotheses |
-| **Bug hunting** | Fuzz inputs, trigger error paths, reproduce race conditions |
-| **Feature design** | Implement the feature, run it, evaluate integration |
-| **Refactoring** | Do the refactor, run existing tests, measure complexity |
-| **Optimization** | Benchmark, profile, implement optimization, measure before/after |
-| **Security audit** | Craft adversarial inputs, test injection vectors (local only) |
+| Category | Priority signals | Experiment |
+|----------|------------------|------------|
+| **Investigation** | Files with 0-2 discoveries, untraced import chains, `uncertain` entries | Test behavior hypotheses with assertions |
+| **Bug hunting** | Error handling, concurrency, unvalidated inputs | Fuzz inputs, trigger error paths, reproduce races |
+| **Feature design** | TODOs, FIXMEs, user-facing gaps, integration opportunities | Implement the feature, run it, evaluate integration |
+| **Refactoring** | God classes, duplication, high coupling | Refactor, run existing tests, measure complexity |
+| **Optimization** | Hot paths, nested loops, repeated I/O, missing caches | Profile, optimize, measure before/after |
+| **Security audit** | Auth, data handling, deserialization, user inputs | Test adversarial inputs and injection vectors locally |
 
 **Exception — user-directed focus**: If the user specifies a focus area
 (e.g., "dream focus on security"), allocate ALL tasks to that category.
@@ -436,7 +468,8 @@ Tasks (by category):
 
 ### Diversity Rules
 
-Prevent fixation (exploring the same files while leaving most untouched):
+In broad mode, prefer breadth over depth: more files with 2-3 discoveries over
+one file with 20. Prevent fixation with these rules:
 
 1. **Max 2 tasks per source file** (unless prior dream left concrete follow-up)
 2. **≥30% of tasks on uncovered files** (from coverage map)
@@ -456,22 +489,12 @@ Each task needs: **category**, **hypothesis**, **what to implement**,
 **base branch**, **primary target** (with coverage status), **why this
 target**, **scope** (hours, not days), and **success criteria**.
 
-Good examples (one per category):
-- **Investigation**: "Write assertion harness for request lifecycle —
-  instrument each layer to log entry/exit and reveal implicit contracts"
-- **Bug hunting**: "Fuzz the CSV parser with malformed inputs — what
-  crashes or silently corrupts?"
-- **Feature design**: "Implement retry logic with exponential backoff —
-  does it handle transient failures without masking permanent ones?"
-- **Refactoring**: "Extract 5 duplicate auth checks into middleware —
-  run tests, measure if it simplifies without breaking special cases"
-- **Optimization**: "Benchmark the hot path, implement LRU cache for
-  repeated lookups — measure before/after wall time"
-- **Security audit**: "Craft SQL injection payloads for user-facing
-  endpoints — does parameterized query hold under nested quotes?"
+Also include the selected **mode**. Coherent tasks additionally carry their
+own **goal** and **parent_connection**, not a shared sibling/tree objective.
+Category still describes the experiment, but coherent mode has no category quota.
 
-Bad examples: "Look at the code", "Trace the flow", "Review error
-handling", "Improve code quality"
+For example, "Fuzz the CSV parser with malformed inputs to reproduce crashes
+or silent corruption" is a concrete experiment; "Review error handling" is not.
 
 ### Feature Design: Motivation Required
 
@@ -509,69 +532,54 @@ sub-agents. Each handles the full lifecycle: create worktree → implement
 → test → write shadow + manifest + report → commit → push → clean up.
 If sub-agents are unavailable, fall back to sequential execution.
 
+In coherent mode, a parallel batch can contain diverse siblings of an already
+available parent. Never launch a descendant before its parent exists. Include
+the mode, goal, connection, and expected parent commit in each child prompt.
+
 **Each experiment runs in a separate git worktree.** The worktree IS the
 dream branch (created with `-b`). After pushing, the worktree is removed
 but the branch persists on the remote.
 
 ### Reading Before Implementing
 
-You must understand the code before changing it. For each task:
-
-1. Read the source file(s) and their shadows (existing discoveries)
-2. Read shadows of referenced/referencing files
-3. Understand the current behavior, edge cases, and implicit contracts
-
-Reading is *preparation*, not the deliverable. The deliverable is code
-written, code run, results recorded.
+Before implementing, read the target source and its shadow, plus shadows of
+referenced/referencing files. Identify current behavior, edge cases, and
+implicit contracts. Reading is preparation; the deliverable is code written
+and run, with results recorded.
 
 ### Experiment Setup
 
 Use `dream-setup.py` to create worktrees (handles all path computation,
 namespace resolution, worktree creation, and validation):
 
-```bash
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python)}"
-[ -n "$PYTHON_BIN" ] || { echo "ERROR: python3/python not found"; exit 1; }
+Use the absolute setup helper from `helper_paths["dream-setup.py"]` with the
+captured Python interpreter. The equivalent command shape is:
 
-# Find the setup script
-SETUP_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-setup.py" ] && SETUP_SCRIPT="$DIR/dream-setup.py" && break
-done
-
-# Fresh experiment from main:
-SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t01-csv-fuzzer)" || exit 1
-
-# Compounding from prior dream:
-SETUP_JSON="$("$PYTHON_BIN" "$SETUP_SCRIPT" --slug t03-extend --base-branch dream/<ns>/<prior-id>)" || exit 1
-
-# Use the canonical NUL-safe JSON bridge in "Helper Scripts" above.
-# It exports REPO_ROOT, DEFAULT_BRANCH, DREAM_NS, DREAM_ID, BRANCH_NAME,
-# PARENT_BRANCH, WORKTREE_DIR, WORKTREE_ROOT, WORKTREE_BASE, BASE_COMMIT,
-# RUN_PREFIX, and SLUG.
+```text
+python PINNED_SKILL/dream-setup.py --slug t01-csv-fuzzer --repo-root REPO_ROOT
+python PINNED_SKILL/dream-setup.py --slug t03-extend --repo-root REPO_ROOT --base-branch dream/<ns>/<prior-id>
 ```
 
-Capture the JSON into `SETUP_JSON` and check the exit code (`|| exit 1`),
-then parse it into the exported variables above before using later steps.
-
-This prints a JSON object with keys: `repo_root`, `default_branch`,
-`dream_ns`, `dream_id`, `branch_name`, `parent_branch`, `worktree_dir`,
-`worktree_root`, `worktree_base`, `base_commit`, `run_prefix`, `slug`.
+Check the exit code before consuming JSON. Keep the returned `repo_root`,
+`default_branch`, `dream_ns`, `dream_id`, `branch_name`, `parent_branch`,
+`worktree_dir`, `worktree_root`, `worktree_base`, `base_commit`, `run_prefix`,
+and `slug` in the agent's task state. Uppercase names in later recipes refer
+to these values. Forward the canonical `worktree_root` to reconciliation
+as `--worktree-base` and to shell cleanup/GC as `DREAM_WORKTREE_BASE`.
 
 **If `dream-setup.py` fails or is not found:** Apply the Script Failure
-Recovery rule (read the script source, adapt its logic). Common causes:
+Recovery rule (diagnose the pinned script and retry safely). Common causes:
 missing git remote, branch already exists, or temp-directory permissions.
 
-**Note:** Shell variables don't persist across tool calls. Either run
-multi-step setup in a single shell, or re-derive values. From inside a
-worktree, get main repo with:
-`git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel`
+Do not infer the current tool location from the experimental worktree. The
+packet and its outside-repository snapshot remain authoritative, even if the
+controller checkout later changes branches.
 
 **If worktree creation fails:** mark task `blocked`, replace with another.
 
 ### What Meaningful Compounding Looks Like
 
-Compounding means **actively engaging with the parent's code**, not just
+In broad mode, compounding means **actively engaging with the parent's code**, not just
 sitting on its branch. Valid compounding approaches:
 - **Extend**: import or call the parent's modules and build on them
 - **Modify**: edit the parent's code to fix limitations noted in its report
@@ -583,16 +591,18 @@ Don't assume the parent dream's code is complete or frozen — iterative
 improvement is the whole point. If you can't find anything meaningful to
 build on, start fresh from main instead.
 
-Compounding that only adds a new standalone module beside the parent's
+In broad mode, compounding that only adds a new standalone module beside the parent's
 code (with no imports, edits, or integration) is NOT compounding — it's
 a fresh experiment on the wrong branch.
 
+In coherent mode, apply the parent-connection review instead: a standalone
+alternative is allowed if it substantively responds to the parent's findings
+or design, rather than being unrelated work parked on the same branch.
+
 ### Run
 
-1. Implement the experiment — write real code, run tests/builds
-2. Note what worked, broke, surprised
-3. Debug if needed — the struggle produces the best discoveries
-4. Record results as you go
+Implement the experiment, run tests/builds, and debug as needed. Record what
+worked, failed, or surprised you as you go.
 
 ### Write Shadow Discoveries
 
@@ -621,15 +631,7 @@ Find the `##`/`###` heading for the symbol, then:
 
 After writing each discovery, evaluate whether it deserves any of the
 five actionable labels from `/shadow-frog` (`bug`, `security`,
-`performance`, `feature-gap`, `tech-debt`). Apply labels when:
-
-| Label | Apply when the discovery describes... |
-|-------|---------------------------------------|
-| `bug` | A defect, silent failure, off-by-one, race, incorrect result, edge case that misbehaves, validate-then-use ordering hazard |
-| `security` | Injection vector, unsafe default, missing auth/authz check, sensitive value logged, untrusted input reaching unsafe sink |
-| `performance` | Measured bottleneck, O(N²) where N is large, repeated I/O that could batch, missing cache, blocking call on hot path |
-| `feature-gap` | Missing capability the codebase clearly needs, asymmetric API (e.g., reads but no writes) |
-| `tech-debt` | Duplication, dead code, leaky abstraction, vestigial parameter, inconsistent naming |
+`performance`, `feature-gap`, `tech-debt`), using that skill's definitions.
 
 Rules:
 - Apply labels to BOTH the in-file discovery markdown AND the
@@ -643,7 +645,7 @@ Rules:
 - Do not apply labels speculatively. The label says "an engineer should
   act on this." If you wouldn't act on it, don't label it.
 
-Examples:
+Example:
 
 ```
 - /api/upload accepts paths from request body without normalization,
@@ -651,13 +653,6 @@ Examples:
   _(verified, source: exploration, labels: [bug, security])_
   Dream report: `_dreams/20260518-161200Z-upload-traversal/`
 ```
-
-```
-- HttpClient.send retries 3x on transient failures.
-  _(verified, source: exploration)_
-  Dream report: `_dreams/20260518-163000Z-retry-audit/`
-```
-(No label — pure behavioral knowledge, no action implied.)
 
 `dream-validate.py` emits non-blocking warnings when discovery text
 contains label-signal keywords but no label is set. Treat those
@@ -681,26 +676,14 @@ back-pointers in each file's `## Cross-References` section.
 #### Discovery Quality
 
 Discoveries must be **self-contained process knowledge** — understandable
-with just the base codebase. Someone reading main's shadow should understand
-the insight without checking out the dream branch. Capture **how to do it**,
-**what you learned**, and **what to avoid** — not what was built. The branch
-preserves the artifact; the shadow preserves the wisdom.
+from the base codebase without checking out the dream branch. Capture what
+was learned, how to apply it, and what to avoid, not a description of the
+experiment-only artifact.
 
-Good (behavioral insights about existing code):
-- "functools.lru_cache is not thread-safe for initialization — two
-  threads can trigger duplicate expensive computations on first call."
-- "agent.py's retry loop catches all exceptions including OOM, masking
-  fatal errors that should crash immediately."
-- "To add a new eval metric, register in METRIC_MAP at metrics.py:25
-  and implement the Metric interface — missing either causes a silent
-  no-op in the pipeline."
-
-Bad (descriptions of new code):
-- "The implemented PluginFramework has PluginRegistry, PluginManager,
-  and 7 lifecycle hooks." — describes branch-only artifact.
-- "Provides RewardShaper with 4 methods, Welford normalizer, and
-  GAE-lambda estimation." — feature spec, not behavioral insight.
-- "Complete tested module with 58 passing tests." — verdict, not discovery.
+- **Good:** "agent.py's retry loop catches all exceptions including OOM,
+  masking fatal errors that should crash immediately."
+- **Bad:** "The implemented PluginFramework has PluginRegistry, PluginManager,
+  and 7 lifecycle hooks." This describes a branch-only artifact.
 
 Per-file discoveries should reference the dream report:
 
@@ -720,6 +703,7 @@ After shadow writes, create `.shadow/_dreams/$DREAM_ID/manifest.json`:
   "dream_id": "<DREAM_ID>",
   "branch": "<BRANCH_NAME>",
   "parent_branch": "main",
+  "mode": "broad",
   "category": "bug hunting",
   "verdict": "useful",
   "title": "CSV Parser Edge Cases",
@@ -741,6 +725,13 @@ After shadow writes, create `.shadow/_dreams/$DREAM_ID/manifest.json`:
 
 **Anchor format:** `file::symbol` with bare names (no backticks). The
 reconciler handles normalization.
+
+For coherent experiments, set `"mode": "coherent"`, add a nonempty `"goal"`
+for this experiment, and include `"parent_connection"` in the shared
+`/shadow-frog` format when `parent_branch` is a prior `dream/...` branch.
+Seeds use null or omit the connection. `parent_branch` is the authoritative
+parent reference; siblings need not share goals or modify different files.
+These fields survive reconciliation in the archived manifest.
 
 Manifest `op` values: only `add` is supported by the reconciler today.
 `update` and `refute` are reserved keywords — `dream-validate.py` will
@@ -770,6 +761,7 @@ verdict: useful
 base_commit: "<BASE_COMMIT>"
 branch: "<BRANCH_NAME>"
 parent_branch: "main"
+mode: broad
 remote: "origin"
 related_symbols:
   - "src/parsers/csv.py::parse_row"
@@ -782,7 +774,11 @@ builds_on: []
 <cite specific existing files/symbols where gap was identified>
 
 ## Compounding Delta
-<ONLY if parent_branch != main — what parent code was modified/extended>
+<ONLY for a prior-dream parent — what parent code or design was engaged and changed>
+
+## Parent Connection
+<coherent mode: own goal, relation, parent basis, delta, preserved constraints,
+and superseded decisions; explain alternatives even when technically independent>
 
 ## Hypothesis
 <what we expected to learn>
@@ -811,6 +807,7 @@ builds_on: []
 | `base_commit` | yes | SHA branched from |
 | `branch` | yes | full branch name |
 | `parent_branch` | yes | `main` or prior branch path |
+| `mode` | coherent runs | `broad` (default) or `coherent`; must match manifest and validator |
 | `related_symbols` | yes | `file::symbol` refs |
 
 **`tip_commit` is NOT in the report.** Including the final commit SHA
@@ -823,6 +820,10 @@ it in `_dreams/_index.md`.
 - `dead_end` — approach doesn't work; documented why so future dreams skip
 
 ### Validate, Commit, Push
+
+Validation must use `commands.validate` from the pinned packet. Its mode was
+fixed before the worktree was created; no mode override or local-helper fallback
+is allowed. Carry this exact command prefix into each subagent prompt.
 
 ```bash
 cd "$WORKTREE_DIR"
@@ -837,27 +838,16 @@ git diff "$BASE_COMMIT" HEAD -- \
     > .shadow/_dreams/"$DREAM_ID"/patch.diff
 [ ! -s .shadow/_dreams/"$DREAM_ID"/patch.diff ] && echo "WARNING: Empty diff"
 
-# 2. Validate (hard gate — must pass before push)
-VALIDATE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-validate.py" ] && VALIDATE_SCRIPT="$DIR/dream-validate.py" && break
-done
-if [ -n "$VALIDATE_SCRIPT" ]; then
-    python3 "$VALIDATE_SCRIPT" "$DREAM_ID" "$WORKTREE_DIR" || {
-        # If validate fails: read the script to understand what checks failed,
-        # fix the issues it reports, then re-run. The script checks artifact
-        # structure, manifest schema, and report frontmatter.
-        echo "FIX ERRORS"; exit 1
-    }
-else
-    # Script not found — inline fallback (minimal checks)
-    [ ! -d ".shadow/_dreams/$DREAM_ID" ] && echo "ERROR: Missing dir" && exit 1
-    for F in report.md manifest.json patch.diff; do
-        [ ! -f ".shadow/_dreams/$DREAM_ID/$F" ] && echo "ERROR: Missing $F" && exit 1
-    done
-fi
+```
 
-# 3. Final commit and push
+**2. Validate (hard gate):** execute `commands.validate + [DREAM_ID,
+WORKTREE_DIR]`. The copied runner verifies the tooling and passes the pinned
+`--mode` to the copied validator. Stop on any nonzero exit; fix the artifact or
+tooling issue and retry. File-existence checks are not a substitute for validation.
+
+**3. Only after validation succeeds, commit and push:**
+
+```bash
 git add -A -- ':!.dream_parent'
 git commit -m "dream: $SLUG — final with report and manifest"
 if git push origin "$BRANCH_NAME"; then
@@ -880,16 +870,18 @@ DREAM_WORKTREE_BASE="$WORKTREE_ROOT" \
 ```
 
 `dream-cleanup.sh` does the equivalent of `git worktree remove --force`
-followed by `git worktree prune`, but ALSO falls back to a safety-gated
-`rm -rf` if `git worktree remove` silently fails — the failure mode that
-leaked tens of dream worktrees per AFK session under the previous inline
-snippet (see bug-worktree-leak.md). The rm fallback ONLY fires for paths
-that match `${DREAM_WORKTREE_BASE:-<system-temp>/shadowfrog-dreams}/<ns>/dream-<slug>`
+followed by `git worktree prune`, with a safety-gated `rm -rf` fallback if
+worktree removal silently fails. The fallback only accepts paths matching
+`<worktree_root>/<ns>/dream-<slug>`
 exactly; any other path is refused.
 
 Remove as you go. If push failed, keep the worktree.
 
 ### Mid-Session Diversity Check
+
+This breadth check applies to broad mode. In coherent mode, review edge quality
+and sibling duplication instead; do not swap out a relevant continuation just
+to increase unique-file counts.
 
 After completing roughly half of your planned tasks, pause and review:
 
@@ -917,17 +909,24 @@ rich area and the second half keeps digging there instead of spreading.
 
 ## Phase 5: Parallel Agent Rules
 
-1. Each agent targets different files (orchestrator assigns non-overlapping sets)
+1. Broad mode targets different files. Coherent siblings may target the same files in their separate worktrees.
 2. Each agent gets its own branch (inherently isolated)
 3. Each agent writes its own manifest in its `$DREAM_ID/` directory
 4. Do NOT write to main or shared files (`_index.md`, `state.json`)
 5. Do NOT update metadata — reconciled post-dream by orchestrator
-6. Fetch once, branch from Phase 1 snapshot (no independent fetches)
+6. Broad mode: fetch once and use the initial snapshot. Coherent mode: after a
+   parent is pushed, the orchestrator refreshes that parent's ref/commit and
+   branch map before launching its children. Siblings share the refreshed
+   snapshot; subagents never fetch independently.
 7. Manifest anchors use bare symbol names (reconciler normalizes)
 8. Thread `RUN_PREFIX` into every subagent prompt
-9. Include `WORKTREE_BASE` and `DREAM_NS` in every subagent prompt
+9. Include `WORKTREE_ROOT`, `WORKTREE_BASE`, and `DREAM_NS` in every subagent prompt
 10. Dream artifacts MUST use subdirectory format — flat files are a
     completion criteria violation (see Critical Invariants → Artifact Format)
+11. Thread the selected mode and pinned tool packet into every prompt. For
+    coherent children, include their own goal, parent packet, connection, and
+    expected parent commit. Use the supplied validation command; never resolve
+    a helper from the child's installed skill directories.
 
 ## Phase 6: Reconcile to Main
 
@@ -946,27 +945,15 @@ cd "$REPO_ROOT"
 git checkout "$DEFAULT_BRANCH"
 git fetch origin --prune
 
-# Find and run the reconciliation script
-RECONCILE_SCRIPT=""
-for DIR in .github/skills/shadow-frog-dream .claude/skills/shadow-frog-dream; do
-    [ -f "$DIR/dream-reconcile.py" ] && RECONCILE_SCRIPT="$DIR/dream-reconcile.py" && break
-done
-
-if [ -n "$RECONCILE_SCRIPT" ]; then
-    python3 "$RECONCILE_SCRIPT" "$REPO_ROOT" \
-        --namespace "$DREAM_NS" --worktree-base "$WORKTREE_ROOT"
-else
-    echo "WARNING: dream-reconcile.py not found. Apply Script Failure Recovery: read dream-reconcile.py source, adapt its 9 steps manually."
-fi
 ```
 
-**If the reconciler script fails or errors:** Read `dream-reconcile.py` source
-to understand which step broke and why. The script is structured as 9
-sequential, idempotent steps (see below). You can often fix the issue and
-re-run the script (it skips dreams already in `_index.md`), or perform the
-failing step manually and then re-run the remaining steps. Common failures:
-missing manifest, corrupt report frontmatter, merge conflict in shadow file.
-Adapt based on the error message.
+Then execute `commands.reconcile + ["--namespace", DREAM_NS, "--worktree-base",
+WORKTREE_ROOT]`. It already names the original repository and the pinned helper,
+so checking out the default branch cannot downgrade the tooling.
+
+On an error, diagnose the pinned source and repair the reported artifacts or
+preconditions before retrying. Do not fall back to a worktree-local reconciler
+or manually imitate its branch-deletion steps.
 
 ### What the Reconciler Does
 
@@ -978,7 +965,7 @@ Adapt based on the error message.
 6. **Updates** `_meta/state.json`
 7. **Rebuilds** top-level `.shadow/_index.md` (per-file discovery counts)
 8. **Verifies** all artifacts present (hard gate)
-9. **(Optional)** Deletes reconciled branches — only with `--cleanup-branches`, and only after the reconciliation has been committed and pushed (refuses on a dirty `.shadow/` or when HEAD is not yet on `origin/<default-branch>`)
+9. **(Optional)** Deletes reconciled broad branches — only with `--cleanup-branches`, and only after the reconciliation has been committed and pushed (refuses on a dirty `.shadow/` or when HEAD is not yet on `origin/<default-branch>`). Coherent branches and their ancestors are retained; unreadable indexed manifests prevent cleanup rather than risking task baselines.
 
 ### After Reconciliation: Commit, Push, and Cleanup
 
@@ -1002,42 +989,26 @@ fi
 
 ### Post-Reconciliation Branch Cleanup
 
-After reconciliation is **committed AND pushed**, clean up dream branches
-to prevent repo pollution. Only delete branches whose artifacts are safely
-on main.
+There is **one automatic pruning path in either mode**. After reconciliation
+is committed and pushed, execute:
 
-```bash
-for BRANCH in $RECONCILED_BRANCHES; do
-    DREAM_ID="${BRANCH#dream/${DREAM_NS}/}"
-    # Safety check: verify artifacts exist on main BEFORE deleting.
-    # Match the _index.md entry by EXACT cell (column 2), not substring —
-    # `grep -qF "$DREAM_ID"` would false-match when one dream_id is a prefix
-    # of another, deleting an un-reconciled branch.
-    if [ -f .shadow/_dreams/"$DREAM_ID"/report.md ] && \
-       [ -f .shadow/_dreams/"$DREAM_ID"/manifest.json ] && \
-       [ -f .shadow/_dreams/"$DREAM_ID"/patch.diff ] && \
-       awk -F'|' -v id="$DREAM_ID" \
-         '{gsub(/ /,"",$2); if ($2==id) f=1} END {exit !f}' \
-         .shadow/_dreams/_index.md 2>/dev/null; then
-        # Safe to delete — all artifacts are on main
-        git push origin --delete "$BRANCH" 2>/dev/null && \
-            echo "  🗑 Deleted remote: $BRANCH"
-        git branch -D "$BRANCH" 2>/dev/null && \
-            echo "  🗑 Deleted local: $BRANCH"
-    else
-        echo "  ⚠️ KEEPING $BRANCH — artifacts not verified on main"
-    fi
-done
+```text
+commands.reconcile + ["--namespace", DREAM_NS, "--worktree-base", WORKTREE_ROOT, "--cleanup-branches"]
 ```
 
-**Rules:**
-- NEVER delete branches before push to main succeeds
-- NEVER delete branches that have un-reconciled descendants
-- If `SHADOWFROG_KEEP_BRANCHES=1` is set, skip cleanup (for eval harness)
-- `dead_end` branches are cleaned up too — `patch.diff` + `tip_commit` in
-  index preserves recoverability
-- Branches with compounding descendants: delete ONLY after descendants are
-  also reconciled (check `_index.md` for entries listing this branch as parent)
+This is argument-array notation, not shell code. The command verifies persisted
+artifacts, remote state, descendants, and coherent retention. A broad run can
+reconcile pending coherent branches from an earlier session; the current run's
+mode is never permission to delete those branches.
+
+Never use an inline deletion loop or manually duplicate these checks. A retained
+branch is not failed cleanup: coherent branches and their canonical index
+ancestors remain available until explicit curation. `SHADOWFROG_KEEP_BRANCHES`
+still disables automatic pruning. Worktree cleanup is independent.
+
+Unreadable lineage metadata exits nonzero before any branch deletion. Restore
+the indicated manifest or repair the stale `_dreams/_index.md` row after checking
+its descendants, then retry. Do not delete valid archives to bypass the refusal.
 
 **Worktree cleanup** happens separately (Phase 7 — see "Worktree Pruning"
 below). Worktrees can be removed immediately after branch push regardless
@@ -1098,10 +1069,16 @@ Wait for user confirmation before deleting any remote branch.
 
 ### Branch Pruning
 
-Reconciled branches are cleaned up automatically after push. For
-branches not auto-cleaned (push failed, or `SHADOWFROG_KEEP_BRANCHES=1`
-set), apply the rules in Phase 6 → Post-Reconciliation Branch Cleanup
-(above).
+Only the guarded Phase 6 cleanup command performs automatic branch pruning.
+If push failed or lineage verification was refused, fix that condition before
+retrying it. If a branch was retained for coherence or `SHADOWFROG_KEEP_BRANCHES`,
+leave it retained; do not route it to a separate deletion recipe.
+
+Explicit curation is a distinct, user-approved decision. First identify all
+dependent dreams and exported task baselines, preserve any required commits
+under durable refs, and update consumers before retiring a branch or archive.
+Removing an archive requires repairing its index entry and descendant references
+as well. There is no automatic expiry for coherent task baselines.
 
 ### Worktree Pruning
 
@@ -1116,9 +1093,7 @@ are four places they get cleaned up:
 3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.py` invokes this
    sweeper at the start of each new dream, throttled by a per-namespace
    `.last-gc` tombstone to run at most once per `DREAM_GC_INTERVAL_MIN`
-   minutes (default 60). Catches orphans from crashed dreams, machine
-   reboots, OOM-killed agents — the long tail of cleanup failures that
-   accumulated GBs of leaked worktrees on long-running fleets.
+   minutes (default 60). Catches orphaned worktrees.
 
    Env knobs (all optional, sensible defaults):
      - `DREAM_GC_AUTO=0` — disable the auto-trigger entirely
@@ -1174,17 +1149,6 @@ git cherry-pick <tip_commit>
 git show <tip_commit> | git apply
 ```
 
-## Guidance
-
-- **Always experiment.** Implementation reveals what reading cannot.
-- **Small tasks, big lessons.** 30-minute experiment > 3 hours reading.
-- **Fail forward.** "Tried X, broke because Y" is extremely valuable.
-- **Breadth over depth.** More files with 2-3 discoveries > one file with 20.
-- **No descriptions.** "Catches all exceptions including OOM" yes.
-  "This function authenticates users" no.
-- **Compound deliberately.** Read parent's report. Build on findings.
-- **Branches are cheap, shadow is expensive.** Push freely, write carefully.
-
 ## Experiment Completion Criteria
 
 A task is complete ONLY when ALL of these hold:
@@ -1201,7 +1165,10 @@ A task is complete ONLY when ALL of these hold:
 
 Additional gates:
 - **Feature design:** `## Motivation` cites specific existing code
-- **Compounding:** `## Compounding Delta` explains what parent code was modified
+- **Broad compounding:** `## Compounding Delta` explains what parent code was modified
+- **Coherent mode:** mode is threaded through validation and artifacts; each
+  child has a substantive parent connection and its own goal. Siblings remain
+  free to differ. A validated schema is not a substitute for this review.
 
 A task that fails these criteria is **not completed**. If setup fails or
 the experiment produces nothing, mark it `blocked` in the summary and
@@ -1210,6 +1177,16 @@ category minimum.
 
 > **After reconciliation:** run `/shadow-frog-meditate` to consolidate
 > discoveries and repair the index.
+
+### Exporting Coherent Work as SWE Tasks
+
+Select a root-to-leaf trajectory, not a concatenation of independent siblings.
+Combining siblings requires an explicit integration experiment. Each task's
+code baseline must be an actual retained commit, separate from conceptual
+provenance. For sequential tasks, state which earlier requirements change.
+For one combined task, use the final active behavioral contract: replacing
+design A with B does not require implementing both. Do not rewrite historical
+reports or use unsupported manifest `refute` operations to supersede a design.
 
 ## Curating Dream Experiments for Upstream PRs
 

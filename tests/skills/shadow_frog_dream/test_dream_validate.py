@@ -2,7 +2,7 @@
 
 dream-validate.py is the pre-commit hard gate: it inspects
 `.shadow/_dreams/<dream_id>/` artifacts (report.md, manifest.json,
-patch.diff) and exits 1 on any structural or semantic violation. It
+patch.diff) and exits 1 on a structural or metadata violation. It
 also runs `git diff` against the report's `base_commit` to verify the
 agent mirrored discoveries into per-file shadows.
 
@@ -580,3 +580,100 @@ def test_non_dict_non_str_discovery_is_reported_not_crashed(tmp_git_repo):
     assert "Traceback" not in result.stderr
     assert result.returncode == 1
     assert "must be a string or object" in result.stdout
+
+
+@pytest.mark.parametrize("relation", ["extend", "challenge", "replace", "alternative"])
+def test_coherent_mode_validates_parent_connections(tmp_git_repo, relation):
+    from tests.skills.shadow_frog.test_coherence import connection
+
+    base = _commit_base(tmp_git_repo)
+    dream_id = "20260101-000000Z-coherent"
+    parent = "dream/proj/20260101-000000Z-parent"
+    _write_dream(
+        tmp_git_repo, dream_id,
+        manifest=_default_manifest(
+            dream_id, mode="coherent", goal="A new direction motivated by the parent",
+            parent_branch=parent, parent_connection=connection(relation),
+        ),
+        report=_default_report(
+            dream_id, base, mode="coherent", parent_branch=f'"{parent}"',
+        ),
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), dream_id, str(tmp_git_repo), "--mode", "coherent"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_coherent_seed_does_not_need_a_parent_connection(tmp_git_repo):
+    base = _commit_base(tmp_git_repo)
+    dream_id = "20260101-000000Z-seed"
+    _write_dream(
+        tmp_git_repo, dream_id,
+        manifest=_default_manifest(dream_id, mode="coherent", goal="Seed goal"),
+        report=_default_report(dream_id, base, mode="coherent"),
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), dream_id, str(tmp_git_repo), "--mode", "coherent"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_requested_coherent_mode_cannot_silently_become_broad(tmp_git_repo):
+    base = _commit_base(tmp_git_repo)
+    dream_id = "20260101-000000Z-wrong-mode"
+    _write_dream(
+        tmp_git_repo, dream_id,
+        manifest=_default_manifest(dream_id),
+        report=_default_report(dream_id, base),
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), dream_id, str(tmp_git_repo), "--mode", "coherent"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "mode" in result.stdout
+
+
+def test_coherent_child_without_a_connection_fails(tmp_git_repo):
+    base = _commit_base(tmp_git_repo)
+    dream_id = "20260101-000000Z-disconnected"
+    parent = "dream/proj/20260101-000000Z-parent"
+    _write_dream(
+        tmp_git_repo, dream_id,
+        manifest=_default_manifest(
+            dream_id, mode="coherent", goal="Child goal", parent_branch=parent,
+        ),
+        report=_default_report(
+            dream_id, base, mode="coherent", parent_branch=f'"{parent}"',
+        ),
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), dream_id, str(tmp_git_repo), "--mode", "coherent"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "parent_connection" in result.stdout
+
+
+def test_coherent_report_and_manifest_parent_must_agree(tmp_git_repo):
+    from tests.skills.shadow_frog.test_coherence import connection
+
+    base = _commit_base(tmp_git_repo)
+    dream_id = "20260101-000000Z-parent-mismatch"
+    _write_dream(
+        tmp_git_repo, dream_id,
+        manifest=_default_manifest(
+            dream_id, mode="coherent", goal="Child goal",
+            parent_branch="dream/proj/parent", parent_connection=connection(),
+        ),
+        report=_default_report(dream_id, base, mode="coherent"),
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), dream_id, str(tmp_git_repo), "--mode", "coherent"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "parent_branch" in result.stdout

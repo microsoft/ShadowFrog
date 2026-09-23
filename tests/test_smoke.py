@@ -13,16 +13,19 @@ def test_repo_root_resolves(repo_root):
 
 def test_all_script_fixtures_load(
     shadow_init, shadow_viewer, dream_reconcile, dream_validate,
-    dream_coverage, dream_lineage, meditate_repair,
+    dream_coverage, dream_lineage, meditate_repair, nap, coherence, dream_tools,
 ):
     for mod, expected_attr in [
         (shadow_init, "main"),
         (shadow_viewer, "main"),
         (dream_reconcile, "main"),
         (dream_validate, "main"),
+        (dream_tools, "pin_tooling"),
         (dream_coverage, "main"),
         (dream_lineage, "parse_args"),
         (meditate_repair, "main"),
+        (nap, "main"),
+        (coherence, "validate_connection"),
     ]:
         assert hasattr(mod, expected_attr), \
             f"{mod.__name__} missing expected attribute {expected_attr!r}"

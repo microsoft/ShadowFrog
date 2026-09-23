@@ -43,10 +43,14 @@ Categorize: modified, added, deleted, renamed.
 
 For each changed file, update its shadow at the symbol level:
 
-- **Added symbols** → add new `##` section
-- **Removed symbols** → mark section as `REMOVED`, keep discoveries for history
-- **Renamed symbols** → update heading, preserve discoveries
-- **Modified symbols** → check if discoveries still hold
+| Symbol change | Action |
+|---------------|--------|
+| Added | Add the appropriate `##`/`###` heading |
+| Removed | Mark the section `REMOVED`; keep discoveries for history |
+| Renamed | Move discoveries to the updated heading |
+| Modified | Check whether discoveries still hold |
+
+Only mark `source: user` discoveries stale if the symbol is completely removed.
 
 Lightweight update (auto/hook): re-extract symbols, update headings, flag stale.
 Deep update (manual/dream): read diffs, generate new discoveries, verify existing ones.
@@ -56,16 +60,13 @@ Deep update (manual/dream): read diffs, generate new discoveries, verify existin
 When the user shares knowledge during the session, write it immediately.
 Do not batch for later.
 
-Signals to capture:
+Capture warnings, gotchas, design intent, history, deprecations, contracts,
+and conventions. Representative examples:
 
 | Signal | Example | Category |
 |--------|---------|----------|
 | Warning | "Don't change the retry logic, it's subtle" | warning |
 | Design intent | "We use this pattern because the API is unreliable" | intent |
-| History | "We tried caching here but it caused stale reads" | history |
-| Gotcha | "This looks wrong but matches the tax authority spec" | warning |
-| Deprecation | "This module is being replaced by v2/" | intent |
-| Contract | "The 30s timeout matches our SLA" | contract |
 | Convention | "Always use the helper in utils.py, not raw SQL" | convention |
 
 Write as:
@@ -192,10 +193,3 @@ update sessions:
 - If 3+ files involved → create in `_cross/<slug>.md` instead, add back-pointers
 - If project-wide preference with no file reference → write to `_prefs.md`
 - Slug naming: kebab-case derived from title (e.g., "Token expiry config split" → `token-expiry-config-split.md`)
-
-## Staleness Rules
-
-- Symbol modified → check if discovery still holds
-- Symbol renamed → move discoveries to new heading
-- Symbol removed → mark section `REMOVED`, keep discoveries
-- `source: user` discoveries → only mark stale if symbol completely removed

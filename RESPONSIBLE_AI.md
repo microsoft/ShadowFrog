@@ -4,13 +4,47 @@
 
 ShadowFrog is a suite of AI coding agent skills that builds and maintains a shadow knowledge base for any software codebase. It turns idle coding-agent time into autonomous discovery loops: the agent explores source code, runs experiments in isolated branches, and records behavioral insights (edge cases, implicit contracts, cross-file interactions) in a structured .shadow/ directory that mirrors the repository. Knowledge compounds across sessions, so an agent returning to the same codebase can recall what it previously learned rather than rediscovering it from scratch.
 
-ShadowFrog is implemented entirely as prompt instructions and lightweight helper scripts (Python, Bash) that plug into existing AI agent harnesses such as GitHub Copilot CLI and Claude Code. It does not bundle or fine-tune any machine learning models; it relies on the host agent's LLM for reasoning. The system also captures knowledge shared by human developers during conversations, treating user-provided insights as the highest-trust source. All data is stored locally in plain-text Markdown and JSON files within the repository, with no external service dependencies beyond the configured git remote.
+ShadowFrog is implemented entirely as prompt instructions and lightweight helper scripts (Python, Bash) that plug into existing AI agent harnesses such as GitHub Copilot CLI and Claude Code. It does not bundle or fine-tune any machine learning models; it relies on the host agent's LLM for reasoning. The system also captures knowledge shared by human developers during conversations, treating user-provided insights as the highest-trust source. Knowledge is stored locally in plain-text Markdown and JSON artifacts, primarily within the repository, with no external service dependencies beyond the configured git remote. Host-local run artifacts such as Nap records and pinned tooling can also live in the agent workspace.
 
 ### What Can ShadowFrog Do
 
 ShadowFrog was developed to give AI coding agents a persistent, compounding memory of the codebases they work in. Without it, every agent session starts from zero; with it, prior discoveries about how the code actually behaves carry forward. Specifically, ShadowFrog enables an agent to: (1) initialize a shadow knowledge base by scanning a repository's source files and extracting its symbol structure; (2) autonomously explore and experiment with the codebase during idle time ("dreaming"), recording behavioral findings such as hidden edge cases, implicit contracts between modules, and latent bugs; (3) capture knowledge shared by human developers during normal coding conversations; (4) navigate and query the accumulated knowledge base at the symbol level when working on future tasks; and (5) maintain the shadow over time through incremental updates, deduplication, and conflict resolution.
 
 The system is designed for a research audience studying how AI agents can build and leverage long-term understanding of software. It operates entirely within the user's local repository and git workflow, producing human-readable Markdown artifacts. During autonomous exploration ShadowFrog may write and run throwaway experiments in isolated, disposable git branches, but it does not merge or ship that experimental code into your production branches on its own — only the resulting behavioral discoveries (not the experiment code) are integrated into the knowledge base; it builds a knowledge layer that the host agent can consult when performing downstream tasks such as bug fixing, code review, or feature planning.
+
+The lightweight Nap skill proposes feature-task briefs from focused source
+inspection, optional prior knowledge, and selective probes. Its proposals are
+not verified implementations and are stored separately from shadow discoveries.
+Dream and Nap can use coherent mode to ground parent-child transitions while
+allowing diverse siblings and alternatives. Schema checks do not establish
+semantic coherence, feasibility, or user value. Nap's recorded-work limits
+also do not enforce the host model's actual token or financial spending.
+
+Nap uses a host-supplied independent model review before a task can be selected.
+Review receipts are bound to the exact proposal, ancestry, mode, and source
+baseline to catch stale approvals. The helper checks those bindings and the
+declared verdict, not the authenticity of the reviewer or the correctness of
+its reasoning. A fresh context and direct source access reduce some forms of
+anchoring, but model judgments can still be wrong; approval is not proof that
+the proposed implementation will succeed.
+
+Planning and implementation-audience exports share the active contract while
+separating required constraints from suggested approaches. Readiness metadata
+reports planning acceptance, not assessed implementation status, and no
+proposed-feature runtime validation by Nap. Recorded implementation risks are
+distinct from blocking planning questions; omitted risk notes are not assurance
+of safety or completeness.
+
+Tree updates use atomic replacement and file-data syncing where supported.
+Unsupported sync is surfaced, and directory-entry persistence remains
+platform/filesystem-dependent. These measures are not a universal guarantee of
+power-loss durability; hosts should provide suitable storage and backup policy.
+
+Dream tool snapshots contain host-specific paths and executable helper copies.
+Keep them outside code repositories, do not publish them as task data, and retain
+them only while active or resumed work needs them. Hash verification detects
+unexpected changes to the pinned bundle; it is not an attestation that arbitrary
+third-party code is trustworthy.
 
 A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
@@ -39,6 +73,10 @@ We do not recommend using ShadowFrog in the context of high-risk decision making
 To begin using ShadowFrog, follow the installation and usage instructions in the repository [README.md](https://github.com/microsoft/ShadowFrog/blob/main/README.md).
 
 ## Evaluation
+
+The evaluations below predate Nap and the explicit coherent mode. Their
+results must not be interpreted as measurements of these additions' cost,
+task quality, or implementation success.
 
 ShadowFrog was evaluated on its ability to: (1) navigate and retrieve relevant shadow knowledge given a file path (read-path recall); (2) independently discover known real-world bugs through autonomous exploration without being given a problem statement (blind bug hunting on SWE-Bench Verified and at scale on SWE-Smith); (3) improve bug-fix success rates by providing pre-built shadow context to a coding agent (bug fixing on SWE-Bench Verified); and (4) generate higher-quality, more architecturally grounded feature ideas compared to a no-shadow baseline (feature ideation across 8 open-source repositories, blind-judged by an ensemble of three LLMs).
 

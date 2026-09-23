@@ -7,6 +7,90 @@ shadow knowledge bases for any codebase.
 
 ---
 
+## Unreleased
+
+### Added
+- **Cross-platform Dream setup** — `dream-setup.py` replaces the Bash entry
+  point with JSON output and a canonical native temporary root. Setup and
+  reconciliation share namespace resolution; pinned tooling includes the new
+  helpers, and cleanup receives the resolved root explicitly.
+
+### Changed
+- **More concise documentation** — consolidated README onboarding and workflow
+  guidance, with advanced operations linked to the skill references. Condensed
+  repeated guidance and examples in the core, Dream, Init, Meditate, Update,
+  and Viewer skills while preserving data formats, policy limits, and safety gates.
+
+---
+
+## 2026-09-22
+
+### Added
+- **Audience-aware Nap handoffs** — detailed planning briefs and concise
+  implementation handoffs share the same active behavior, constraints, and
+  preserved commitments. Optional design suggestions are explicitly non-binding,
+  and implementation risks are separate from blocking planning questions.
+- **Scope-qualified readiness** — views and exports distinguish recorded planning
+  acceptance from implementation status, runtime validation, and review
+  authenticity. Selected-path review includes concrete progression questions
+  without imposing a common tree goal or another review pass.
+- **Managed, judged Nap trees** — version-2 records support initialization at an
+  explicit code ref, a virtual `@base` root, ID-allocating append operations,
+  resumed parent context, independent review packets/receipts, and selection.
+  One writer uses an exclusive lock and atomic replacement; historical proposal
+  payloads remain unchanged. Ready/exported tasks require an accepted judgment
+  bound to their exact proposal, ancestry, mode and base commit. The host calls
+  the model; Python never generates features or claims to authenticate judgments.
+- **`shadow-frog-nap`** — bounded, source-grounded feature-task ideation with
+  optional probes, compact parent context, and a Python-only record
+  validator/exporter. Records pin a code baseline and keep proposals separate
+  from verified discoveries. Task exports use selected nodes' active contracts;
+  trajectory output follows one root-to-node idea path rather than stacking
+  siblings or inventing implemented dependencies.
+- **Optional coherent mode for Dream and Nap** — regularizes parent-child
+  connections while encouraging diverse siblings, independent child goals,
+  challenges, replacements, and alternatives. Shared structural validation
+  checks the connection contract without pretending to judge semantic quality.
+  Dream's mode is checked against the requested validator mode and report
+  metadata; its broad exploration behavior remains the default.
+- **Coherent branch retention** — reconciler cleanup preserves coherent
+  branches and their ancestors, including previously indexed descendants, for
+  future exploration and reproducible task baselines. Unreadable indexed
+  manifests stop cleanup rather than risking those references.
+- **Feature regression coverage** — real records and Git repositories cover
+  sibling diversity, lineage cycles, recorded limits, final-contract exports,
+  native Python operation without Bash, installed skill layouts, and branch
+  retention. New helpers require only the Python standard library and Git.
+
+### Fixed
+- **Record publication** — flush and file-sync new JSON data before atomic
+  replacement; report unsupported syncing without claiming universal reboot
+  durability, and preserve the prior record on other sync failures.
+- **Nap depth is opt-in** — removed the arbitrary default depth-2 cap and the
+  corresponding two-round planning instruction. `max_depth` may be omitted or
+  `null`; explicit caps still work, and node/probe budgets plus cycle checks
+  remain enforced. Clarified that Nap does not implement candidate features or
+  prototypes; implementation-backed questions are handed to Dream.
+- **Canonical ancestor retention** — cleanup now follows the same resolved
+  index parent edges as reconciliation and index repair, rather than reading
+  only a string `parent_branch`. List-valued and fallback lineage can no longer
+  leave a coherent experiment's named ancestors unprotected.
+- **Historical helper downgrades** — `dream-tools.py` pins current helpers and
+  instructions in an external host-local snapshot, checks its manifest/file
+  hashes, and dispatches Python tools with the selected validation mode. Parent
+  worktrees and later controller checkouts cannot silently replace those tools.
+- **One automatic pruning path** — removed the duplicate inline deletion recipe
+  and Phase 7 misrouting. Both modes use the guarded Python reconciler, including
+  mixed-mode recovery. Invalid lineage metadata exits nonzero with repair
+  guidance, while retained coherent refs remain an intentional success case.
+- **Mode/snapshot guidance** — coherent descendants refresh parent refs through
+  the orchestrator instead of reusing the initial branch map; broad-only
+  saturation/modify-file gates are now explicitly qualified. Nap's expected
+  CLI mode defaults to broad, matching Dream rather than inferring intent from
+  the record when `--mode` is omitted.
+
+---
+
 ## 2026-06-23
 
 ### Added
