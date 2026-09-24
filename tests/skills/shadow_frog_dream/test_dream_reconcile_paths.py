@@ -82,6 +82,8 @@ def test_cli_rejects_unsafe_manifest_before_any_shadow_writes(
     r"\\server\share\file", r"src\..\outside", "src/file:stream",
     "", ".", "..", "src/./file", "src//file", "src/file\0name",
     "src/.. /outside", "src/.../outside", "src/\nfile", "src/\rfile",
+    "NUL", "src/con.py", "aux.txt", "COM1", "lib/lpt9.log",
+    "COM¹", "LPT³.txt", "CONIN$", "CONOUT$.log",
 ])
 @pytest.mark.parametrize("cross_ref", [False, True])
 @pytest.mark.parametrize("dry_run", [False, True])
@@ -104,7 +106,10 @@ def test_manifest_paths_are_validated_before_writing_any_entry(
 
 
 @pytest.mark.parametrize("field", ["slug", "dream_id"])
-@pytest.mark.parametrize("value", ["../outside", "/outside", "C:/outside", r"..\outside", ".", ".."])
+@pytest.mark.parametrize("value", [
+    "../outside", "/outside", "C:/outside", r"..\outside", ".", "..",
+    "NUL", "con.txt", "COM1", "lpt³.md", "CONIN$",
+])
 def test_artifact_names_cannot_escape_their_subdirectory(dream_reconcile, tmp_path, field, value):
     entries = batch(refs=["a.py::run"])
     if field == "slug":

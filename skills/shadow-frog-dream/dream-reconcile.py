@@ -155,12 +155,26 @@ class UnsafeShadowPath(ValueError):
     """Untrusted metadata or a filesystem alias escapes the shadow output tree."""
 
 
+_WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+    *(f'COM{suffix}' for suffix in '123456789¹²³'),
+    *(f'LPT{suffix}' for suffix in '123456789¹²³'),
+}
+
+
+def _is_windows_reserved_part(part):
+    """Return whether one path component names a Windows device."""
+    basename = part.rstrip(' .').split('.', 1)[0].upper()
+    return basename in _WINDOWS_RESERVED_NAMES
+
+
 def _relative_parts(value, field, *, single=False):
     if not isinstance(value, str) or not value:
         raise UnsafeShadowPath(f"{field}: expected a nonempty relative path, got {value!r}")
     parts = value.split('/')
     if (
         any(not part.rstrip(' .') for part in parts)
+        or any(_is_windows_reserved_part(part) for part in parts)
         or any(char in value for char in ('\\', ':', '\0', '\r', '\n'))
         or PureWindowsPath(value).drive
         or (single and len(parts) != 1)
