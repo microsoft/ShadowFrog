@@ -104,21 +104,6 @@ At a high level, we found that ShadowFrog performed strongly on knowledge retrie
 
 ## Limitations
 
-Citation scores are local counts of discovery content emitted by the optional
-core retrieval helper or the user-facing Viewer,
-not proof that an agent used it, that it improved an outcome, or that it is true.
-Direct file/symbol reads are the primary agent workflow and do not require these
-helpers or their database. Native reads and failed ledger updates are not counted;
-instrumentation is therefore partial by design. Scores can be biased
-by prior ranking and repeated exposure; relevance, provenance, and verification
-remain more important. Bounded results may omit relevant knowledge, so agents
-must follow pagination and inspect preferences rather than treating a shortlist
-as exhaustive. Claim rewrites and renames may create fresh zero-score identities.
-Continuation chunks share one logical-read event. Short contention budgets can
-leave explicitly warned, unrecorded visits; atomicity does not guarantee complete
-accounting. Retry receipts and pagination snapshots expire or reach capacity,
-while score storage grows with distinct knowledge identities.
-
 ShadowFrog was developed for research and experimental purposes. Further testing and validation are needed before considering its application in commercial or real-world scenarios.
 
 ShadowFrog was designed and tested using the English language. Performance in other languages may vary and should be assessed by someone who is both an expert in the expected outputs and a native speaker of that language.
