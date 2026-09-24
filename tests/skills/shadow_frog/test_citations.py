@@ -89,6 +89,42 @@ def test_literal_whitespace_is_not_normalized_away(citations, tmp_path):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("boundary", ["notes-heading", "fenced-example"])
+def test_non_discovery_sections_cannot_be_cited_as_previous_symbol(citations, tmp_path, boundary):
+    path = per_file(tmp_path)
+    sample = "- Example-only claim.\n  _(verified, source: exploration, citation_score: 2)_\n"
+    if boundary == "notes-heading":
+        sample = "## Notes\n\n" + sample
+    else:
+        sample = "```markdown\n" + sample + "```\n"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("## Cross-References", sample + "\n## Cross-References"),
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+    with pytest.raises(citations.CitationError, match="found 0"):
+        citations.record_citations(path, ["Example-only claim."], symbol="Auth.login")
+    assert path.read_bytes() == before
+
+
+def test_discovery_after_fenced_example_keeps_its_actual_symbol(citations, tmp_path):
+    path = per_file(tmp_path)
+    fenced = (
+        "```markdown\n## `WrongSymbol`\n\n- Example-only claim.\n"
+        "  _(verified, source: exploration, citation_score: 2)_\n```\n\n"
+        "- Actual later claim.\n  _(verified, source: user, citation_score: 0)_\n\n"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("## Cross-References", fenced + "## Cross-References"),
+        encoding="utf-8",
+    )
+    before = path.read_text(encoding="utf-8")
+    citations.record_citations(path, ["Actual later claim."], symbol="Auth.login")
+    assert path.read_text(encoding="utf-8") == before.replace(
+        "source: user, citation_score: 0", "source: user, citation_score: 1",
+    )
+
+
 def test_crlf_bom_and_existing_metadata_are_preserved(citations, tmp_path):
     path = per_file(tmp_path, score=", citation_score: 7", newline="\r\n")
     before = b"\xef\xbb\xbf" + path.read_bytes()
@@ -195,8 +231,9 @@ def test_json_score_requires_a_nonnegative_integer(citations, score):
 def test_invalid_existing_score_is_not_reset(citations, tmp_path, raw):
     path = per_file(tmp_path, score=f", citation_score: {raw}")
     before = path.read_bytes()
-    with pytest.raises(citations.CitationError, match="Malformed metadata"):
+    with pytest.raises(citations.CitationError, match="Line .*Malformed metadata") as exc:
         citations.record_citations(path, ["Key `a  b` is distinct."], symbol="Auth.login")
+    assert str(path.resolve()) in str(exc.value)
     assert path.read_bytes() == before
 
 

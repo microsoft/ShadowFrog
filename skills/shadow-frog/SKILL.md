@@ -51,6 +51,10 @@ discovery or preference has one visible `citation_score`: a nonnegative integer,
 initially 0. Missing scores also mean 0. It is approximate, agent-reported
 revisit frequency, not confidence or proof of usefulness.
 
+When updating an existing shadow, preserve all knowledge and existing scores:
+missing `citation_score` fields mean `0` and are added on the first recorded
+citation, so no reinitialization is required.
+
 After deliberately consulting an entry, record one citation for it **per task**.
 Do not count every entry merely because its file was opened, repeat the count
 on rereads, or count automatic previews that you did not use. Batch updates when
@@ -71,6 +75,7 @@ Use `--symbol File-Level` for file-wide entries; omit `--symbol` for preferences
 and `_cross/` files. Repeat `--text` to update several entries in one section
 atomically. `--shadow-dir` identifies an explicit nonstandard shadow root.
 Unknown/ambiguous claims and invalid scores fail with corrective feedback.
+Fenced examples and unrelated headings are not citation targets.
 
 The helper locks only its target file and publishes the score changes atomically.
 Coordinate citation writes with ordinary knowledge edits; unrelated editors do

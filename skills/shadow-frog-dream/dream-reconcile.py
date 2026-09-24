@@ -47,7 +47,10 @@ _bytecode = sys.dont_write_bytecode
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shadow-frog"))
 try:
-    from _citations import CitationError, metadata_score, set_metadata_score, validate_score
+    from _citations import (
+        CitationError, cross_metadata_line, metadata_score, set_metadata_score,
+        validate_score,
+    )
 except ImportError as exc:
     raise SystemExit("ERROR: Missing core citation metadata parser; reinstall the full skill set") from exc
 finally:
@@ -803,13 +806,14 @@ def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root, citation_sco
             break
     to_add = [r for r in new_refs if r and r not in existing]
     score_changed = False
-    for index, line in enumerate(lines):
-        if line.strip().startswith("_(") and "source:" in line:
-            previous_score = metadata_score(line)
-            if citation_score > previous_score:
-                lines[index] = set_metadata_score(line, citation_score)
-                score_changed = True
-            break
+    metadata_index = cross_metadata_line(lines)
+    if metadata_index is not None:
+        previous_score = metadata_score(lines[metadata_index])
+        if citation_score > previous_score:
+            lines[metadata_index] = set_metadata_score(lines[metadata_index], citation_score)
+            score_changed = True
+    elif citation_score:
+        raise CitationError(f"{cross_path}: restore discovery metadata before merging citation scores")
     if not to_add and not score_changed:
         return False
     lines[block_end:block_end] = [f'- `{r}`' for r in to_add]

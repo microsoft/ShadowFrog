@@ -45,6 +45,24 @@ def test_existing_cross_refs_and_scores_merge_independently(dream_reconcile, tmp
     assert "`b.py::call`" in path.read_text(encoding="utf-8")
 
 
+def test_cross_merge_does_not_edit_metadata_inside_examples(dream_reconcile, tmp_path):
+    path = tmp_path / ".shadow/_cross/contract.md"
+    path.parent.mkdir(parents=True)
+    original = (
+        "# Contract\n\n**Refs**:\n- `a.py::run`\n\n"
+        "```markdown\n_(verified, source: exploration, citation_score: 2)_\n```\n\n"
+        "**Discovery**: Shared claim.\n\n"
+        "_(verified, source: exploration, citation_score: 4)_\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    assert dream_reconcile._merge_refs_into_cross_file(
+        str(path), ["a.py::run"], repo_root=str(tmp_path), citation_score=7,
+    )
+    assert path.read_text(encoding="utf-8") == original.replace(
+        "citation_score: 4", "citation_score: 7",
+    )
+
+
 @pytest.mark.parametrize("score", [-1, 0.5, True, None, "4"])
 @pytest.mark.parametrize("kind", ["discoveries", "cross_cutting"])
 def test_invalid_manifest_score_fails_before_any_publication(dream_reconcile, tmp_path, score, kind):

@@ -65,25 +65,50 @@ def _claim(value):
 def _entries(lines, kind):
     section = None
     claim = None
+    fence = None
     for index, line in enumerate(lines):
         stripped = line.strip()
-        heading = re.fullmatch(r"#{2,3}\s+(?:`(.+)`|(File-Level|Cross-References))", stripped)
-        if heading:
-            section = _symbol(heading.group(1) or heading.group(2))
+        if fence is not None:
+            if claim is not None:
+                claim.append(stripped)
+            if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + ",}", stripped):
+                fence = None
+            continue
+        opening = re.match(r"`{3,}|~{3,}", stripped)
+        if opening:
+            fence = opening.group(0)
+            if claim is not None:
+                claim.append(stripped)
+            continue
+        if re.match(r"#{1,6}\s", stripped):
+            heading = re.fullmatch(r"#{2,3}\s+(?:`(.+)`|(File-Level|Cross-References))", stripped)
+            section = _symbol(heading.group(1) or heading.group(2)) if heading else None
             claim = None
+            continue
         if kind == "cross" and stripped.startswith("**Discovery**:"):
             claim = [stripped.partition(":")[2].strip()]
         elif kind != "cross" and stripped.startswith("- "):
             claim = [stripped[2:]] if kind == "preference" or section not in (None, "Cross-References") else None
         elif claim is not None:
             if stripped.startswith("_("):
-                metadata_score(line)
+                try:
+                    metadata_score(line)
+                except CitationError as exc:
+                    raise CitationError(f"Line {index + 1}: {exc}") from exc
                 yield section if kind == "file" else None, _claim("\n".join(claim)), index
                 claim = None
             elif stripped.startswith(("Also involves:", "Dream report:", "#")):
                 claim = None
             elif stripped:
                 claim.append(stripped)
+
+
+def cross_metadata_line(lines):
+    """Locate the single actual cross-cutting discovery's metadata, excluding examples."""
+    entries = list(_entries(lines, "cross"))
+    if len(entries) > 1:
+        raise CitationError("Cross-cutting file contains multiple discoveries; resolve ambiguity before updating scores")
+    return entries[0][2] if entries else None
 
 
 def _target(path, shadow_dir):
@@ -146,7 +171,10 @@ def record_citations(path, texts, *, symbol=None, shadow_dir=None, timeout=2.0):
     with _locked(path, timeout):
         original = path.read_bytes()
         lines = original.decode("utf-8").splitlines(keepends=True)
-        entries = list(_entries(lines, kind))
+        try:
+            entries = list(_entries(lines, kind))
+        except CitationError as exc:
+            raise CitationError(f"{path}: {exc}") from exc
         updates = []
         for text in targets:
             matches = [
