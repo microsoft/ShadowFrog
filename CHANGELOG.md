@@ -12,8 +12,8 @@ shadow knowledge bases for any codebase.
 ### Added
 - **Single-score knowledge retrieval (draft)** — derived discovery fingerprints,
   zero-default local citation scores, and concurrent-safe SQLite bookkeeping
-  shared across Git worktrees. Bounded search/symbol views, stable pagination,
-  and individual expansion avoid loading entire large shadow sections.
+  shared across Git worktrees. Optional core file/symbol retrieval, stable
+  pagination, and individual expansion avoid loading entire large sections.
   Citation scores measure emitted content, not correctness or proven usefulness.
 
 ### Fixed
@@ -30,9 +30,10 @@ shadow knowledge bases for any codebase.
   and duplicate labels, and binds expansion continuations to one unchanged logical
   read. Compact hooks share their budget across several previews, and local retry
   receipts, pagination snapshots, and journals have explicit retention limits.
-- Retrieval views now show IDs/scores and paginate by default. Preferences
-  remain separately accessible, trust and relevance precede popularity, and
-  hooks remain fail-open while surfacing citation warnings.
+- Direct file/symbol navigation remains the agent default. Optional agent
+  retrieval lives in `shadow-frog`; the Viewer serves user browsing and
+  visualization. Both share parsing and citation metadata. Hooks use the core
+  reader and remain fail-open while surfacing citation warnings.
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed
   repeated guidance and examples in the core, Dream, Init, Meditate, Update,

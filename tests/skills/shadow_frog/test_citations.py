@@ -13,7 +13,7 @@ import pytest
 from tests.conftest import _load_script
 
 
-HELPER = Path(__file__).resolve().parents[3] / "skills/shadow-frog-viewer/_citations.py"
+HELPER = Path(__file__).resolve().parents[3] / "skills/shadow-frog/_citations.py"
 
 
 @pytest.fixture

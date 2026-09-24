@@ -169,7 +169,7 @@ class TestPreToolHappyPath:
         context = json.loads(result.stdout)["additionalContext"]
         assert "Actionable discoveries" in context
         assert "id=d_" in context
-        assert "Viewer reported a warning" in context
+        assert "Reader reported a warning" in context
         assert ledger.read_bytes() == b"invalid sqlite"
 
 

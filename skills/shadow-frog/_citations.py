@@ -1,4 +1,4 @@
-"""Local citation scores; Markdown remains the authoritative knowledge store."""
+"""Shared local citation scores; Markdown remains the authoritative knowledge store."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass

@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   viewer-compatibility:
-    name: Viewer (Python 3.9)
+    name: Shadow helpers (Python 3.9)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,6 +22,8 @@ jobs:
         run: |
           python skills/shadow-frog-viewer/shadow-viewer.py --help
           python skills/shadow-frog-viewer/shadow-viewer.py --shadow-dir examples/coupon-demo/.shadow --search coupon --limit 2 --no-record
+          python skills/shadow-frog/shadow-read.py --help
+          python skills/shadow-frog/shadow-read.py cart.py --shadow-dir examples/coupon-demo/.shadow --limit 2 --no-record
 
   pytest:
     name: pytest (${{ matrix.os }}, Python 3.12)

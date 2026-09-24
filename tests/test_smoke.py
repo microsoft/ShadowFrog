@@ -14,10 +14,13 @@ def test_repo_root_resolves(repo_root):
 def test_all_script_fixtures_load(
     shadow_init, shadow_viewer, dream_reconcile, dream_validate,
     dream_coverage, dream_lineage, meditate_repair, nap, coherence, dream_tools,
+    shadow_knowledge, shadow_reader,
 ):
     for mod, expected_attr in [
         (shadow_init, "main"),
         (shadow_viewer, "main"),
+        (shadow_reader, "main"),
+        (shadow_knowledge, "view_file"),
         (dream_reconcile, "main"),
         (dream_validate, "main"),
         (dream_tools, "pin_tooling"),

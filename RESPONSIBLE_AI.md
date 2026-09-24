@@ -104,9 +104,12 @@ At a high level, we found that ShadowFrog performed strongly on knowledge retrie
 
 ## Limitations
 
-Citation scores are local counts of discovery content emitted by the viewer,
+Citation scores are local counts of discovery content emitted by the optional
+core retrieval helper or the user-facing Viewer,
 not proof that an agent used it, that it improved an outcome, or that it is true.
-Raw file reads and failed ledger updates are not counted. Scores can be biased
+Direct file/symbol reads are the primary agent workflow and do not require these
+helpers or their database. Native reads and failed ledger updates are not counted;
+instrumentation is therefore partial by design. Scores can be biased
 by prior ranking and repeated exposure; relevance, provenance, and verification
 remain more important. Bounded results may omit relevant knowledge, so agents
 must follow pagination and inspect preferences rather than treating a shortlist

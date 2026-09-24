@@ -11,6 +11,10 @@ ShadowFrog/
   skills/
     shadow-frog/SKILL.md         Main entrypoint (docs, reference system, search)
     shadow-frog/_coherence.py    Shared structural parent-connection validation
+    shadow-frog/shadow-read.py   Optional bounded agent retrieval by file/symbol
+    shadow-frog/_knowledge.py    Shared parsing, retrieval, and user-facing views
+    shadow-frog/_citations.py    Atomic local citation ledger and retrieval cursors
+    shadow-frog/retrieval.md     On-demand helper and telemetry reference
     shadow-frog-init/            First-time setup (create .shadow/)
       SKILL.md                   Init instructions + fallback steps
       shadow-init.py             Python helper script
@@ -29,10 +33,9 @@ ShadowFrog/
       SKILL.md                   Bounded ideation, evidence, and task export instructions
       nap.py                     Portable record validator, parent context, and exporter
     shadow-frog-meditate/SKILL.md Dedup, merge, and resolve conflicting discoveries
-    shadow-frog-viewer/          Browse and query the shadow knowledge base
+    shadow-frog-viewer/          User-facing knowledge inspection and visualization
       SKILL.md                   Query instructions + shell fallbacks
-      shadow-viewer.py           Python helper script
-      _citations.py              Atomic local citation ledger and retrieval cursors
+      shadow-viewer.py           User CLI using the core shared knowledge implementation
       dream-lineage.py           Dream lineage visualization
   hook-templates/
     shadow-frog-hooks.json       Copilot CLI hook config (sessionStart, preToolUse)
@@ -119,14 +122,22 @@ Preference (`_prefs.md` — project-wide, no file/symbol anchor):
 
 ### Citation-Aware Retrieval
 
+- Direct `.shadow/<path>.md` and symbol navigation is primary for agents.
+  Optional agent helpers live under `shadow-frog/`; the Viewer serves user
+  browsing/visualization requests, not a required code-work retrieval gateway.
+- Share parsing, identities and counters through core `_knowledge.py` and
+  `_citations.py`. Hooks use the core reader. Do not duplicate backend logic or
+  add compatibility re-exports in the user Viewer.
 - Keep the discovery grammar unchanged: viewer fingerprints and `citation_score`
   are derived/local metadata, not additional Markdown fields.
 - Scores start at zero and increment only for content emitted by a retrieval
   view; expansion chunks share one revision-bound logical read. They measure
   exposure, not verified usefulness.
-- Use the common-Git SQLite ledger for multiprocess/worktree updates; do not
+- Use the common-Git SQLite ledger for instrumented multiprocess/worktree updates; do not
   rewrite shadow files on reads. Telemetry failures must warn without hiding
   knowledge. Summary/audit/parser-only operations do not increment scores.
+- Native reads remain normal and uncounted. Never make citation accounting a
+  prerequisite for accessing Markdown, or require an extra read merely to count.
 - Rank relevance and trust ahead of scores; preserve room for zero-score entries.
   Page large results, expand by ID, and never use only the shortlist for dedup.
 - Fingerprints bind kind, canonical anchor, whitespace-preserving parsed claim

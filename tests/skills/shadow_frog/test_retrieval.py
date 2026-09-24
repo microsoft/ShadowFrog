@@ -1,4 +1,4 @@
-"""Citation ranking, bounded context, expansion, and stable pagination."""
+"""Core agent retrieval: citation ranking, bounded context, and stable pagination."""
 
 from dataclasses import replace
 import io
@@ -43,14 +43,14 @@ def text_cursor(text):
     return match.group(1) if match else None
 
 
-def test_only_emitted_entries_count_and_no_markdown_changes(shadow_viewer, tmp_path, capsys):
+def test_only_emitted_entries_count_and_no_markdown_changes(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 12)
     before = {path: path.read_bytes() for path in shadow.rglob("*") if path.is_file()}
-    entries = shadow_viewer._knowledge_entries(shadow)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     assert store.scores([entry["id"] for entry in entries]) == {}
-    shadow_viewer.view_search(
-        shadow, "Claim", options=shadow_viewer.RetrievalOptions(limit=2, event_id="first"),
+    shadow_knowledge.view_search(
+        shadow, "Claim", options=shadow_knowledge.RetrievalOptions(limit=2, event_id="first"),
     )
     output = capsys.readouterr().out
     emitted = ids(output)
@@ -60,45 +60,45 @@ def test_only_emitted_entries_count_and_no_markdown_changes(shadow_viewer, tmp_p
     assert sorted(path.name for path in shadow.iterdir()) == ["source.py.md"]
 
 
-def test_retries_and_no_record_do_not_double_count(shadow_viewer, tmp_path, capsys):
+def test_retries_and_no_record_do_not_double_count(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
-    options = shadow_viewer.RetrievalOptions(event_id="retry")
+    options = shadow_knowledge.RetrievalOptions(event_id="retry")
     for _ in range(2):
-        shadow_viewer.view_search(shadow, "Claim", options=options)
+        shadow_knowledge.view_search(shadow, "Claim", options=options)
     output = capsys.readouterr().out
     identity = ids(output)[0]
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     assert store.scores([identity]) == {identity: 1}
-    shadow_viewer.view_get(shadow, identity, options=replace(options, record=False))
+    shadow_knowledge.view_get(shadow, identity, options=replace(options, record=False))
     capsys.readouterr()
     assert store.scores([identity]) == {identity: 1}
 
 
-def test_ten_thousand_claims_have_bounded_output(shadow_viewer, tmp_path, capsys):
+def test_ten_thousand_claims_have_bounded_output(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 10000)
-    options = shadow_viewer.RetrievalOptions(limit=10, max_chars=1800)
+    options = shadow_knowledge.RetrievalOptions(limit=10, max_chars=1800)
     started = time.monotonic()
-    shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+    shadow_knowledge.view_symbol(shadow, "source.py::run", options=options)
     output = capsys.readouterr().out
     assert len(output) <= 1800
     assert "10000 results" in output and len(ids(output)) <= 10
     assert ids(output) and cursor(output)
     assert time.monotonic() - started < 10
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
-    all_ids = [entry["id"] for entry in shadow_viewer._knowledge_entries(shadow)]
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
+    all_ids = [entry["id"] for entry in shadow_knowledge._knowledge_entries(shadow)]
     assert len(all_ids) == len(set(all_ids)) == 10000
     assert store.scores(all_ids) == dict.fromkeys(ids(output), 1)
 
 
-def test_cursor_is_stable_despite_other_readers_updating_scores(shadow_viewer, tmp_path, capsys):
+def test_cursor_is_stable_despite_other_readers_updating_scores(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 23, text_size=2)
-    options = shadow_viewer.RetrievalOptions(limit=3, max_chars=1400)
-    entries = shadow_viewer._knowledge_entries(shadow)
+    options = shadow_knowledge.RetrievalOptions(limit=3, max_chars=1400)
+    entries = shadow_knowledge._knowledge_entries(shadow)
     expected = {entry["id"] for entry in entries}
     found = []
     next_cursor = None
     while True:
-        shadow_viewer.view_symbol(
+        shadow_knowledge.view_symbol(
             shadow, "source.py::run", options=replace(options, cursor=next_cursor),
         )
         output = capsys.readouterr().out
@@ -107,35 +107,35 @@ def test_cursor_is_stable_despite_other_readers_updating_scores(shadow_viewer, t
         next_cursor = cursor(output)
         if next_cursor is None:
             break
-        shadow_viewer.CitationStore.for_shadow(shadow).record(
+        shadow_knowledge.CitationStore.for_shadow(shadow).record(
             [entries[-1]["id"]], f"concurrent-{len(found)}",
         )
     assert len(found) == len(set(found)) == 23
     assert set(found) == expected
 
 
-def test_changed_knowledge_invalidates_cursor(shadow_viewer, tmp_path, capsys):
+def test_changed_knowledge_invalidates_cursor(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path)
-    options = shadow_viewer.RetrievalOptions(limit=1)
-    shadow_viewer.view_search(shadow, "Claim", options=options)
+    options = shadow_knowledge.RetrievalOptions(limit=1)
+    shadow_knowledge.view_search(shadow, "Claim", options=options)
     previous = cursor(capsys.readouterr().out)
     path = shadow / "source.py.md"
     path.write_text(path.read_text(encoding="utf-8").replace("details", "different"), encoding="utf-8")
     with pytest.raises(ValueError, match="changed"):
-        shadow_viewer.view_search(shadow, "Claim", options=replace(options, cursor=previous))
+        shadow_knowledge.view_search(shadow, "Claim", options=replace(options, cursor=previous))
 
 
-def test_removed_results_invalidate_cursor_instead_of_claiming_empty_success(shadow_viewer, tmp_path, capsys):
+def test_removed_results_invalidate_cursor_instead_of_claiming_empty_success(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path)
-    options = shadow_viewer.RetrievalOptions(limit=1)
-    shadow_viewer.view_search(shadow, "Claim", options=options)
+    options = shadow_knowledge.RetrievalOptions(limit=1)
+    shadow_knowledge.view_search(shadow, "Claim", options=options)
     previous = cursor(capsys.readouterr().out)
     (shadow / "source.py.md").unlink()
     with pytest.raises(ValueError, match="changed"):
-        shadow_viewer.view_search(shadow, "Claim", options=replace(options, cursor=previous))
+        shadow_knowledge.view_search(shadow, "Claim", options=replace(options, cursor=previous))
 
 
-def test_popularity_never_overrides_trust_and_allows_new_claim(shadow_viewer, tmp_path):
+def test_popularity_never_overrides_trust_and_allows_new_claim(shadow_knowledge, tmp_path):
     entries = [
         {"id": "user", "source": "user", "status": "verified"},
         {"id": "popular", "source": "exploration", "status": "verified"},
@@ -145,18 +145,18 @@ def test_popularity_never_overrides_trust_and_allows_new_claim(shadow_viewer, tm
         {"id": "refuted", "source": "user", "status": "refuted"},
     ]
     scores = {"popular": 100, "popular2": 90, "popular3": 80, "refuted": 10000}
-    ranked = shadow_viewer._rank_entries(entries, scores, 3)
+    ranked = shadow_knowledge._rank_entries(entries, scores, 3)
     assert ranked[0]["id"] == "user" and ranked[-1]["id"] == "refuted"
     assert [entry["id"] for entry in ranked][:3] == ["user", "popular", "new"]
 
 
-def test_zero_score_opportunity_accounts_for_character_budget(shadow_viewer, tmp_path, capsys):
+def test_zero_score_opportunity_accounts_for_character_budget(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 7)
-    entries = shadow_viewer._knowledge_entries(shadow)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     store.record([entry["id"] for entry in entries[:-1]], "prior-read")
-    shadow_viewer.view_search(
-        shadow, "Claim", options=shadow_viewer.RetrievalOptions(limit=10, max_chars=1000),
+    shadow_knowledge.view_search(
+        shadow, "Claim", options=shadow_knowledge.RetrievalOptions(limit=10, max_chars=1000),
     )
     output = capsys.readouterr().out
     assert len(output) <= 1000
@@ -165,21 +165,21 @@ def test_zero_score_opportunity_accounts_for_character_budget(shadow_viewer, tmp
 
 
 @pytest.mark.parametrize("view", ["top", "symbol"])
-def test_zero_score_slot_accounts_for_higher_trust_rows(shadow_viewer, tmp_path, capsys, view):
+def test_zero_score_slot_accounts_for_higher_trust_rows(shadow_knowledge, tmp_path, capsys, view):
     shadow = make_shadow(tmp_path, 5, text_size=2)
     path = shadow / "source.py.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace("source: exploration", "source: user", 1),
         encoding="utf-8",
     )
-    entries = shadow_viewer._knowledge_entries(shadow)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     store.record([entry["id"] for entry in entries[1:4]], "prior")
-    options = shadow_viewer.RetrievalOptions(limit=3, max_chars=600)
+    options = shadow_knowledge.RetrievalOptions(limit=3, max_chars=600)
     if view == "top":
-        shadow_viewer.view_top(shadow, "source.py", "bug", 3, 600, options=options)
+        shadow_knowledge.view_top(shadow, "source.py", "bug", 3, 600, options=options)
     else:
-        shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+        shadow_knowledge.view_symbol(shadow, "source.py::run", options=options)
     output = capsys.readouterr().out
     assert len(output) <= 600
     assert ids(output)[0] == entries[0]["id"]
@@ -187,17 +187,17 @@ def test_zero_score_slot_accounts_for_higher_trust_rows(shadow_viewer, tmp_path,
 
 
 @pytest.mark.parametrize("file", ["cart.py", "inventory.py", "test_cart.py"])
-def test_default_hook_budget_returns_multiple_warnings(shadow_viewer, coupon_demo, capsys, file):
-    shadow_viewer.view_top(coupon_demo / ".shadow", file, "bug,security", 3, 600)
+def test_default_hook_budget_returns_multiple_warnings(shadow_knowledge, coupon_demo, capsys, file):
+    shadow_knowledge.view_top(coupon_demo / ".shadow", file, "bug,security", 3, 600)
     output = capsys.readouterr().out
     assert len(output) <= 600
     assert len(ids(output)) == 3
     assert "citation_score=" not in output
 
 
-def test_metadata_changes_preserve_identity_but_not_claim_changes(shadow_viewer, tmp_path):
+def test_metadata_changes_preserve_identity_but_not_claim_changes(shadow_knowledge, tmp_path):
     shadow = make_shadow(tmp_path, 1)
-    original = shadow_viewer._knowledge_entries(shadow)[0]["id"]
+    original = shadow_knowledge._knowledge_entries(shadow)[0]["id"]
     path = shadow / "source.py.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
@@ -205,40 +205,40 @@ def test_metadata_changes_preserve_identity_but_not_claim_changes(shadow_viewer,
         ),
         encoding="utf-8",
     )
-    assert shadow_viewer._knowledge_entries(shadow)[0]["id"] == original
+    assert shadow_knowledge._knowledge_entries(shadow)[0]["id"] == original
     path.write_text(path.read_text(encoding="utf-8").replace("Claim", "Different claim"), encoding="utf-8")
-    assert shadow_viewer._knowledge_entries(shadow)[0]["id"] != original
+    assert shadow_knowledge._knowledge_entries(shadow)[0]["id"] != original
 
 
-def test_duplicate_preferences_share_one_identity_without_losing_trust(shadow_viewer, tmp_path, capsys):
+def test_duplicate_preferences_share_one_identity_without_losing_trust(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
     (shadow / "_prefs.md").write_text(
         "# Preferences\n\n- Preserve the contract.\n  _(source: interaction)_\n"
         "\n- Preserve the contract.\n  _(source: user)_\n",
         encoding="utf-8",
     )
-    shadow_viewer.view_prefs(shadow)
+    shadow_knowledge.view_prefs(shadow)
     output = capsys.readouterr().out
     assert "Project Preferences (1 total)" in output and "[user]" in output
     assert len(ids(output)) == 1
-    assert shadow_viewer.CitationStore.for_shadow(shadow).scores(ids(output)) == dict.fromkeys(ids(output), 1)
+    assert shadow_knowledge.CitationStore.for_shadow(shadow).scores(ids(output)) == dict.fromkeys(ids(output), 1)
 
 
 @pytest.mark.parametrize("kind", ["class", "interface", "enum", "trait", "struct", "protocol", "module"])
-def test_container_symbols_use_canonical_anchors(shadow_viewer, shadow_init, tmp_path, capsys, kind):
+def test_container_symbols_use_canonical_anchors(shadow_knowledge, shadow_init, tmp_path, capsys, kind):
     shadow = make_shadow(tmp_path, 1)
     heading = shadow_init.Symbol("Container", kind).heading_text
     path = shadow / "source.py.md"
     path.write_text(path.read_text(encoding="utf-8").replace("`run`", f"`{heading}`"), encoding="utf-8")
-    shadow_viewer.view_symbol(shadow, "source.py::Container")
+    shadow_knowledge.view_symbol(shadow, "source.py::Container")
     result = capsys.readouterr().out
     assert "Claim 00000" in result and "source.py::Container" in result
-    shadow_viewer.view_get(shadow, ids(result)[0])
+    shadow_knowledge.view_get(shadow, ids(result)[0])
     assert "source.py::Container" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("query", ["src/auth.py", unicodedata.normalize("NFD", "Src/caf\u00e9.py")])
-def test_filesystem_alias_ids_expand_and_include_cross_refs(shadow_viewer, tmp_path, capsys, query):
+def test_filesystem_alias_ids_expand_and_include_cross_refs(shadow_knowledge, tmp_path, capsys, query):
     actual = "Src/Auth.py" if query == "src/auth.py" else "Src/caf\u00e9.py"
     shadow = tmp_path / ".shadow"
     path = shadow / f"{actual}.md"
@@ -257,17 +257,17 @@ def test_filesystem_alias_ids_expand_and_include_cross_refs(shadow_viewer, tmp_p
         "**Discovery**: Cross-file audit contract.\n\n_(verified, source: exploration)_\n",
         encoding="utf-8",
     )
-    global_entries = shadow_viewer._knowledge_entries(shadow)
-    shadow_viewer.view_symbol(shadow, f"{query}::run")
+    global_entries = shadow_knowledge._knowledge_entries(shadow)
+    shadow_knowledge.view_symbol(shadow, f"{query}::run")
     result = capsys.readouterr().out
     assert "Cross-file audit contract." in result and "Keep the audit trail." in result
     assert set(ids(result)) == {entry["id"] for entry in global_entries}
     for identity in ids(result):
-        shadow_viewer.view_get(shadow, identity, options=shadow_viewer.RetrievalOptions(record=False))
+        shadow_knowledge.view_get(shadow, identity, options=shadow_knowledge.RetrievalOptions(record=False))
         assert identity in capsys.readouterr().out
 
 
-def test_distinct_case_sensitive_files_are_not_folded(shadow_viewer, tmp_path):
+def test_distinct_case_sensitive_files_are_not_folded(shadow_knowledge, tmp_path):
     shadow = tmp_path / ".shadow"
     shadow.mkdir()
     upper, lower = shadow / "A.py.md", shadow / "a.py.md"
@@ -275,10 +275,10 @@ def test_distinct_case_sensitive_files_are_not_folded(shadow_viewer, tmp_path):
     if lower.exists():
         pytest.skip("Filesystem does not support distinct case-only names")
     lower.write_text("# Shadow: a.py\n\n## `run`\n\n- Claim.\n", encoding="utf-8")
-    assert len({entry["id"] for entry in shadow_viewer._knowledge_entries(shadow)}) == 2
+    assert len({entry["id"] for entry in shadow_knowledge._knowledge_entries(shadow)}) == 2
 
 
-def test_literal_whitespace_remains_separately_searchable(shadow_viewer, tmp_path, capsys):
+def test_literal_whitespace_remains_separately_searchable(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 0)
     path = shadow / "source.py.md"
     path.write_text(
@@ -287,16 +287,16 @@ def test_literal_whitespace_remains_separately_searchable(shadow_viewer, tmp_pat
         "- Key `a  b` is accepted.\n  _(verified, source: exploration)_\n",
         encoding="utf-8",
     )
-    entries = shadow_viewer._knowledge_entries(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
     assert len(entries) == 2 and entries[0]["id"] != entries[1]["id"]
-    shadow_viewer.view_search(shadow, "a  b")
+    shadow_knowledge.view_search(shadow, "a  b")
     result = capsys.readouterr().out
     assert ids(result) == [entries[1]["id"]]
-    shadow_viewer.view_get(shadow, entries[1]["id"])
+    shadow_knowledge.view_get(shadow, entries[1]["id"])
     assert "`a  b`" in capsys.readouterr().out
 
 
-def test_duplicate_claims_union_labels_and_preserve_stronger_source(shadow_viewer, tmp_path, capsys):
+def test_duplicate_claims_union_labels_and_preserve_stronger_source(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 0)
     (shadow / "source.py.md").write_text(
         "# Shadow: source.py\n\n## `run`\n\n"
@@ -304,31 +304,31 @@ def test_duplicate_claims_union_labels_and_preserve_stronger_source(shadow_viewe
         "- Shared claim.\n  _(verified, source: exploration, labels: [security])_\n",
         encoding="utf-8",
     )
-    entries = shadow_viewer._knowledge_entries(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
     assert len(entries) == 1
     assert entries[0]["labels"] == ["bug", "security"] and entries[0]["source"] == "user"
-    shadow_viewer.view_labels(shadow, "security")
+    shadow_knowledge.view_labels(shadow, "security")
     assert ids(capsys.readouterr().out) == [entries[0]["id"]]
 
 
 def test_installed_import_does_not_create_bytecode(repo_root, tmp_path):
-    installed = tmp_path / ".github/skills/shadow-frog-viewer"
+    installed = tmp_path / ".github/skills/shadow-frog"
     shutil.copytree(
-        repo_root / "skills/shadow-frog-viewer", installed,
+        repo_root / "skills/shadow-frog", installed,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
     env = os.environ.copy()
     env.pop("PYTHONDONTWRITEBYTECODE", None)
     env.pop("PYTHONPYCACHEPREFIX", None)
     result = subprocess.run(
-        [sys.executable, str(installed / "shadow-viewer.py"), "--help"],
+        [sys.executable, str(installed / "shadow-read.py"), "--help"],
         env=env, capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     assert not list(installed.rglob("*.pyc"))
 
 
-def test_missing_home_does_not_hide_standalone_knowledge(shadow_viewer, tmp_path, monkeypatch, capsys):
+def test_missing_home_does_not_hide_standalone_knowledge(shadow_knowledge, tmp_path, monkeypatch, capsys):
     from pathlib import Path
 
     shadow = make_shadow(tmp_path, 1)
@@ -339,22 +339,22 @@ def test_missing_home_does_not_hide_standalone_knowledge(shadow_viewer, tmp_path
         raise RuntimeError("Could not determine home directory")
 
     monkeypatch.setattr(Path, "home", missing_home)
-    shadow_viewer.view_search(shadow, "Claim")
+    shadow_knowledge.view_search(shadow, "Claim")
     result = capsys.readouterr()
     assert "Claim 00000" in result.out
     assert "will not be recorded" in result.err and "home" in result.err
 
 
-def test_get_chunks_long_claim_without_exceeding_budget(shadow_viewer, tmp_path, capsys):
+def test_get_chunks_long_claim_without_exceeding_budget(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1, text_size=500)
-    entry = shadow_viewer._knowledge_entries(shadow)[0]
+    entry = shadow_knowledge._knowledge_entries(shadow)[0]
     identity = entry["id"]
     continuation = None
     pieces = []
     while True:
-        shadow_viewer.view_get(
+        shadow_knowledge.view_get(
             shadow, identity,
-            options=shadow_viewer.RetrievalOptions(max_chars=500, text_cursor=continuation),
+            options=shadow_knowledge.RetrievalOptions(max_chars=500, text_cursor=continuation),
         )
         output = capsys.readouterr().out
         assert len(output) <= 500
@@ -363,14 +363,14 @@ def test_get_chunks_long_claim_without_exceeding_budget(shadow_viewer, tmp_path,
         if continuation is None:
             break
     assert "".join(pieces) == entry["anchor"] + "\n\n" + entry["text"] + "\nLabels: bug"
-    assert shadow_viewer.CitationStore.for_shadow(shadow).scores([identity]) == {identity: 1}
+    assert shadow_knowledge.CitationStore.for_shadow(shadow).scores([identity]) == {identity: 1}
 
 
 @pytest.mark.parametrize("change", ["labels", "source", "status", "text"])
-def test_expansion_rejects_changed_body_or_metadata(shadow_viewer, tmp_path, capsys, change):
+def test_expansion_rejects_changed_body_or_metadata(shadow_knowledge, tmp_path, capsys, change):
     shadow = make_shadow(tmp_path, 1, text_size=200)
-    entry = shadow_viewer._knowledge_entries(shadow)[0]
-    shadow_viewer.view_get(shadow, entry["id"], options=shadow_viewer.RetrievalOptions(max_chars=500))
+    entry = shadow_knowledge._knowledge_entries(shadow)[0]
+    shadow_knowledge.view_get(shadow, entry["id"], options=shadow_knowledge.RetrievalOptions(max_chars=500))
     continuation = text_cursor(capsys.readouterr().out)
     path = shadow / "source.py.md"
     replacements = {
@@ -381,30 +381,30 @@ def test_expansion_rejects_changed_body_or_metadata(shadow_viewer, tmp_path, cap
     }
     path.write_text(path.read_text(encoding="utf-8").replace(*replacements[change]), encoding="utf-8")
     with pytest.raises(ValueError, match="changed"):
-        shadow_viewer.view_get(
-            shadow, entry["id"], options=shadow_viewer.RetrievalOptions(text_cursor=continuation),
+        shadow_knowledge.view_get(
+            shadow, entry["id"], options=shadow_knowledge.RetrievalOptions(text_cursor=continuation),
         )
 
 
-def test_no_record_continuation_stays_unrecorded(shadow_viewer, tmp_path, capsys):
+def test_no_record_continuation_stays_unrecorded(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1, text_size=200)
-    entry = shadow_viewer._knowledge_entries(shadow)[0]
-    shadow_viewer.view_get(
-        shadow, entry["id"], options=shadow_viewer.RetrievalOptions(max_chars=500, record=False),
+    entry = shadow_knowledge._knowledge_entries(shadow)[0]
+    shadow_knowledge.view_get(
+        shadow, entry["id"], options=shadow_knowledge.RetrievalOptions(max_chars=500, record=False),
     )
     continuation = text_cursor(capsys.readouterr().out)
-    shadow_viewer.view_get(
-        shadow, entry["id"], options=shadow_viewer.RetrievalOptions(text_cursor=continuation),
+    shadow_knowledge.view_get(
+        shadow, entry["id"], options=shadow_knowledge.RetrievalOptions(text_cursor=continuation),
     )
     capsys.readouterr()
-    assert shadow_viewer.CitationStore.for_shadow(shadow).scores([entry["id"]]) == {}
+    assert shadow_knowledge.CitationStore.for_shadow(shadow).scores([entry["id"]]) == {}
 
 
 @pytest.mark.parametrize("change", ["mtime", "other-symbol"])
-def test_nonrecent_pages_survive_irrelevant_file_changes(shadow_viewer, tmp_path, capsys, change):
+def test_nonrecent_pages_survive_irrelevant_file_changes(shadow_knowledge, tmp_path, capsys, change):
     shadow = make_shadow(tmp_path)
-    options = shadow_viewer.RetrievalOptions(limit=1)
-    shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+    options = shadow_knowledge.RetrievalOptions(limit=1)
+    shadow_knowledge.view_symbol(shadow, "source.py::run", options=options)
     first = capsys.readouterr().out
     path = shadow / "source.py.md"
     if change == "mtime":
@@ -413,15 +413,15 @@ def test_nonrecent_pages_survive_irrelevant_file_changes(shadow_viewer, tmp_path
     else:
         with path.open("a", encoding="utf-8") as stream:
             stream.write("\n## `other`\n\n- Other knowledge.\n  _(verified, source: exploration)_\n")
-    shadow_viewer.view_symbol(shadow, "source.py::run", options=replace(options, cursor=cursor(first)))
+    shadow_knowledge.view_symbol(shadow, "source.py::run", options=replace(options, cursor=cursor(first)))
     assert not set(ids(first)) & set(ids(capsys.readouterr().out))
 
 
 @pytest.mark.parametrize("change", ["source", "labels", "status", "recent-mtime"])
-def test_pages_invalidate_on_relevant_metadata_changes(shadow_viewer, tmp_path, capsys, change):
+def test_pages_invalidate_on_relevant_metadata_changes(shadow_knowledge, tmp_path, capsys, change):
     shadow = make_shadow(tmp_path)
-    options = shadow_viewer.RetrievalOptions(limit=1)
-    view = shadow_viewer.view_recent if change == "recent-mtime" else shadow_viewer.view_symbol
+    options = shadow_knowledge.RetrievalOptions(limit=1)
+    view = shadow_knowledge.view_recent if change == "recent-mtime" else shadow_knowledge.view_symbol
     args = [shadow] if change == "recent-mtime" else [shadow, "source.py::run"]
     view(*args, options=options)
     continuation = cursor(capsys.readouterr().out)
@@ -440,17 +440,17 @@ def test_pages_invalidate_on_relevant_metadata_changes(shadow_viewer, tmp_path, 
         view(*args, options=replace(options, cursor=continuation))
 
 
-def test_summary_and_invariant_checks_do_not_count(shadow_viewer, tmp_path, capsys):
+def test_summary_and_invariant_checks_do_not_count(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
-    shadow_viewer.view_summary(shadow)
-    shadow_viewer.view_check_invariants(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
+    shadow_knowledge.view_summary(shadow)
+    shadow_knowledge.view_check_invariants(shadow)
     capsys.readouterr()
     assert not store.path.exists()
 
 
 def test_all_creation_sources_start_at_zero_without_schema_changes(
-    shadow_viewer, dream_reconcile, tmp_path, capsys,
+    shadow_knowledge, dream_reconcile, tmp_path, capsys,
 ):
     shadow = tmp_path / ".shadow"
     discoveries = [
@@ -463,41 +463,41 @@ def test_all_creation_sources_start_at_zero_without_schema_changes(
         [("dream/test/20260923-000000Z-test", "20260923-000000Z-test",
           {"discoveries": discoveries})],
     )
-    entries = shadow_viewer._knowledge_entries(shadow)
+    entries = shadow_knowledge._knowledge_entries(shadow)
     assert len(entries) == 3
-    assert shadow_viewer.CitationStore.for_shadow(shadow).scores([entry["id"] for entry in entries]) == {}
-    shadow_viewer.view_search(shadow, "Behavior", options=shadow_viewer.RetrievalOptions(record=False))
+    assert shadow_knowledge.CitationStore.for_shadow(shadow).scores([entry["id"] for entry in entries]) == {}
+    shadow_knowledge.view_search(shadow, "Behavior", options=shadow_knowledge.RetrievalOptions(record=False))
     output = capsys.readouterr().out
     assert output.count("citation_score=0") == 3
     assert "citation_score" not in (shadow / "source.py.md").read_text(encoding="utf-8")
 
 
-def test_top_hard_budget_counts_only_visible_claims(shadow_viewer, tmp_path, capsys):
+def test_top_hard_budget_counts_only_visible_claims(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 10, text_size=150)
-    shadow_viewer.view_top(shadow, "source.py", "bug", 3, 600)
+    shadow_knowledge.view_top(shadow, "source.py", "bug", 3, 600)
     output = capsys.readouterr().out
     assert len(output) <= 600
     emitted = ids(output)
     assert emitted and len(emitted) <= 3
     assert f"Top {len(emitted)} of 10" in output
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
-    assert store.scores([entry["id"] for entry in shadow_viewer._knowledge_entries(shadow)]) == dict.fromkeys(emitted, 1)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
+    assert store.scores([entry["id"] for entry in shadow_knowledge._knowledge_entries(shadow)]) == dict.fromkeys(emitted, 1)
 
 
-def test_smallest_budget_still_emits_identifiable_content(shadow_viewer, tmp_path, capsys):
+def test_smallest_budget_still_emits_identifiable_content(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 10)
-    shadow_viewer.view_search(shadow, "Claim", options=shadow_viewer.RetrievalOptions(max_chars=256))
+    shadow_knowledge.view_search(shadow, "Claim", options=shadow_knowledge.RetrievalOptions(max_chars=256))
     output = capsys.readouterr().out
     assert len(output) <= 256 and len(ids(output)) == 1
     assert "verified" in output and cursor(output)
 
 
-def test_broken_ledger_returns_knowledge_with_warning(shadow_viewer, tmp_path, capsys):
+def test_broken_ledger_returns_knowledge_with_warning(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     store.path.parent.mkdir(parents=True)
     store.path.write_bytes(b"not sqlite")
-    shadow_viewer.view_search(shadow, "Claim")
+    shadow_knowledge.view_search(shadow, "Claim")
     captured = capsys.readouterr()
     assert "Claim 00000" in captured.out and "citation_score=?" in captured.out
     assert "warning" in captured.err and "citation" in captured.err
@@ -505,42 +505,42 @@ def test_broken_ledger_returns_knowledge_with_warning(shadow_viewer, tmp_path, c
 
 
 @pytest.mark.parametrize("view", ["search", "symbol", "get", "prefs", "labels", "recent", "top"])
-def test_all_content_views_share_identity_and_score(shadow_viewer, tmp_path, capsys, view):
+def test_all_content_views_share_identity_and_score(shadow_knowledge, tmp_path, capsys, view):
     shadow = make_shadow(tmp_path, 1, text_size=2)
     (shadow / "_prefs.md").write_text("# Preferences\n\n- Keep the contract.\n  _(source: user)_\n", encoding="utf-8")
-    options = shadow_viewer.RetrievalOptions(event_id="same-visit")
-    entry = next(item for item in shadow_viewer._knowledge_entries(shadow) if item["kind"] != "preference")
+    options = shadow_knowledge.RetrievalOptions(event_id="same-visit")
+    entry = next(item for item in shadow_knowledge._knowledge_entries(shadow) if item["kind"] != "preference")
     if view == "search":
-        shadow_viewer.view_search(shadow, "Claim", options=options)
+        shadow_knowledge.view_search(shadow, "Claim", options=options)
     elif view == "symbol":
-        shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+        shadow_knowledge.view_symbol(shadow, "source.py::run", options=options)
     elif view == "get":
-        shadow_viewer.view_get(shadow, entry["id"], options=options)
+        shadow_knowledge.view_get(shadow, entry["id"], options=options)
     elif view == "prefs":
-        shadow_viewer.view_prefs(shadow, options=options)
+        shadow_knowledge.view_prefs(shadow, options=options)
     elif view == "labels":
-        shadow_viewer.view_labels(shadow, "bug", options=options)
+        shadow_knowledge.view_labels(shadow, "bug", options=options)
     elif view == "recent":
-        shadow_viewer.view_recent(shadow, options=options)
+        shadow_knowledge.view_recent(shadow, options=options)
     else:
-        shadow_viewer.view_top(shadow, "source.py", "", 3, 600, options=options)
+        shadow_knowledge.view_top(shadow, "source.py", "", 3, 600, options=options)
     output = capsys.readouterr().out
     emitted = ids(output)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     assert emitted and store.scores(emitted) == dict.fromkeys(emitted, 1)
     if view != "prefs":
         assert entry["id"] in emitted
 
 
-def test_write_failure_warns_without_hiding_knowledge(shadow_viewer, tmp_path, capsys):
+def test_write_failure_warns_without_hiding_knowledge(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
-    identity = shadow_viewer._knowledge_entries(shadow)[0]["id"]
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
+    identity = shadow_knowledge._knowledge_entries(shadow)[0]["id"]
     store.record([identity], "initial")
     connection = sqlite3.connect(store.path)
     try:
         connection.execute("BEGIN IMMEDIATE")
-        shadow_viewer.view_search(shadow, "Claim")
+        shadow_knowledge.view_search(shadow, "Claim")
         captured = capsys.readouterr()
         assert identity in captured.out
         assert "this visit was not recorded" in captured.err
@@ -550,10 +550,10 @@ def test_write_failure_warns_without_hiding_knowledge(shadow_viewer, tmp_path, c
     assert store.scores([identity])[identity] == 1
 
 
-def test_counting_can_recover_after_a_failed_score_read(shadow_viewer, tmp_path, monkeypatch, capsys):
+def test_counting_can_recover_after_a_failed_score_read(shadow_knowledge, tmp_path, monkeypatch, capsys):
     shadow = make_shadow(tmp_path, 1)
-    identity = shadow_viewer._knowledge_entries(shadow)[0]["id"]
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    identity = shadow_knowledge._knowledge_entries(shadow)[0]["id"]
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
     store.record([identity])
     lock = sqlite3.connect(store.path)
     # A pre-existing rollback cache can still be locked during WAL activation.
@@ -569,7 +569,7 @@ def test_counting_can_recover_after_a_failed_score_read(shadow_viewer, tmp_path,
     try:
         with monkeypatch.context() as context:
             context.setattr(sys, "stdout", output)
-            shadow_viewer.view_search(shadow, "Claim")
+            shadow_knowledge.view_search(shadow, "Claim")
     finally:
         lock.close()
     warnings = capsys.readouterr().err
@@ -578,10 +578,10 @@ def test_counting_can_recover_after_a_failed_score_read(shadow_viewer, tmp_path,
     assert store.scores([identity])[identity] == 2
 
 
-def test_failed_stdout_does_not_increment_score(shadow_viewer, tmp_path, monkeypatch):
+def test_failed_stdout_does_not_increment_score(shadow_knowledge, tmp_path, monkeypatch):
     shadow = make_shadow(tmp_path, 1)
-    store = shadow_viewer.CitationStore.for_shadow(shadow)
-    identity = shadow_viewer._knowledge_entries(shadow)[0]["id"]
+    store = shadow_knowledge.CitationStore.for_shadow(shadow)
+    identity = shadow_knowledge._knowledge_entries(shadow)[0]["id"]
 
     class ClosedOutput:
         def write(self, text):
@@ -592,11 +592,11 @@ def test_failed_stdout_does_not_increment_score(shadow_viewer, tmp_path, monkeyp
 
     monkeypatch.setattr(sys, "stdout", ClosedOutput())
     with pytest.raises(BrokenPipeError):
-        shadow_viewer.view_search(shadow, "Claim")
+        shadow_knowledge.view_search(shadow, "Claim")
     assert store.scores([identity]) == {}
 
 
-def test_symbol_context_includes_related_cross_but_not_other_symbols(shadow_viewer, tmp_path, capsys):
+def test_symbol_context_includes_related_cross_but_not_other_symbols(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
     with (shadow / "source.py.md").open("a", encoding="utf-8") as stream:
         stream.write("\n## `unrelated`\n\n- Unrelated claim.\n  _(verified, source: user)_\n")
@@ -608,13 +608,13 @@ def test_symbol_context_includes_related_cross_but_not_other_symbols(shadow_view
         "**Discovery**: Cross-file constraint.\n\n_(verified, source: user)_\n",
         encoding="utf-8",
     )
-    shadow_viewer.view_symbol(shadow, "source.py::run")
+    shadow_knowledge.view_symbol(shadow, "source.py::run")
     output = capsys.readouterr().out
     assert "Cross-file constraint." in output
     assert "Claim 00000" in output and "Unrelated claim." not in output
 
 
-def test_nested_paths_have_one_identity_across_scoped_and_global_views(shadow_viewer, tmp_path):
+def test_nested_paths_have_one_identity_across_scoped_and_global_views(shadow_knowledge, tmp_path):
     shadow = tmp_path / ".shadow"
     source = shadow / "src/caf\u00e9 tools.py.md"
     source.parent.mkdir(parents=True)
@@ -623,26 +623,26 @@ def test_nested_paths_have_one_identity_across_scoped_and_global_views(shadow_vi
         "- Nested claim.\n  _(verified, source: exploration)_\n",
         encoding="utf-8",
     )
-    global_entry = shadow_viewer._knowledge_entries(shadow)[0]
-    scoped_entry = shadow_viewer._knowledge_entries(shadow, "src/caf\u00e9 tools.py")[0]
+    global_entry = shadow_knowledge._knowledge_entries(shadow)[0]
+    scoped_entry = shadow_knowledge._knowledge_entries(shadow, "src/caf\u00e9 tools.py")[0]
     assert global_entry["anchor"] == scoped_entry["anchor"] == "src/caf\u00e9 tools.py::run"
     assert global_entry["id"] == scoped_entry["id"]
 
 
-def test_expansion_preserves_long_anchors(shadow_viewer, tmp_path, capsys):
+def test_expansion_preserves_long_anchors(shadow_knowledge, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1)
     path = shadow / "source.py.md"
     symbol = "method_" + "name" * 50
     path.write_text(path.read_text(encoding="utf-8").replace("`run`", f"`{symbol}`"), encoding="utf-8")
-    entry = shadow_viewer._knowledge_entries(shadow)[0]
-    shadow_viewer.view_get(shadow, entry["id"])
+    entry = shadow_knowledge._knowledge_entries(shadow)[0]
+    shadow_knowledge.view_get(shadow, entry["id"])
     assert "source.py::" + symbol in capsys.readouterr().out
 
 
 def test_cursor_cli_continuation_and_get_are_wired(repo_root, tmp_path):
     shadow = make_shadow(tmp_path)
     command = [
-        sys.executable, str(repo_root / "skills/shadow-frog-viewer/shadow-viewer.py"),
+        sys.executable, str(repo_root / "skills/shadow-frog/shadow-read.py"),
         "--shadow-dir", str(shadow), "--symbol", "source.py::run",
         "--limit", "1", "--max-chars", "600",
     ]
@@ -662,7 +662,7 @@ def test_cursor_cli_continuation_and_get_are_wired(repo_root, tmp_path):
 
 def test_cli_text_continuation_is_revision_bound_and_counts_one_read(repo_root, tmp_path):
     shadow = make_shadow(tmp_path, 1, text_size=300)
-    script = repo_root / "skills/shadow-frog-viewer/shadow-viewer.py"
+    script = repo_root / "skills/shadow-frog/shadow-read.py"
     prefix = [sys.executable, str(script), "--shadow-dir", str(shadow)]
     found = subprocess.run(
         [*prefix, "--symbol", "source.py::run", "--no-record"],
@@ -690,10 +690,10 @@ def test_installed_layout_and_cli_options_are_wired(repo_root, coupon_demo, tmp_
     import shutil
 
     for agent in (".github", ".claude"):
-        installed = tmp_path / agent / "skills/shadow-frog-viewer"
-        shutil.copytree(repo_root / "skills/shadow-frog-viewer", installed)
+        installed = tmp_path / agent / "skills/shadow-frog"
+        shutil.copytree(repo_root / "skills/shadow-frog", installed)
         command = [
-            sys.executable, str(installed / "shadow-viewer.py"),
+            sys.executable, str(installed / "shadow-read.py"),
             "--shadow-dir", str(coupon_demo / ".shadow"), "--search", "coupon",
             "--limit", "2", "--max-chars", "1000", "--event-id", agent,
         ]
@@ -712,7 +712,7 @@ def test_installed_layout_and_cli_options_are_wired(repo_root, coupon_demo, tmp_
 ])
 def test_invalid_cli_combinations_are_explicit(repo_root, tmp_path, args):
     result = subprocess.run(
-        [sys.executable, str(repo_root / "skills/shadow-frog-viewer/shadow-viewer.py"), *args],
+        [sys.executable, str(repo_root / "skills/shadow-frog/shadow-read.py"), *args],
         cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
     )
     assert result.returncode == 2 and "error:" in result.stderr

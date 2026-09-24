@@ -98,7 +98,7 @@ helper commands, and format definitions.
 | [`/shadow-frog-dream`](skills/shadow-frog-dream/SKILL.md) | Run autonomous experiments while you're away |
 | [`/shadow-frog-nap`](skills/shadow-frog-nap/SKILL.md) | Generate reviewed feature-task briefs without implementing them |
 | [`/shadow-frog-meditate`](skills/shadow-frog-meditate/SKILL.md) | Merge duplicates and resolve conflicting discoveries |
-| [`/shadow-frog-viewer`](skills/shadow-frog-viewer/SKILL.md) | Browse, search, inspect lineage, and audit structural integrity |
+| [`/shadow-frog-viewer`](skills/shadow-frog-viewer/SKILL.md) | User-facing CLI browsing, lineage visualization, and structural audits |
 
 As you work, the agent captures your code context as `source: user` and
 collaborative findings as `source: interaction`. After commits, the pre-tool
@@ -118,14 +118,17 @@ For example, use Viewer to find relevant knowledge or audit its structure:
 The [Viewer reference](skills/shadow-frog-viewer/SKILL.md) also covers summaries,
 recent discoveries, label filters, preferences, and interactive dream-lineage HTML.
 
-Knowledge retrieval is bounded and pageable, with IDs for expanding individual
-claims. A single local `citation_score` counts helper exposures, not proven
-usefulness; relevance and trust outrank popularity. Scores are updated safely
-across local Git worktrees without editing shadow Markdown or requiring a vector
-index. New claims start at zero. See the Viewer reference for retries, local
-storage, and the limits of this signal. Long-entry continuation counts as one
-logical read and rejects changed content; local retry and pagination metadata
-have retention limits. Compact hook hints are not a substitute for a file review.
+Agents normally navigate directly from source files/symbols to their mirrored
+Markdown shadows. The **Viewer is for users**; it is not required for agent
+lookup. When a section is too large, agents can use the optional core
+[`shadow-read.py` helper](skills/shadow-frog/retrieval.md) to read a known file or
+symbol within a context budget, or to search and page matching knowledge.
+
+A single local `citation_score` counts helper exposures, not proven usefulness;
+relevance and trust outrank popularity. The core reader and user Viewer share
+safe local bookkeeping across worktrees without changing Markdown or requiring
+a vector index. Native reads remain normal and uncounted. New claims start at
+zero, and long-entry continuation counts as one logical read.
 
 ---
 
