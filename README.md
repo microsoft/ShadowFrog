@@ -123,7 +123,9 @@ claims. A single local `citation_score` counts helper exposures, not proven
 usefulness; relevance and trust outrank popularity. Scores are updated safely
 across local Git worktrees without editing shadow Markdown or requiring a vector
 index. New claims start at zero. See the Viewer reference for retries, local
-storage, and the limits of this signal.
+storage, and the limits of this signal. Long-entry continuation counts as one
+logical read and rejects changed content; local retry and pagination metadata
+have retention limits. Compact hook hints are not a substitute for a file review.
 
 ---
 

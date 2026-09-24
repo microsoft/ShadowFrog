@@ -122,14 +122,16 @@ Preference (`_prefs.md` — project-wide, no file/symbol anchor):
 - Keep the discovery grammar unchanged: viewer fingerprints and `citation_score`
   are derived/local metadata, not additional Markdown fields.
 - Scores start at zero and increment only for content emitted by a retrieval
-  view, once per entry/event. They measure exposure, not verified usefulness.
+  view; expansion chunks share one revision-bound logical read. They measure
+  exposure, not verified usefulness.
 - Use the common-Git SQLite ledger for multiprocess/worktree updates; do not
   rewrite shadow files on reads. Telemetry failures must warn without hiding
   knowledge. Summary/audit/parser-only operations do not increment scores.
 - Rank relevance and trust ahead of scores; preserve room for zero-score entries.
   Page large results, expand by ID, and never use only the shortlist for dedup.
-- Fingerprints bind kind, anchor, normalized claim and refs. Metadata-only edits
-  retain identity; rewritten/merged claims and renamed anchors may reset scores.
+- Fingerprints bind kind, canonical anchor, whitespace-preserving parsed claim
+  and refs. Metadata-only edits retain identity; rewritten/merged claims and
+  renamed anchors may reset scores. Deduplication must retain all labels.
 
 ### Dedup
 - Before writing, read existing discoveries at the target symbol.

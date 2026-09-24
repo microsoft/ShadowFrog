@@ -105,6 +105,10 @@ by prior ranking and repeated exposure; relevance, provenance, and verification
 remain more important. Bounded results may omit relevant knowledge, so agents
 must follow pagination and inspect preferences rather than treating a shortlist
 as exhaustive. Claim rewrites and renames may create fresh zero-score identities.
+Continuation chunks share one logical-read event. Short contention budgets can
+leave explicitly warned, unrecorded visits; atomicity does not guarantee complete
+accounting. Retry receipts and pagination snapshots expire or reach capacity,
+while score storage grows with distinct knowledge identities.
 
 ShadowFrog was developed for research and experimental purposes. Further testing and validation are needed before considering its application in commercial or real-world scenarios.
 

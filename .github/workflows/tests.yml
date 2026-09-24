@@ -8,6 +8,21 @@ permissions:
   contents: read
 
 jobs:
+  viewer-compatibility:
+    name: Viewer (Python 3.9)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.9'
+      - name: Exercise the standalone viewer
+        run: |
+          python skills/shadow-frog-viewer/shadow-viewer.py --help
+          python skills/shadow-frog-viewer/shadow-viewer.py --shadow-dir examples/coupon-demo/.shadow --search coupon --limit 2 --no-record
+
   pytest:
     name: pytest (${{ matrix.os }}, Python 3.12)
     runs-on: ${{ matrix.os }}

@@ -17,7 +17,7 @@ Query and browse `.shadow/` content. Prerequisite: `.shadow/` exists.
 
 ## Primary: Python Helper Script
 
-The companion script `shadow-viewer.py` lives in the same directory as
+The companion script `shadow-viewer.py` supports Python 3.9+ and lives beside
 this SKILL.md file. To find and run it:
 
 ```bash
@@ -34,11 +34,11 @@ python3 .claude/skills/shadow-frog-viewer/shadow-viewer.py [options]
 | `--summary` | Overview: counts, source/status/label breakdown, per-file table, cross-cutting titles (default) |
 | `--search QUERY` | Bounded search across paths, symbols, text, cross-cutting entries, and preferences |
 | `--symbol FILE::SYMBOL` | Bounded discoveries at an exact symbol, plus matching cross-cutting refs; use `File-Level` for a file-level section |
-| `--get ID` | Expand one current discovery returned by a content view |
+| `--get ID` | Expand one current discovery; long expansions return a revision-bound continuation |
 | `--prefs` | Project-wide preferences; follow all pages before treating them as complete |
 | `--recent [N]` | Most recent discovery previews by file mtime (default page size: 10) |
 | `--labels LABEL` | Bounded discoveries matching labels (e.g., `bug`, `security`, `bug,performance`) |
-| `--top FILE` | Hook-sized actionable previews (default: up to 3 entries, 600 characters). Includes per-file and cross-cutting findings; trust/status precedes citation score. |
+| `--top FILE` | Hook-sized actionable previews (default: up to 3 entries, 600 characters). Includes per-file and cross-cutting findings; short symbol/ID lines omit numeric scores to leave room for content. Not an exhaustive file view. |
 | `--check-invariants` | Audit structural integrity — bidirectional cross-references, label/source/category enum compliance, heading format, no-orphan-back-pointer. Exits 0 if clean, 1 with one violation per line. Run after dream reconciliation or before commit. |
 
 No arguments defaults to `--summary`.
@@ -51,8 +51,8 @@ No arguments defaults to `--summary`.
 | `--limit N` | Positive page size for search, symbol, labels, or preferences (default: 10) |
 | `--max-chars N` | Hard output cap, including metadata/newline (default: 4000; minimum 256, or 0 for explicit uncapped output). Use `--top-max-chars` with `--top`. |
 | `--cursor TOKEN` | Continue the same view and filters using the returned ordering snapshot |
-| `--text-offset N` | Continue a long `--get` result at the returned character offset |
-| `--event-id ID` | Optional retry ID: each discovery counts at most once per ID (1-128 letters/digits or `. _ : -`). Default: a new event per invocation. |
+| `--text-cursor TOKEN` | Continue the same `--get` body and logical read; copy the returned token rather than fabricating an offset |
+| `--event-id ID` | Optional retry ID: each discovery counts at most once per ID within 24 hours (1-128 letters/digits or `. _ : -`) |
 | `--no-record` | Do not increase citation scores; existing scores still rank results, and pagination may store a local snapshot |
 | `--top-labels LABELS` | Comma-separated label filter for `--top` (default: `bug,security`). Empty string disables label filtering. |
 | `--top-limit N` | Max discoveries to show in `--top` (default: 3) |
@@ -83,9 +83,11 @@ python3 shadow-viewer.py --top src/auth.py --top-labels bug,security,performance
 Replace `DISCOVERY_ID` and `CURSOR_TOKEN` with the exact values returned by the helper.
 
 Content views (`search`, `symbol`, `get`, `prefs`, `labels`, `recent`, `top`)
-show an `id` and one `citation_score`. Every discovery starts at zero by
+return an `id`; all except compact `top` also show one `citation_score`.
+Every discovery starts at zero by
 default, regardless of which workflow wrote it. The helper increments only
-entries whose content it emits, once per retrieval event. Scanning/matching,
+entries whose content it emits. Expanding a long claim counts as one logical
+read across its continuation chunks. Scanning/matching,
 summary statistics, invariant audits, and raw file reads do not count.
 Displayed scores are the values **before** the current read. A citation here
 measures helper exposure, not proven usefulness, correctness, or LLM influence.
@@ -99,8 +101,10 @@ Popularity never overrides a refuted status or authorizes dropping a constraint.
 Use targeted searches and additional pages for deduplication rather than
 assuming the popular shortlist is exhaustive.
 
-The `d_...` ID is a content fingerprint of kind, file/symbol anchor, normalized
-claim text, and related refs. Metadata-only status/source/label changes keep it;
+The `d_...` ID binds kind, canonical file/symbol anchor, parsed claim text, and
+related refs. Internal whitespace is preserved, including code literals.
+Filesystem aliases resolve to the same on-disk name; container-heading prefixes
+are removed from symbol anchors. Metadata-only status/source/label changes keep it;
 rewording, renaming, or merging claims/refs can create a new zero-score identity.
 Scores are not fuzzily transferred or summed during Meditate. Removed identities
 can remain in the local ledger but cannot be expanded unless their claim exists.
@@ -113,21 +117,33 @@ roots in the same repo have separate scopes. Outside Git, the cache lives under
 not discovery bodies. It is local metadata, not a tracked or multi-machine DB;
 Markdown and its format remain authoritative and unchanged.
 
-Transactions prevent lost increments from concurrent agents. Lock contention
-retries the whole transaction within the original short wait budget; each failed
-attempt rolls back. The ledger reuses its rollback journal with full disk
-synchronization rather than repeatedly creating/deleting it. Reuse `--event-id`
-when retrying one retrieval; do not reuse it for unrelated visits. A failed
-stdout emission is not recorded. Ledger failures warn on stderr, return the
-knowledge, and show unknown scores as `?` when scores cannot be read.
-Do not report those failed increments as successful.
+Successful transactions cannot overwrite concurrent increments. Accounting is
+best-effort: a busy ledger can exhaust the 100 ms wait budget. Unknown scores
+display as `?`, but counting is still attempted after output; failed increments
+warn explicitly that the visit was not recorded. Retry a busy database later,
+not by deleting it. Failed stdout emission is not recorded.
 
-Pagination snapshots freeze ordering despite score changes and expire after
-24 hours. Keep the original view/filters with `--cursor`; a changed knowledge
-snapshot requires restarting the query. For a large claim, `--get` prints the
-next `--text-offset`. Character limits bound helper output, not token counts;
+Ordinary reads need no retained event receipt. Caller-supplied retry IDs and
+generated long-read IDs retain receipts for 24 hours, up to 100,000 receipts.
+New explicit receipts beyond capacity fail visibly rather than weakening retry
+deduplication. Never reuse a retry ID for an unrelated visit. Expired receipts
+are pruned in bounded batches. The fully synchronized rollback journal is capped
+at 1 MiB; SQLite can retain reusable free pages in the database.
+
+Result snapshots freeze ordering despite score changes. Identical snapshots
+reuse compressed storage; at most 32 snapshots / 8 MiB are retained locally.
+They expire after 24 hours or capacity eviction. Keep the original view/filters
+with `--cursor`; changed matching content/trust/labels require restarting.
+Timestamp-only or unrelated-symbol edits do not invalidate non-recent views.
+
+For a long claim, copy the returned `--text-cursor` continuation. It binds the
+exact expanded body and metadata, preserves `--no-record`, and reuses one read
+event. Changed content or an expired token requires restarting `--get`. Character
+limits bound helper output, not token counts;
 the helper can still scan the underlying Markdown locally. If the ledger is
-unavailable, narrow the query until pagination can be restored.
+unavailable, repair local-state access before relying on exhaustive pagination.
+An incompatible prerelease cache must be moved aside to reset local scores;
+never alter shadow content to repair telemetry.
 
 ## Dream Lineage Visualization
 

@@ -32,8 +32,9 @@ to that code location.
    especially when investigating bugs or unfamiliar code. They may contain
    findings not yet distilled into per-file shadows.
 4. **Before editing a file**, query its shadow (`.shadow/<path>.md`) with
-   `--symbol file::symbol` or `--top FILE`, and search relevant `_cross/`
-   knowledge. Expand matching entries and follow pages as needed, then apply them.
+   `--search FILE`; use `--symbol file::symbol` for focused follow-up, including
+   file-level and related `_cross/` knowledge. Expand entries and follow pages
+   as needed. `--top` supplies compact hints, not a complete file review.
    `_index.md` counts may be stale; inspect the actual shadows and `_cross/`.
 5. **When the user explains something about code** (gotcha, design intent,
    warning, history): write a `source: user` discovery to the shadow
@@ -47,7 +48,8 @@ to that code location.
 
 Prefer the `/shadow-frog-viewer` helper over loading an entire large shadow.
 It returns short previews, discovery IDs, and one `citation_score`; `--get ID`
-expands an entry, and returned cursors continue a stable result ordering.
+expands an entry, and returned cursors continue a stable result ordering or
+revision-bound logical read. Compact `--top` output omits the numeric score.
 Citation scores count content emitted by the helper, not proven use in reasoning.
 Do not manually increment scores or put them into Markdown: the helper records
 visits atomically in local state shared across worktrees. New discoveries from

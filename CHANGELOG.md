@@ -19,6 +19,10 @@ shadow knowledge bases for any codebase.
 ### Changed
 - Citation writes retry temporary SQLite lock contention within their existing
   wait budget and reuse the rollback journal without weakening synchronization.
+- Retrieval keeps file/symbol identities consistent, preserves literal whitespace
+  and duplicate labels, and binds expansion continuations to one unchanged logical
+  read. Compact hooks share their budget across several previews, and local retry
+  receipts, pagination snapshots, and journals have explicit retention limits.
 - Retrieval views now show IDs/scores and paginate by default. Preferences
   remain separately accessible, trust and relevance precede popularity, and
   hooks remain fail-open while surfacing citation warnings.

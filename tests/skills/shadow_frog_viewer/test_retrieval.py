@@ -1,11 +1,15 @@
 """Citation ranking, bounded context, expansion, and stable pagination."""
 
 from dataclasses import replace
+import io
+import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 
 import pytest
 
@@ -31,6 +35,11 @@ def ids(text):
 
 def cursor(text):
     match = re.search(r"--cursor ([0-9a-f]{32}:\d+)", text)
+    return match.group(1) if match else None
+
+
+def text_cursor(text):
+    match = re.search(r"--text-cursor (\S+)", text)
     return match.group(1) if match else None
 
 
@@ -138,7 +147,7 @@ def test_popularity_never_overrides_trust_and_allows_new_claim(shadow_viewer, tm
     scores = {"popular": 100, "popular2": 90, "popular3": 80, "refuted": 10000}
     ranked = shadow_viewer._rank_entries(entries, scores, 3)
     assert ranked[0]["id"] == "user" and ranked[-1]["id"] == "refuted"
-    assert [entry["id"] for entry in ranked][1:4] == ["popular", "popular2", "new"]
+    assert [entry["id"] for entry in ranked][:3] == ["user", "popular", "new"]
 
 
 def test_zero_score_opportunity_accounts_for_character_budget(shadow_viewer, tmp_path, capsys):
@@ -153,6 +162,37 @@ def test_zero_score_opportunity_accounts_for_character_budget(shadow_viewer, tmp
     assert len(output) <= 1000
     assert len(ids(output)) >= 2
     assert entries[-1]["id"] in ids(output)
+
+
+@pytest.mark.parametrize("view", ["top", "symbol"])
+def test_zero_score_slot_accounts_for_higher_trust_rows(shadow_viewer, tmp_path, capsys, view):
+    shadow = make_shadow(tmp_path, 5, text_size=2)
+    path = shadow / "source.py.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("source: exploration", "source: user", 1),
+        encoding="utf-8",
+    )
+    entries = shadow_viewer._knowledge_entries(shadow)
+    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    store.record([entry["id"] for entry in entries[1:4]], "prior")
+    options = shadow_viewer.RetrievalOptions(limit=3, max_chars=600)
+    if view == "top":
+        shadow_viewer.view_top(shadow, "source.py", "bug", 3, 600, options=options)
+    else:
+        shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+    output = capsys.readouterr().out
+    assert len(output) <= 600
+    assert ids(output)[0] == entries[0]["id"]
+    assert entries[-1]["id"] in ids(output)
+
+
+@pytest.mark.parametrize("file", ["cart.py", "inventory.py", "test_cart.py"])
+def test_default_hook_budget_returns_multiple_warnings(shadow_viewer, coupon_demo, capsys, file):
+    shadow_viewer.view_top(coupon_demo / ".shadow", file, "bug,security", 3, 600)
+    output = capsys.readouterr().out
+    assert len(output) <= 600
+    assert len(ids(output)) == 3
+    assert "citation_score=" not in output
 
 
 def test_metadata_changes_preserve_identity_but_not_claim_changes(shadow_viewer, tmp_path):
@@ -184,26 +224,220 @@ def test_duplicate_preferences_share_one_identity_without_losing_trust(shadow_vi
     assert shadow_viewer.CitationStore.for_shadow(shadow).scores(ids(output)) == dict.fromkeys(ids(output), 1)
 
 
+@pytest.mark.parametrize("kind", ["class", "interface", "enum", "trait", "struct", "protocol", "module"])
+def test_container_symbols_use_canonical_anchors(shadow_viewer, shadow_init, tmp_path, capsys, kind):
+    shadow = make_shadow(tmp_path, 1)
+    heading = shadow_init.Symbol("Container", kind).heading_text
+    path = shadow / "source.py.md"
+    path.write_text(path.read_text(encoding="utf-8").replace("`run`", f"`{heading}`"), encoding="utf-8")
+    shadow_viewer.view_symbol(shadow, "source.py::Container")
+    result = capsys.readouterr().out
+    assert "Claim 00000" in result and "source.py::Container" in result
+    shadow_viewer.view_get(shadow, ids(result)[0])
+    assert "source.py::Container" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("query", ["src/auth.py", unicodedata.normalize("NFD", "Src/caf\u00e9.py")])
+def test_filesystem_alias_ids_expand_and_include_cross_refs(shadow_viewer, tmp_path, capsys, query):
+    actual = "Src/Auth.py" if query == "src/auth.py" else "Src/caf\u00e9.py"
+    shadow = tmp_path / ".shadow"
+    path = shadow / f"{actual}.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"# Shadow: {actual}\n\n## `run`\n\n- Keep the audit trail.\n"
+        "  _(verified, source: exploration, labels: [bug])_\n",
+        encoding="utf-8",
+    )
+    if not (shadow / (query + ".md")).is_file():
+        pytest.skip("Filesystem distinguishes these case/Unicode spellings")
+    cross = shadow / "_cross/audit.md"
+    cross.parent.mkdir()
+    cross.write_text(
+        f"# Audit\n\n**Category**: contract\n**Refs**:\n- `{actual}::run`\n\n"
+        "**Discovery**: Cross-file audit contract.\n\n_(verified, source: exploration)_\n",
+        encoding="utf-8",
+    )
+    global_entries = shadow_viewer._knowledge_entries(shadow)
+    shadow_viewer.view_symbol(shadow, f"{query}::run")
+    result = capsys.readouterr().out
+    assert "Cross-file audit contract." in result and "Keep the audit trail." in result
+    assert set(ids(result)) == {entry["id"] for entry in global_entries}
+    for identity in ids(result):
+        shadow_viewer.view_get(shadow, identity, options=shadow_viewer.RetrievalOptions(record=False))
+        assert identity in capsys.readouterr().out
+
+
+def test_distinct_case_sensitive_files_are_not_folded(shadow_viewer, tmp_path):
+    shadow = tmp_path / ".shadow"
+    shadow.mkdir()
+    upper, lower = shadow / "A.py.md", shadow / "a.py.md"
+    upper.write_text("# Shadow: A.py\n\n## `run`\n\n- Claim.\n", encoding="utf-8")
+    if lower.exists():
+        pytest.skip("Filesystem does not support distinct case-only names")
+    lower.write_text("# Shadow: a.py\n\n## `run`\n\n- Claim.\n", encoding="utf-8")
+    assert len({entry["id"] for entry in shadow_viewer._knowledge_entries(shadow)}) == 2
+
+
+def test_literal_whitespace_remains_separately_searchable(shadow_viewer, tmp_path, capsys):
+    shadow = make_shadow(tmp_path, 0)
+    path = shadow / "source.py.md"
+    path.write_text(
+        "# Shadow: source.py\n\n## `run`\n\n"
+        "- Key `a b` is accepted.\n  _(verified, source: exploration)_\n\n"
+        "- Key `a  b` is accepted.\n  _(verified, source: exploration)_\n",
+        encoding="utf-8",
+    )
+    entries = shadow_viewer._knowledge_entries(shadow)
+    assert len(entries) == 2 and entries[0]["id"] != entries[1]["id"]
+    shadow_viewer.view_search(shadow, "a  b")
+    result = capsys.readouterr().out
+    assert ids(result) == [entries[1]["id"]]
+    shadow_viewer.view_get(shadow, entries[1]["id"])
+    assert "`a  b`" in capsys.readouterr().out
+
+
+def test_duplicate_claims_union_labels_and_preserve_stronger_source(shadow_viewer, tmp_path, capsys):
+    shadow = make_shadow(tmp_path, 0)
+    (shadow / "source.py.md").write_text(
+        "# Shadow: source.py\n\n## `run`\n\n"
+        "- Shared claim.\n  _(verified, source: user, labels: [bug])_\n\n"
+        "- Shared claim.\n  _(verified, source: exploration, labels: [security])_\n",
+        encoding="utf-8",
+    )
+    entries = shadow_viewer._knowledge_entries(shadow)
+    assert len(entries) == 1
+    assert entries[0]["labels"] == ["bug", "security"] and entries[0]["source"] == "user"
+    shadow_viewer.view_labels(shadow, "security")
+    assert ids(capsys.readouterr().out) == [entries[0]["id"]]
+
+
+def test_installed_import_does_not_create_bytecode(repo_root, tmp_path):
+    installed = tmp_path / ".github/skills/shadow-frog-viewer"
+    shutil.copytree(
+        repo_root / "skills/shadow-frog-viewer", installed,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    env = os.environ.copy()
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    env.pop("PYTHONPYCACHEPREFIX", None)
+    result = subprocess.run(
+        [sys.executable, str(installed / "shadow-viewer.py"), "--help"],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+    assert not list(installed.rglob("*.pyc"))
+
+
+def test_missing_home_does_not_hide_standalone_knowledge(shadow_viewer, tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+
+    shadow = make_shadow(tmp_path, 1)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    def missing_home():
+        raise RuntimeError("Could not determine home directory")
+
+    monkeypatch.setattr(Path, "home", missing_home)
+    shadow_viewer.view_search(shadow, "Claim")
+    result = capsys.readouterr()
+    assert "Claim 00000" in result.out
+    assert "will not be recorded" in result.err and "home" in result.err
+
+
 def test_get_chunks_long_claim_without_exceeding_budget(shadow_viewer, tmp_path, capsys):
     shadow = make_shadow(tmp_path, 1, text_size=500)
     entry = shadow_viewer._knowledge_entries(shadow)[0]
     identity = entry["id"]
-    offset = 0
+    continuation = None
     pieces = []
     while True:
         shadow_viewer.view_get(
             shadow, identity,
-            options=shadow_viewer.RetrievalOptions(max_chars=500, text_offset=offset, event_id="read-one"),
+            options=shadow_viewer.RetrievalOptions(max_chars=500, text_cursor=continuation),
         )
         output = capsys.readouterr().out
         assert len(output) <= 500
-        match = re.search(r"--text-offset (\d+)", output)
+        continuation = text_cursor(output)
         pieces.append(output.removesuffix("\n").split("\n", 2)[2].split("\nContinue:", 1)[0])
-        if match is None:
+        if continuation is None:
             break
-        offset = int(match.group(1))
     assert "".join(pieces) == entry["anchor"] + "\n\n" + entry["text"] + "\nLabels: bug"
     assert shadow_viewer.CitationStore.for_shadow(shadow).scores([identity]) == {identity: 1}
+
+
+@pytest.mark.parametrize("change", ["labels", "source", "status", "text"])
+def test_expansion_rejects_changed_body_or_metadata(shadow_viewer, tmp_path, capsys, change):
+    shadow = make_shadow(tmp_path, 1, text_size=200)
+    entry = shadow_viewer._knowledge_entries(shadow)[0]
+    shadow_viewer.view_get(shadow, entry["id"], options=shadow_viewer.RetrievalOptions(max_chars=500))
+    continuation = text_cursor(capsys.readouterr().out)
+    path = shadow / "source.py.md"
+    replacements = {
+        "labels": ("labels: [bug]", "labels: [bug, security]"),
+        "source": ("source: exploration", "source: user"),
+        "status": ("verified,", "refuted,"),
+        "text": ("details ", "new details "),
+    }
+    path.write_text(path.read_text(encoding="utf-8").replace(*replacements[change]), encoding="utf-8")
+    with pytest.raises(ValueError, match="changed"):
+        shadow_viewer.view_get(
+            shadow, entry["id"], options=shadow_viewer.RetrievalOptions(text_cursor=continuation),
+        )
+
+
+def test_no_record_continuation_stays_unrecorded(shadow_viewer, tmp_path, capsys):
+    shadow = make_shadow(tmp_path, 1, text_size=200)
+    entry = shadow_viewer._knowledge_entries(shadow)[0]
+    shadow_viewer.view_get(
+        shadow, entry["id"], options=shadow_viewer.RetrievalOptions(max_chars=500, record=False),
+    )
+    continuation = text_cursor(capsys.readouterr().out)
+    shadow_viewer.view_get(
+        shadow, entry["id"], options=shadow_viewer.RetrievalOptions(text_cursor=continuation),
+    )
+    capsys.readouterr()
+    assert shadow_viewer.CitationStore.for_shadow(shadow).scores([entry["id"]]) == {}
+
+
+@pytest.mark.parametrize("change", ["mtime", "other-symbol"])
+def test_nonrecent_pages_survive_irrelevant_file_changes(shadow_viewer, tmp_path, capsys, change):
+    shadow = make_shadow(tmp_path)
+    options = shadow_viewer.RetrievalOptions(limit=1)
+    shadow_viewer.view_symbol(shadow, "source.py::run", options=options)
+    first = capsys.readouterr().out
+    path = shadow / "source.py.md"
+    if change == "mtime":
+        timestamp = path.stat().st_mtime + 10
+        os.utime(path, (timestamp, timestamp))
+    else:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("\n## `other`\n\n- Other knowledge.\n  _(verified, source: exploration)_\n")
+    shadow_viewer.view_symbol(shadow, "source.py::run", options=replace(options, cursor=cursor(first)))
+    assert not set(ids(first)) & set(ids(capsys.readouterr().out))
+
+
+@pytest.mark.parametrize("change", ["source", "labels", "status", "recent-mtime"])
+def test_pages_invalidate_on_relevant_metadata_changes(shadow_viewer, tmp_path, capsys, change):
+    shadow = make_shadow(tmp_path)
+    options = shadow_viewer.RetrievalOptions(limit=1)
+    view = shadow_viewer.view_recent if change == "recent-mtime" else shadow_viewer.view_symbol
+    args = [shadow] if change == "recent-mtime" else [shadow, "source.py::run"]
+    view(*args, options=options)
+    continuation = cursor(capsys.readouterr().out)
+    path = shadow / "source.py.md"
+    if change == "recent-mtime":
+        timestamp = path.stat().st_mtime + 10
+        os.utime(path, (timestamp, timestamp))
+    else:
+        replacements = {
+            "source": ("source: exploration", "source: user"),
+            "labels": ("labels: [bug]", "labels: [security]"),
+            "status": ("verified,", "refuted,"),
+        }
+        path.write_text(path.read_text(encoding="utf-8").replace(*replacements[change]), encoding="utf-8")
+    with pytest.raises(ValueError, match="changed"):
+        view(*args, options=replace(options, cursor=continuation))
 
 
 def test_summary_and_invariant_checks_do_not_count(shadow_viewer, tmp_path, capsys):
@@ -309,11 +543,37 @@ def test_write_failure_warns_without_hiding_knowledge(shadow_viewer, tmp_path, c
         shadow_viewer.view_search(shadow, "Claim")
         captured = capsys.readouterr()
         assert identity in captured.out
-        assert "scores were not updated" in captured.err
+        assert "this visit was not recorded" in captured.err
     finally:
         connection.rollback()
         connection.close()
     assert store.scores([identity])[identity] == 1
+
+
+def test_counting_can_recover_after_a_failed_score_read(shadow_viewer, tmp_path, monkeypatch, capsys):
+    shadow = make_shadow(tmp_path, 1)
+    identity = shadow_viewer._knowledge_entries(shadow)[0]["id"]
+    store = shadow_viewer.CitationStore.for_shadow(shadow)
+    store.record([identity])
+    lock = sqlite3.connect(store.path)
+    lock.execute("BEGIN EXCLUSIVE")
+
+    class UnlockOnOutput(io.StringIO):
+        def flush(self):
+            lock.rollback()
+            super().flush()
+
+    output = UnlockOnOutput()
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(sys, "stdout", output)
+            shadow_viewer.view_search(shadow, "Claim")
+    finally:
+        lock.close()
+    warnings = capsys.readouterr().err
+    assert "ledger busy" in warnings and "was not recorded" not in warnings
+    assert "citation_score=?" in output.getvalue()
+    assert store.scores([identity])[identity] == 2
 
 
 def test_failed_stdout_does_not_increment_score(shadow_viewer, tmp_path, monkeypatch):
@@ -398,6 +658,31 @@ def test_cursor_cli_continuation_and_get_are_wired(repo_root, tmp_path):
     assert "citation_score=1" in expanded.stdout
 
 
+def test_cli_text_continuation_is_revision_bound_and_counts_one_read(repo_root, tmp_path):
+    shadow = make_shadow(tmp_path, 1, text_size=300)
+    script = repo_root / "skills/shadow-frog-viewer/shadow-viewer.py"
+    prefix = [sys.executable, str(script), "--shadow-dir", str(shadow)]
+    found = subprocess.run(
+        [*prefix, "--symbol", "source.py::run", "--no-record"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    identity = ids(found.stdout)[0]
+    command = ["--get", identity, "--max-chars", "500"]
+    last = None
+    for _ in range(40):
+        result = subprocess.run(
+            [*prefix, *command], capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+        assert len(result.stdout) <= 500
+        last = result.stdout
+        if "\nContinue: " not in result.stdout:
+            break
+        command = result.stdout.split("\nContinue: ", 1)[1].strip().split()
+    else:
+        pytest.fail("Text continuation did not finish")
+    assert "citation_score=1" in last
+
+
 @pytest.mark.slow
 def test_installed_layout_and_cli_options_are_wired(repo_root, coupon_demo, tmp_path):
     import shutil
@@ -419,7 +704,7 @@ def test_installed_layout_and_cli_options_are_wired(repo_root, coupon_demo, tmp_
     ["--summary", "--limit", "2"],
     ["--search", "claim", "--limit", "0"],
     ["--search", "claim", "--max-chars", "20"],
-    ["--search", "claim", "--text-offset", "1"],
+    ["--search", "claim", "--text-cursor", "bad"],
     ["--top", "source.py", "--max-chars", "600"],
     ["--get", "d_" + "a" * 32, "--cursor", "bad"],
 ])

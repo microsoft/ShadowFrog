@@ -20,6 +20,7 @@ Options:
     --limit N              Maximum results (default: 10)
     --max-chars N          Output budget including metadata (default: 4000)
     --cursor TOKEN         Continue a previous result snapshot
+    --text-cursor TOKEN    Continue an unchanged discovery as one logical read
     --no-record            Do not increment local citation scores
     --event-id ID          Reuse an ID for retry-idempotent bookkeeping
 
@@ -27,6 +28,8 @@ Exit codes:
     0  Success (possibly with warnings on stderr)
     1  Fatal error (shadow dir not found, no results possible)
 """
+
+from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
@@ -37,6 +40,7 @@ import re
 import sys
 import sqlite3
 import subprocess
+import time
 import traceback
 import uuid
 from collections import defaultdict
@@ -45,12 +49,18 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
 try:
-    from _citations import CitationStore, discovery_id, validate_event_id
+    from _citations import (
+        CitationStore, RECEIPT_TTL, canonical_path, discovery_id, is_busy_error,
+        validate_event_id,
+    )
 except ImportError as exc:
     raise SystemExit("[shadow-viewer error] Missing citation helper/dependency; reinstall the complete Viewer skill") from exc
 finally:
     sys.path.pop(0)
+    sys.dont_write_bytecode = _bytecode
 
 
 _DISCOVERY_META_RE = re.compile(
@@ -473,30 +483,53 @@ class RetrievalOptions:
     cursor: str | None = None
     event_id: str | None = None
     record: bool = True
-    text_offset: int = 0
+    text_cursor: str | None = None
 
     def __post_init__(self):
         if type(self.limit) is not int or self.limit < 1:
             raise ValueError("Result limit must be positive")
         if type(self.max_chars) is not int or self.max_chars < 0 or (self.max_chars and self.max_chars < 256):
             raise ValueError("Output budget must be at least 256 characters, or 0 for no cap")
-        if type(self.text_offset) is not int or self.text_offset < 0:
-            raise ValueError("Text offset must be nonnegative")
+        for name in ("cursor", "text_cursor"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"{name} must be a nonempty returned cursor")
         if self.event_id is not None:
             validate_event_id(self.event_id)
 
 
 def _knowledge_entry(kind, file, symbol, text, data, refs=(), mtime=0):
+    symbol = _canonical_symbol(symbol)
     anchor = f"{file}::{symbol}" if symbol else file
     return {
         "id": discovery_id(kind, anchor, text, refs),
         "kind": kind, "file": file, "symbol": symbol, "anchor": anchor,
         "text": text, "refs": list(refs), "mtime": mtime,
         "status": data.get("status", "verified" if kind == "preference" else "?"),
-        "source": data.get("source", "?"), "labels": data.get("labels", []),
+        "source": data.get("source", "?"), "labels": sorted(set(data.get("labels", []))),
         "title": data.get("title", ""), "category": data.get("category", "?"),
         "dream_report": data.get("dream_report", ""),
     }
+
+
+def _canonical_symbol(symbol):
+    # Container headings use the same prefixes as shadow-init.py::Symbol.heading_text.
+    if symbol in ("File-Level", "file-level"):
+        return "file-level"
+    return re.sub(r"^(?:class|interface|enum|trait|struct|protocol|module) ", "", symbol, count=1)
+
+
+def _canonical_source_file(shadow_dir, source_file):
+    if (
+        not source_file or any(char in source_file for char in (":", "\\", "\0", "\n", "\r"))
+        or any(part in ("", ".", "..") for part in source_file.split("/"))
+    ):
+        raise ValueError("Use a repository-relative source path with forward slashes")
+    root = canonical_path(shadow_dir)
+    target = canonical_path(root / (source_file + ".md"))
+    if not target.is_relative_to(root):
+        raise ValueError("Requested shadow resolves outside --shadow-dir")
+    return target.relative_to(root).as_posix()[:-3]
 
 
 def _mtime(path):
@@ -527,25 +560,43 @@ def _unique_entries(entries):
             warn(f"Empty discovery at {entry['anchor']}; repair its text before retrieval.")
             continue
         prior = unique.get(entry["id"])
-        if prior is None or _trust(entry) < _trust(prior):
+        if prior is None:
             unique[entry["id"]] = entry
+        else:
+            strongest = entry if _trust(entry) < _trust(prior) else prior
+            unique[entry["id"]] = {
+                **strongest, "labels": sorted(set(entry["labels"]) | set(prior["labels"])),
+            }
     return list(unique.values())
 
 
 def _knowledge_entries(shadow_dir, source_file=None):
     """Collect identities without recording a citation for parsing or matching."""
     entries = []
+    files = {}
+
+    def canonical_file(file):
+        if file not in files:
+            files[file] = _canonical_source_file(shadow_dir, file)
+        return files[file]
+
+    def canonical_refs(refs):
+        normalized = []
+        for ref in refs:
+            file, separator, symbol = ref.partition("::")
+            if separator:
+                try:
+                    ref = f"{canonical_file(file)}::{_canonical_symbol(symbol)}"
+                except (OSError, ValueError, RuntimeError) as exc:
+                    warn(f"Cannot resolve reference {ref!r}: {exc}; inspect and repair that reference.")
+            normalized.append(ref)
+        return sorted(set(normalized))
+
     if source_file is None:
         discoveries = collect_all_discoveries(shadow_dir)
     else:
-        if (
-            not source_file or ":" in source_file or "\\" in source_file
-            or any(part in ("", ".", "..") for part in source_file.split("/"))
-        ):
-            raise ValueError("Use a repository-relative source path with forward slashes")
+        source_file = canonical_file(source_file)
         path = shadow_dir / (source_file + ".md")
-        if not path.resolve().is_relative_to(shadow_dir.resolve()):
-            raise ValueError("Requested shadow resolves outside --shadow-dir")
         parsed = parse_shadow_file(path) if path.is_file() else {"discoveries": []}
         modified = _mtime(path) if parsed["discoveries"] else 0
         discoveries = [
@@ -553,13 +604,13 @@ def _knowledge_entries(shadow_dir, source_file=None):
             for disc in parsed["discoveries"]
         ]
     for disc in discoveries:
-        file = Path(disc["shadow_path"]).as_posix()[:-3]
+        file = canonical_file(Path(disc["shadow_path"]).as_posix()[:-3])
         entries.append(_knowledge_entry(
             "discovery", file, disc.get("symbol", "file-level"), disc.get("text", ""),
-            disc, disc.get("also_involves", []), disc.get("shadow_mtime", 0),
+            disc, canonical_refs(disc.get("also_involves", [])), disc.get("shadow_mtime", 0),
         ))
     for cross in parse_cross_cutting(shadow_dir):
-        refs = cross.get("refs", [])
+        refs = canonical_refs(cross.get("refs", []))
         if source_file is not None and not any(ref.split("::", 1)[0] == source_file for ref in refs):
             continue
         relative = "_cross/" + cross["file"]
@@ -597,11 +648,12 @@ def _rank_entries(entries, scores, limit, recent=False):
             key=lambda entry: -scores[entry["id"]],
         )
         unseen = [entry for entry in group if not scores.get(entry["id"], 0)]
-        # Reserve one slot per group/page-sized block for a zero-score entry.
-        width = max(2, limit)
+        width = max(1, limit)
         while seen and unseen:
-            result.extend(seen[:width - 1])
-            del seen[:width - 1]
+            remaining = width - len(result) % width
+            take = min(len(seen), remaining - 1)
+            result.extend(seen[:take])
+            del seen[:take]
             result.append(unseen.pop(0))
         result.extend(seen)
         result.extend(unseen)
@@ -611,23 +663,27 @@ def _rank_entries(entries, scores, limit, recent=False):
 def _citation_store(shadow_dir):
     try:
         return CitationStore.for_shadow(shadow_dir)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        warn(f"Citation tracking unavailable: {exc}. Knowledge is still returned; repair local Git/state access.")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        warn(f"Citation tracking unavailable: {exc}. This visit will not be recorded; check local Git/state access.")
         return None
 
 
 def _clip(text, limit):
-    return text if len(text) <= limit else text[:max(0, limit - 3)] + "..."
+    if len(text) <= limit:
+        return text
+    return text[:limit] if limit < 3 else text[:limit - 3] + "..."
 
 
-def _entry_preview(entry, score, style, group_count):
-    text = _clip(entry["text"].replace("\n", " "), 180)
+def _preview_parts(entry, score, style, group_count):
+    text = entry["text"].replace("\n", " ")
     anchor = _clip(entry["anchor"], 160)
     identity = f"id={entry['id']} citation_score={score}"
     metadata = f"({entry['status']}, source: {entry['source']})"
     labels = ",".join(entry["labels"]) or "-"
     if style == "top":
-        return f"- [{labels}] `{anchor}` ({entry['status']}) {identity}: {text}"
+        anchor = entry["symbol"] if entry["kind"] == "discovery" else entry["file"]
+        prefix = f"- [{_clip(labels, 40)}] `{_clip(anchor, 48)}` ({entry['status']}) id={entry['id']}: "
+        return prefix, text
     if style == "recent":
         stamp = datetime.fromtimestamp(entry["mtime"]).strftime("%Y-%m-%d %H:%M")
         heading = f"  [{stamp}] ({entry['kind']})"
@@ -637,28 +693,51 @@ def _entry_preview(entry, score, style, group_count):
         heading = f"Preferences [{entry['source']}]"
     else:
         heading = f"{_clip(entry['file'], 160)} ({group_count} matches)"
-    body = f"{heading}\n  {anchor}\n  {metadata} [{labels}]\n  {identity}\n  {text}"
+    prefix = f"{heading}\n  {anchor}\n  {metadata} [{labels}]\n  {identity}\n"
     if entry["refs"]:
         label = "Refs" if entry["kind"] == "cross-cutting" else "Also involves"
-        body += f"\n  {label}: {_clip(', '.join(entry['refs']), 160)}"
+        prefix += f"  {label}: {_clip(', '.join(entry['refs']), 160)}\n"
     if style == "labels" and len(entry["labels"]) > 1:
-        body += f"\n  Also labeled: {labels}"
-    return body
+        prefix += f"  Also labeled: {labels}\n"
+    return prefix + "  ", text
+
+
+def _read_scores(store, identities):
+    if store is not None:
+        try:
+            return store.scores(identities), True
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            if is_busy_error(exc):
+                warn("Citation ledger busy; scores are unknown. Counting will still be attempted after output if enabled.")
+            else:
+                warn(f"Cannot read citation scores: {exc}. Scores are unknown; check the local cache.")
+    return {}, False
+
+
+def _record_visible(store, identities, options, event=None):
+    if store is not None and identities and options.record:
+        try:
+            store.record(identities, options.event_id if event is None else event)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            if is_busy_error(exc):
+                warn("Citation ledger busy; this visit was not recorded (scores were not updated). Retry later with the same --event-id if supplied.")
+            else:
+                warn(f"Citation scores were not updated: {exc}. This visit was not recorded; repair local state and retry.")
+
+
+def _catalog_digest(entries, recent):
+    values = [
+        {key: value for key, value in entry.items() if recent or key != "mtime"}
+        for entry in sorted(entries, key=lambda entry: entry["id"])
+    ]
+    return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _emit_knowledge(shadow_dir, entries, header, options, *, style="search", request=""):
     store = _citation_store(shadow_dir)
-    scores = {}
-    if store:
-        try:
-            scores = store.scores([entry["id"] for entry in entries])
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            warn(f"Cannot read citation scores: {exc}. Scores are unknown; repair the local ledger and retry.")
-            store = None
+    scores, scores_known = _read_scores(store, [entry["id"] for entry in entries])
     ranked = _rank_entries(entries, scores, options.limit, recent=style == "recent")
-    catalog = "" if style == "top" else hashlib.sha256(json.dumps(
-        sorted(entries, key=lambda entry: entry["id"]), sort_keys=True, ensure_ascii=False,
-    ).encode("utf-8")).hexdigest()
+    catalog = "" if style == "top" else _catalog_digest(entries, recent=style == "recent")
     token = None
     offset = 0
     if options.cursor:
@@ -670,7 +749,10 @@ def _emit_knowledge(shadow_dir, entries, header, options, *, style="search", req
         token, offset = match.group(1), int(match.group(2))
         ids = store.load_page(token, request, catalog)
         by_id = {entry["id"]: entry for entry in entries}
-        ranked = [by_id[identity] for identity in ids]
+        try:
+            ranked = [by_id[identity] for identity in ids]
+        except KeyError as exc:
+            raise ValueError("Invalid local pagination snapshot; restart the query") from exc
         if offset >= len(ranked):
             raise ValueError("Cursor is past the available results; restart the query")
 
@@ -681,39 +763,54 @@ def _emit_knowledge(shadow_dir, entries, header, options, *, style="search", req
     cap = options.max_chars
     prefix = _clip(header, min(300, cap // 5)) if cap else header
     reserve = 90 if style != "top" else 6
-    if cap and not options.cursor:
-        width = options.limit
-        while width > 1:
+    width = min(options.limit, len(ranked) - offset)
+    while width:
+        selected = ranked[offset:offset + width]
+        parts = [
+            _preview_parts(entry, scores.get(entry["id"], 0) if scores_known else "?", style, counts[entry["file"]])
+            for entry in selected
+        ]
+        if cap:
             used = len(prefix) + reserve + 3
             fits = 0
-            for entry in ranked[:width]:
-                score = scores.get(entry["id"], 0) if store else "?"
-                used += len(_entry_preview(entry, score, style, counts[entry["file"]])) + 1
+            for entry_prefix, text in parts:
+                used += len(entry_prefix) + min(12, len(text)) + 1
                 if used > cap:
                     break
                 fits += 1
-            if fits >= width:
-                break
-            width = max(1, fits)
-            ranked = _rank_entries(entries, scores, width, recent=style == "recent")
-    output = prefix
-    shown = []
-    for entry in ranked[offset:offset + options.limit]:
-        score = scores.get(entry["id"], 0) if store else "?"
-        block = _entry_preview(entry, score, style, counts[entry["file"]])
-        available = cap - len(output) - reserve - 3 if cap else len(block)
-        if cap and len(block) > available:
-            if shown:
-                break
-            identity = (
-                f"({entry['status']}, source: {entry['source']}) "
-                f"id={entry['id']} citation_score={score}: "
-            )
-            if available <= len(identity) + 4:
-                raise ValueError("Output budget cannot fit an entry; increase --max-chars")
-            block = identity + _clip(entry["text"], available - len(identity))
-        output += "\n" + block
-        shown.append(entry["id"])
+            if fits < width:
+                if width > 1:
+                    width = max(1, fits)
+                    if not options.cursor:
+                        ranked = _rank_entries(entries, scores, width, recent=style == "recent")
+                    continue
+                entry = selected[0]
+                score = scores.get(entry["id"], 0) if scores_known else "?"
+                minimal = f"({entry['status']}, source: {entry['source']}) id={entry['id']} citation_score={score}: "
+                parts = [(minimal, entry["text"])]
+        break
+    body_budget = cap - len(prefix) - reserve - 1 - width - sum(len(part[0]) for part in parts) if cap else 180 * width
+    if width and body_budget < width:
+        raise ValueError("Output budget cannot fit discovery content; increase the character budget")
+    snippets = [0] * width
+    # Distribute spare room across entries rather than dropping a whole warning.
+    pending = list(range(width))
+    while pending and body_budget:
+        share = max(1, body_budget // len(pending))
+        next_pending = []
+        for index in pending:
+            remaining = min(180, len(parts[index][1])) - snippets[index]
+            take = min(remaining, share, body_budget)
+            snippets[index] += take
+            body_budget -= take
+            if snippets[index] < min(180, len(parts[index][1])):
+                next_pending.append(index)
+        pending = next_pending
+    output = prefix + "".join(
+        "\n" + entry_prefix + _clip(text, snippets[index])
+        for index, (entry_prefix, text) in enumerate(parts)
+    )
+    shown = [entry["id"] for entry in selected]
     next_offset = offset + len(shown)
     if next_offset < len(ranked):
         if style == "top":
@@ -734,11 +831,7 @@ def _emit_knowledge(shadow_dir, entries, header, options, *, style="search", req
     if cap and len(output) + 1 > cap:
         raise ValueError("Output budget cannot fit retrieval metadata; increase --max-chars")
     print(output, flush=True)
-    if store and shown and options.record:
-        try:
-            store.record(shown, options.event_id or uuid.uuid4().hex)
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            warn(f"Citation scores were not updated: {exc}. Reuse --event-id when retrying.")
+    _record_visible(store, shown, options)
 
 
 def view_get(shadow_dir, identity, *, options=None):
@@ -750,13 +843,8 @@ def view_get(shadow_dir, identity, *, options=None):
     if entry is None:
         raise ValueError("Discovery ID is absent or its claim changed; search again for its current ID")
     store = _citation_store(shadow_dir)
-    score = "?"
-    if store:
-        try:
-            score = store.scores([identity]).get(identity, 0)
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            warn(f"Cannot read citation score: {exc}. Repair the local ledger and retry.")
-            store = None
+    scores, scores_known = _read_scores(store, [identity])
+    score = scores.get(identity, 0) if scores_known else "?"
     body = entry["anchor"] + "\n\n" + entry["text"]
     if entry["labels"]:
         body += "\nLabels: " + ", ".join(entry["labels"])
@@ -766,26 +854,55 @@ def view_get(shadow_dir, identity, *, options=None):
         body += "\nRefs: " + ", ".join(entry["refs"])
     if entry["dream_report"]:
         body += "\nDream report: " + entry["dream_report"]
-    if options.text_offset >= len(body) and options.text_offset:
-        raise ValueError("--text-offset is past the end of this discovery")
+    revision = hashlib.sha256(json.dumps(
+        [entry["status"], entry["source"], body], ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()[:32]
+    start = 0
+    event = options.event_id
+    expires = int(time.time()) + RECEIPT_TTL
+    record = options.record
+    if options.text_cursor:
+        match = re.fullmatch(
+            r"([0-9a-f]{32})~(\d{1,12})~([01])~([A-Za-z0-9._:-]{1,128})~(\d+)",
+            options.text_cursor,
+        )
+        if not match:
+            raise ValueError("Invalid text cursor; copy the --text-cursor value from the previous expansion")
+        prior_revision, expiry, recording, prior_event, offset = match.groups()
+        if prior_revision != revision:
+            raise ValueError("Discovery body or metadata changed; restart --get without --text-cursor")
+        if int(expiry) <= time.time():
+            raise ValueError("Text cursor expired; restart --get without --text-cursor")
+        if event is not None and event != prior_event:
+            raise ValueError("Text cursor has a different --event-id; reuse its original event")
+        start, expires, event = int(offset), int(expiry), prior_event
+        record = record and recording == "1"
+        if start >= len(body):
+            raise ValueError("Text cursor is past the end of this discovery; restart --get")
     header = (
         f"id={identity} citation_score={score}\n"
         f"({entry['status']}, source: {entry['source']})\n"
     )
-    start = options.text_offset
-    available = options.max_chars - len(header) - 100 if options.max_chars else len(body)
-    if available < 1:
-        raise ValueError("Output budget cannot fit discovery content; increase --max-chars")
-    content = body[start:start + available]
-    output = header + content
-    if start + len(content) < len(body):
-        output += f"\nContinue: --get {identity} --text-offset {start + len(content)}"
+    tail = ""
+    available = len(body) - start
+    if options.max_chars and len(header) + available + 1 > options.max_chars:
+        event = event or uuid.uuid4().hex
+
+        def continuation(offset):
+            token = f"{revision}~{expires}~{int(record)}~{event}~{offset}"
+            value = f"\nContinue: --get {identity} --text-cursor {token}"
+            if options.max_chars != 4000:
+                value += f" --max-chars {options.max_chars}"
+            return value
+
+        available = options.max_chars - len(header) - len(continuation(len(body))) - 1
+        if available < 1:
+            raise ValueError("Output budget cannot fit continuation metadata; increase --max-chars")
+        tail = continuation(start + available)
+    output = header + body[start:start + available] + tail
     print(output, flush=True)
-    if store and options.record:
-        try:
-            store.record([identity], options.event_id or uuid.uuid4().hex)
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            warn(f"Citation score was not updated: {exc}. Reuse --event-id when retrying.")
+    if record:
+        _record_visible(store, [identity], options, event)
 
 
 def view_summary(shadow_dir):
@@ -947,7 +1064,8 @@ def view_symbol(shadow_dir, anchor, *, options=None):
     file, separator, symbol = anchor.partition("::")
     if not separator or not symbol:
         raise ValueError("--symbol requires file::symbol (use File-Level for a file-level section)")
-    symbol = "file-level" if symbol == "File-Level" else symbol
+    file = _canonical_source_file(shadow_dir, file)
+    symbol = _canonical_symbol(symbol)
     canonical = f"{file}::{symbol}"
     matches = [
         entry for entry in _knowledge_entries(shadow_dir, file)
@@ -1369,7 +1487,7 @@ def main():
         parser.add_argument("--cursor", help="Continue the same view/filters with a frozen result ordering")
         parser.add_argument("--event-id", help="Retry token; an entry counts once per token (default: fresh event)")
         parser.add_argument("--no-record", action="store_true", help="Do not increment citation scores")
-        parser.add_argument("--text-offset", type=int, help="Continue long --get output at this character offset")
+        parser.add_argument("--text-cursor", help="Continue the same logical read of an unchanged --get body")
 
         args = parser.parse_args()
         retrieval = (
@@ -1378,13 +1496,13 @@ def main():
         )
         if not retrieval and (
             args.limit is not None or args.max_chars is not None or args.cursor
-            or args.event_id is not None or args.no_record or args.text_offset is not None
+            or args.event_id is not None or args.no_record or args.text_cursor is not None
         ):
             parser.error("Retrieval options require --search, --symbol, --get, --top, --prefs, --labels, or --recent")
-        if args.text_offset is not None and args.get is None:
-            parser.error("--text-offset requires --get")
+        if args.text_cursor is not None and args.get is None:
+            parser.error("--text-cursor requires --get")
         if args.cursor and (args.get is not None or args.top is not None):
-            parser.error("--cursor is for paged search/symbol/labels/prefs/recent; use --text-offset with --get")
+            parser.error("--cursor is for paged search/symbol/labels/prefs/recent; use --text-cursor with --get")
         if args.limit is not None and (args.top is not None or args.recent is not None or args.get is not None):
             parser.error("Use --top-limit or --recent N instead of --limit; --get returns one discovery")
         if args.max_chars is not None and args.top is not None:
@@ -1398,7 +1516,7 @@ def main():
                     args.max_chars if args.max_chars is not None else 4000
                 ),
                 cursor=args.cursor, event_id=args.event_id, record=not args.no_record,
-                text_offset=args.text_offset or 0,
+                text_cursor=args.text_cursor,
             )
         except ValueError as exc:
             parser.error(str(exc))
@@ -1458,7 +1576,10 @@ def main():
         error("Interrupted by user.")
         sys.exit(130)
     except (ValueError, sqlite3.Error) as exc:
-        error(f"{exc}. Correct the request or repair the local citation ledger, then retry.")
+        if is_busy_error(exc):
+            error("Local citation ledger is busy; retry the same command later. Do not reset a busy database.")
+        else:
+            error(f"{exc}. Correct the request or repair the local citation ledger, then retry.")
         sys.exit(1)
     except Exception as e:
         error(

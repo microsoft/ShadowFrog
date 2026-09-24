@@ -2,9 +2,9 @@
 
 This project uses a `.shadow/` knowledge base with verified discoveries about non-obvious code behavior. **You MUST consult the shadow before making any code change.**
 
-1. **Check the shadow first** — use `/shadow-frog-viewer --symbol <file>::<symbol>`
-   or `--top <file>` before editing; expand returned IDs with `--get` and page
-   large results rather than loading an entire shadow into context.
+1. **Check the shadow first** — use `/shadow-frog-viewer --search <file>` before
+   editing and `--symbol <file>::<symbol>` for focused follow-up. Expand IDs with
+   `--get` and page large results. Hook-sized `--top` hints are not exhaustive.
 2. **Check preferences** — use `--prefs` and follow all pages for project conventions.
 3. **Check cross-cutting** — use `--search` for related multi-file knowledge.
 4. **Act on what you find** — apply what you learn from the shadow to your work.
@@ -13,7 +13,8 @@ This project uses a `.shadow/` knowledge base with verified discoveries about no
 The shadow contains discoveries from code analysis and user conversations. Always consult it before making assumptions about code behavior.
 
 The viewer records one local `citation_score` per emitted discovery, atomically
-across worktrees; never edit counters in Markdown. It is an exposure count, not
+across worktrees; continuation chunks share one logical read. Never edit counters
+in Markdown. It is an exposure count, not
 proof of correctness or usefulness. Trust and relevance outrank popularity.
 Raw file reads are a fallback and are not counted. A ranked shortlist is not
 exhaustive: search the specific claim before adding duplicate knowledge.
