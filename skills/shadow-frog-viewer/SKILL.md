@@ -83,6 +83,15 @@ python3 .github/skills/shadow-frog-viewer/dream-lineage.py --shadow-dir /path/to
 
 The HTML groups compounding chains and fresh experiments, includes a full
 lineage tree, and supports expanding each experiment's report.
+Experiment names and test-count metadata render as literal text, not HTML;
+escaping happens at rendering time without changing the stored metadata.
+
+Pass stderr back to the agent even when generation exits 0. Required directory,
+index, or output failures emit `ERROR` and exit 1; malformed optional metadata
+or omitted rows emit `WARNING` with the affected path/field and produce a
+partial view. Repair the indicated input or permissions and rerun the same
+command. Missing optional artifacts and safely escaped text are not errors.
+The helper does not invoke a model or retry automatically.
 
 ## Fallback: Shell One-Liners
 

@@ -12,15 +12,57 @@ Usage:
     python3 dream-lineage.py                     # writes dream-lineage.html
     python3 dream-lineage.py -o custom-name.html # custom output path
     python3 dream-lineage.py --shadow-dir /path/to/.shadow
+
+Required input/output failures emit ERROR on stderr and exit 1. Recoverable
+omissions emit WARNING on stderr while producing a partial view. Correct the
+named input or output path and rerun; this helper does not invoke an LLM or retry.
 """
 
 import argparse
 import html as htmlmod
 import json
+import logging
 import os
 import re
 import sys
 from collections import defaultdict
+
+
+logger = logging.getLogger(__name__)
+
+
+class LineageError(ValueError):
+    """A required input or output prevents generating the lineage report."""
+
+
+def _warn_input(path, problem):
+    logger.warning("Input %r: %s. Repair the indicated input and rerun dream-lineage.py.", path, problem)
+
+
+def _read_optional_text(path, limit=None):
+    if not os.path.lexists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as stream:
+            return stream.read() if limit is None else stream.read(limit)
+    except (OSError, UnicodeError) as exc:
+        _warn_input(path, f"cannot read optional artifact; omitting its details ({exc})")
+        return None
+
+
+def _read_optional_manifest(path):
+    text = _read_optional_text(path)
+    if text is None:
+        return None
+    try:
+        manifest = json.loads(text)
+    except json.JSONDecodeError as exc:
+        _warn_input(path, f"invalid JSON; omitting manifest metadata ({exc})")
+        return None
+    if not isinstance(manifest, dict):
+        _warn_input(path, "manifest must be a JSON object; omitting its metadata")
+        return None
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -52,60 +94,71 @@ VERDICT_MAP = {
 
 
 def find_shadow_dir(hint=None):
-    if hint and os.path.isdir(hint):
+    if hint is not None:
+        if not os.path.isdir(hint):
+            raise LineageError(
+                f"Invalid --shadow-dir {hint!r}: expected an existing directory. "
+                "Correct the path and retry."
+            )
         return hint
     for candidate in [".shadow", os.path.join(os.getcwd(), ".shadow")]:
         if os.path.isdir(candidate):
             return candidate
-    print("ERROR: .shadow/ directory not found. Use --shadow-dir.", file=sys.stderr)
-    sys.exit(1)
+    raise LineageError(".shadow/ directory not found. Set --shadow-dir to the intended shadow and retry.")
 
 
 def load_index(shadow_dir):
     """Parse _dreams/_index.md into structured data."""
     index_path = os.path.join(shadow_dir, "_dreams", "_index.md")
-    if not os.path.exists(index_path):
-        print(f"ERROR: {index_path} not found.", file=sys.stderr)
-        sys.exit(1)
+    try:
+        with open(index_path, encoding="utf-8") as stream:
+            index_lines = stream.readlines()
+    except (OSError, UnicodeError) as exc:
+        raise LineageError(
+            f"Cannot read lineage index {index_path!r}: {exc}. "
+            "Restore a readable UTF-8 index or correct --shadow-dir, then retry."
+        ) from exc
 
     children = defaultdict(list)
     meta = {}
     branch_by_slug = {}
+    rows = []
 
     # First pass: collect all branches and build slug index
-    with open(index_path, encoding="utf-8") as f:
-        for line in f:
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) < 8:
-                continue
-            did, cat, verdict, title, branch, parent, tip = parts[1:8]
-            if not did or did.startswith("-") or did == "dream_id":
-                continue
-            short = did.split("Z-")[-1] if "Z-" in did else did
-            meta[branch] = {
-                "short": short, "cat": cat, "verdict": verdict,
-                "title": title.strip(), "did": did, "tip": tip,
-            }
-            slug_match = re.search(r"t\d+-", branch)
-            if slug_match:
-                branch_by_slug[branch[slug_match.start():]] = branch
+    for line_number, line in enumerate(index_lines, 1):
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 8:
+            if line.lstrip().startswith("|"):
+                _warn_input(index_path, f"line {line_number}: malformed table row; expected seven columns, skipping row")
+            continue
+        did, cat, verdict, title, branch, parent, tip = parts[1:8]
+        if did.startswith("-") or did == "dream_id":
+            continue
+        if not did or not branch or not parent:
+            _warn_input(index_path, f"line {line_number}: missing dream_id, branch, or parent; skipping row")
+            continue
+        if branch in meta:
+            _warn_input(index_path, f"line {line_number}: duplicate branch {branch!r}; keeping its first row")
+            continue
+        rows.append((branch, parent))
+        short = did.split("Z-")[-1] if "Z-" in did else did
+        meta[branch] = {
+            "short": short, "cat": cat, "verdict": verdict,
+            "title": title.strip(), "did": did, "tip": tip,
+        }
+        slug_match = re.search(r"t\d+-", branch)
+        if slug_match:
+            branch_by_slug[branch[slug_match.start():]] = branch
 
     # Second pass: resolve parent references (handle timestamp mismatches)
-    with open(index_path, encoding="utf-8") as f:
-        for line in f:
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) < 8:
-                continue
-            did, cat, verdict, title, branch, parent, tip = parts[1:8]
-            if not did or did.startswith("-") or did == "dream_id":
-                continue
-            resolved = parent
-            if parent != "main" and parent not in meta:
-                m = re.search(r"t\d+-", parent)
-                if m and parent[m.start():] in branch_by_slug:
-                    resolved = branch_by_slug[parent[m.start():]]
-            if branch not in children[resolved]:
-                children[resolved].append(branch)
+    for branch, parent in rows:
+        resolved = parent
+        if parent != "main" and parent not in meta:
+            m = re.search(r"t\d+-", parent)
+            if m and parent[m.start():] in branch_by_slug:
+                resolved = branch_by_slug[parent[m.start():]]
+        if branch not in children[resolved]:
+            children[resolved].append(branch)
 
     # Third pass: check manifest.json and report body for better parent info
     dreams_dir = os.path.join(shadow_dir, "_dreams")
@@ -117,26 +170,21 @@ def load_index(shadow_dir):
         mp = ""
         # Try manifest.json first
         manifest_path = os.path.join(dreams_dir, did, "manifest.json")
-        if os.path.exists(manifest_path):
-            try:
-                with open(manifest_path, encoding="utf-8") as f:
-                    mdata = json.load(f)
-                mp = mdata.get("parent_branch", "")
-            except Exception:
-                pass
+        mdata = _read_optional_manifest(manifest_path)
+        if mdata is not None:
+            mp = mdata.get("parent_branch", "")
+            if mp is not None and not isinstance(mp, str):
+                _warn_input(manifest_path, "parent_branch must be text; ignoring the parent override")
+                mp = ""
         # Try report body for parent references
         if not mp or mp == "main":
             report_path = os.path.join(dreams_dir, did, "report.md")
-            if os.path.exists(report_path):
-                try:
-                    with open(report_path, encoding="utf-8") as f:
-                        head = f.read(2000)
-                    # Check builds_on in frontmatter
-                    m = re.search(r"builds_on:\s*\[?\s*[\"']?([^\]\"'\n,]+)", head)
-                    if m:
-                        mp = m.group(1).strip().strip("\"'")
-                except Exception:
-                    pass
+            head = _read_optional_text(report_path, limit=2000)
+            if head:
+                # Check builds_on in frontmatter
+                m = re.search(r"builds_on:\s*\[?\s*[\"']?([^\]\"'\n,]+)", head)
+                if m:
+                    mp = m.group(1).strip().strip("\"'")
         if not mp or mp == "main":
             continue
         # Resolve via slug matching
@@ -165,8 +213,8 @@ def load_index(shadow_dir):
             children["main"].remove(branch)
             if branch not in children[resolved]:
                 children[resolved].append(branch)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            _warn_input(index_path, f"cannot re-parent {branch!r}: {exc}")
 
     return meta, children
 
@@ -180,28 +228,24 @@ def load_reports(shadow_dir, meta):
         info["tests"] = ""
         info["discoveries_count"] = 0
 
-        if os.path.exists(report_path):
-            try:
-                with open(report_path, encoding="utf-8") as f:
-                    content = f.read()
-                body = content
-                if content.startswith("---"):
-                    fm_end = content.find("---", 3)
-                    if fm_end > 0:
-                        body = content[fm_end + 3:].strip()
-                info["full_report"] = body
-            except Exception:
-                pass
+        content = _read_optional_text(report_path)
+        if content is not None:
+            body = content
+            if content.startswith("---"):
+                fm_end = content.find("---", 3)
+                if fm_end > 0:
+                    body = content[fm_end + 3:].strip()
+            info["full_report"] = body
 
         manifest_path = os.path.join(shadow_dir, "_dreams", did, "manifest.json")
-        if os.path.exists(manifest_path):
-            try:
-                with open(manifest_path, encoding="utf-8") as f:
-                    mdata = json.load(f)
-                info["tests"] = str(mdata.get("tests_passed", mdata.get("test_count", "")))
-                info["discoveries_count"] = len(mdata.get("discoveries", []))
-            except Exception:
-                pass
+        mdata = _read_optional_manifest(manifest_path)
+        if mdata is not None:
+            info["tests"] = str(mdata.get("tests_passed", mdata.get("test_count", "")))
+            discoveries = mdata.get("discoveries", [])
+            if isinstance(discoveries, list):
+                info["discoveries_count"] = len(discoveries)
+            else:
+                _warn_input(manifest_path, "discoveries must be a list; omitting its count")
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +340,7 @@ def flatten_chain(branch, meta, children, depth=0):
 def node_html(branch, meta, children, with_report=True):
     """Render a single node as a flat timeline row."""
     info = meta.get(branch, {})
-    short = info.get("short", branch)
+    short = htmlmod.escape(info.get("short", branch))
     cat = info.get("cat", "unknown")
     color = CAT_COLORS.get(cat, "#607D8B")
     verdict = VERDICT_MAP.get(info.get("verdict", ""), "—")
@@ -308,7 +352,10 @@ def node_html(branch, meta, children, with_report=True):
 
     sid = stable_id(branch)
 
-    test_badge = f'<span class="badge test">{tests} tests</span>' if tests else ""
+    test_badge = (
+        f'<span class="badge test">{htmlmod.escape(str(tests))} tests</span>'
+        if tests else ""
+    )
     disc_badge = f'<span class="badge disc">{disc} disc</span>' if disc else ""
 
     report_btn = ""
@@ -337,7 +384,7 @@ def node_html(branch, meta, children, with_report=True):
 def compact_node(branch, meta, children, prefix="", is_last=True):
     """Render a single line in the compact tree view."""
     info = meta.get(branch, {})
-    short = info.get("short", branch)
+    short = htmlmod.escape(info.get("short", branch))
     cat = info.get("cat", "unknown")
     color = CAT_COLORS.get(cat, "#607D8B")
     verdict = VERDICT_MAP.get(info.get("verdict", ""), "—")
@@ -346,7 +393,10 @@ def compact_node(branch, meta, children, prefix="", is_last=True):
     report = info.get("full_report", "")
 
     connector = "└── " if is_last else "├── "
-    test_info = f' <span class="ct-test">{tests}t</span>' if tests else ""
+    test_info = (
+        f' <span class="ct-test">{htmlmod.escape(str(tests))}t</span>'
+        if tests else ""
+    )
 
     sid = stable_id(branch)
     report_btn = ""
@@ -398,6 +448,24 @@ def tree_depth(node, children, _seen=None):
 def generate_html(shadow_dir, output_path):
     meta, children = load_index(shadow_dir)
     load_reports(shadow_dir, meta)
+
+    reachable = set()
+    pending = list(children.get("main", []))
+    while pending:
+        branch = pending.pop()
+        if branch in reachable:
+            continue
+        reachable.add(branch)
+        pending.extend(children.get(branch, []))
+    omitted = set(meta) - reachable
+    if omitted:
+        examples = ", ".join(repr(branch) for branch in sorted(omitted)[:5])
+        _warn_input(
+            os.path.join(shadow_dir, "_dreams", "_index.md"),
+            f"{len(omitted)} experiment(s), including {examples}, are unreachable "
+            "from the displayed main root; check parent references, root naming, "
+            "or cycles; those nodes are omitted from the views",
+        )
 
     total = len(meta)
     compound = sum(1 for p in children if p != "main" for _ in children[p])
@@ -545,9 +613,23 @@ def generate_html(shadow_dir, output_path):
         templates=templates_html,
     )
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(page)
-    print(f"Wrote {output_path} ({os.path.getsize(output_path):,} bytes)")
+    try:
+        page.encode("utf-8")
+    except UnicodeError as exc:
+        raise LineageError(
+            f"Cannot render UTF-8 HTML for {os.fspath(output_path)!r}: {exc}. "
+            "Repair invalid Unicode in the input metadata and retry."
+        ) from exc
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(page)
+        output_size = os.path.getsize(output_path)
+    except OSError as exc:
+        raise LineageError(
+            f"Cannot write lineage output {os.fspath(output_path)!r}: {exc}. "
+            "Create its parent directory or choose a writable --output path and retry."
+        ) from exc
+    print(f"Wrote {output_path} ({output_size:,} bytes)")
     print(f"  {total} experiments, {len(chain_roots)} chains (max depth {max_depth}), "
           f"{compound} compounding, {total - compound} fresh")
 
@@ -731,7 +813,27 @@ document.addEventListener('keydown', function(e) {{
 </body></html>'''
 
 
-if __name__ == "__main__":
+def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     args = parse_args()
-    shadow_dir = find_shadow_dir(args.shadow_dir)
-    generate_html(shadow_dir, args.output)
+    try:
+        shadow_dir = find_shadow_dir(args.shadow_dir)
+        generate_html(shadow_dir, args.output)
+    except LineageError as exc:
+        logger.error("%s", exc)
+        return 1
+    except RecursionError:
+        logger.error(
+            "Cannot traverse lineage in %r: cycle or excessive depth. "
+            "Inspect parent references and lineage depth, then retry.",
+            os.path.join(shadow_dir, "_dreams", "_index.md"),
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
