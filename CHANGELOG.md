@@ -16,6 +16,12 @@ shadow knowledge bases for any codebase.
   and individual expansion avoid loading entire large shadow sections.
   Citation scores measure emitted content, not correctness or proven usefulness.
 
+### Fixed
+- **Reconciliation path containment** — validate untrusted manifest destinations
+  and filesystem aliases before writing discoveries, cross-references, or
+  archives. Unsafe paths fail explicitly, including during dry runs, rather
+  than modifying files outside the shadow tree.
+
 ### Changed
 - Citation writes retry temporary SQLite lock contention within their existing
   wait budget and reuse the rollback journal without weakening synchronization.
