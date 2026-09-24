@@ -24,7 +24,8 @@ shadow knowledge bases for any codebase.
 
 ### Changed
 - Citation writes retry temporary SQLite lock contention within their existing
-  wait budget and reuse the rollback journal without weakening synchronization.
+  wait budget and use fully synchronized local WAL storage so readers do not
+  block concurrent score updates.
 - Retrieval keeps file/symbol identities consistent, preserves literal whitespace
   and duplicate labels, and binds expansion continuations to one unchanged logical
   read. Compact hooks share their budget across several previews, and local retry

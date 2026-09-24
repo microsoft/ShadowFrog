@@ -109,13 +109,16 @@ rewording, renaming, or merging claims/refs can create a new zero-score identity
 Scores are not fuzzily transferred or summed during Meditate. Removed identities
 can remain in the local ledger but cannot be expanded unless their claim exists.
 
-Scores live in SQLite under the repository's **common Git directory** at
+Scores live in a local-filesystem SQLite database under the repository's
+**common Git directory** at
 `shadowfrog/citations.sqlite3`, shared by its local worktrees. Different shadow
 roots in the same repo have separate scopes. Outside Git, the cache lives under
 `$XDG_STATE_HOME/shadowfrog/citations` (Windows: `$LOCALAPPDATA`), falling back to
 `~/.local/state/shadowfrog/citations`. It contains identities/counters/events,
 not discovery bodies. It is local metadata, not a tracked or multi-machine DB;
-Markdown and its format remain authoritative and unchanged.
+Markdown and its format remain authoritative and unchanged. Keep this database
+on a local filesystem, not a network share: its WAL journal coordinates readers
+and writers on one host.
 
 Successful transactions cannot overwrite concurrent increments. Accounting is
 best-effort: a busy ledger can exhaust the 100 ms wait budget. Unknown scores
@@ -127,8 +130,10 @@ Ordinary reads need no retained event receipt. Caller-supplied retry IDs and
 generated long-read IDs retain receipts for 24 hours, up to 100,000 receipts.
 New explicit receipts beyond capacity fail visibly rather than weakening retry
 deduplication. Never reuse a retry ID for an unrelated visit. Expired receipts
-are pruned in bounded batches. The fully synchronized rollback journal is capped
-at 1 MiB; SQLite can retain reusable free pages in the database.
+are pruned in bounded batches. Commits use full synchronization. WAL checkpoints
+run automatically after 256 pages, with a 1 MiB retained-journal limit after
+reset; an active transaction can temporarily keep a larger journal. SQLite can
+retain reusable free pages in the database.
 
 Result snapshots freeze ordering despite score changes. Identical snapshots
 reuse compressed storage; at most 32 snapshots / 8 MiB are retained locally.

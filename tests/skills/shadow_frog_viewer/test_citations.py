@@ -85,21 +85,20 @@ for index in range(30):
     assert citations.CitationStore(path, ".shadow").scores([identity])[identity] == 180
 
 
-def test_writes_reuse_journal_without_disabling_synchronization(citations, tmp_path):
+def test_wal_writes_keep_full_synchronization_and_checkpoint_limits(citations, tmp_path):
     store = citations.CitationStore(tmp_path / "citations.sqlite3", ".shadow")
     identity = citations.discovery_id("file", "a::f", "Claim")
     store.record([identity], "first")
     with store._connection() as db:
-        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "persist"
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA synchronous").fetchone()[0] >= 2
-    journal = tmp_path / "citations.sqlite3-journal"
-    assert journal.is_file()
-    assert journal.read_bytes()[:28] == b"\0" * 28
+        assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == citations.JOURNAL_BYTES
+        assert db.execute("PRAGMA wal_autocheckpoint").fetchone()[0] == citations.CHECKPOINT_PAGES
     store.record([identity], "second")
     assert store.scores([identity])[identity] == 2
 
 
-def test_busy_commit_retries_whole_transaction_without_duplicate_updates(citations, tmp_path):
+def test_active_reader_does_not_block_committing_citations(citations, tmp_path):
     path = tmp_path / "citations.sqlite3"
     store = citations.CitationStore(path, ".shadow")
     identity = citations.discovery_id("file", "a::f", "Claim")
@@ -112,23 +111,20 @@ import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from _citations import CitationStore
-store = CitationStore(Path(sys.argv[2]), ".shadow", timeout=2)
-def update(db):
-    db.execute("UPDATE scores SET citation_score = citation_score + 1")
-    print("attempt", flush=True)
-store._operation(update, write=True)
+store = CitationStore(Path(sys.argv[2]), ".shadow")
+store.record([sys.argv[3]], "concurrent")
+store.record([sys.argv[3]], "concurrent")
 """
     process = subprocess.Popen(
-        [sys.executable, "-c", code, str(HELPER.parent), str(path)],
+        [sys.executable, "-c", code, str(HELPER.parent), str(path), identity],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
     )
     try:
-        # Reader permits BEGIN IMMEDIATE and the update, but prevents COMMIT.
-        assert process.stdout.readline().strip() == "attempt"
-        assert process.stdout.readline().strip() == "attempt"
-        reader.rollback()
+        # A held read snapshot no longer prevents the writer's commit.
         stdout, stderr = process.communicate(timeout=15)
         assert process.returncode == 0, stdout + stderr
+        assert reader.execute("SELECT citation_score FROM scores").fetchone()[0] == 1
+        reader.rollback()
     finally:
         reader.close()
         if process.poll() is None:
@@ -325,7 +321,8 @@ def test_journal_size_remains_capped_after_large_snapshot_cleanup(citations, tmp
     with store._connection() as db, db:
         db.execute("UPDATE pages SET created=0")
     store.save_page("small", "catalog", ["one"])
-    assert (tmp_path / "citations.sqlite3-journal").stat().st_size <= 4096
+    journal = tmp_path / "citations.sqlite3-wal"
+    assert not journal.exists() or journal.stat().st_size <= 4096
 
 
 def test_production_budget_preserves_all_successful_writes(citations, tmp_path):

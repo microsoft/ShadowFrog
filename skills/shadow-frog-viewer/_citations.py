@@ -21,6 +21,7 @@ MAX_RECEIPTS = 100_000
 MAX_PAGES = 32
 MAX_PAGE_BYTES = 8 * 1024 * 1024
 JOURNAL_BYTES = 1024 * 1024
+CHECKPOINT_PAGES = 256
 SCHEMA_VERSION = 2
 
 
@@ -127,13 +128,16 @@ class CitationStore:
                     f"Unsupported citation database version {version} at {self.path}; "
                     "use a matching helper or move this local cache aside to reset scores"
                 )
-            # Reuse the rollback journal instead of creating/deleting it on every
-            # tiny update, while retaining FULL synchronization and atomic commits.
-            mode = db.execute("PRAGMA journal_mode=PERSIST").fetchone()[0]
-            if mode != "persist":
-                raise ValueError(f"Cannot enable persistent citation journaling (got {mode})")
+            # Local worktrees share WAL so readers do not contend with each
+            # small score update. FULL still synchronizes successful commits.
+            mode = db.execute("PRAGMA journal_mode").fetchone()[0]
+            if mode != "wal":
+                mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            if mode != "wal":
+                raise ValueError(f"Cannot enable local WAL citation storage (got {mode})")
             db.execute("PRAGMA synchronous=FULL")
             db.execute(f"PRAGMA journal_size_limit={JOURNAL_BYTES}")
+            db.execute(f"PRAGMA wal_autocheckpoint={CHECKPOINT_PAGES}")
             if version == 0:
                 with db:
                     db.execute("BEGIN IMMEDIATE")

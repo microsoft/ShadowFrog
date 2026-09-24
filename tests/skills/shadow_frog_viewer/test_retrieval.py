@@ -556,6 +556,8 @@ def test_counting_can_recover_after_a_failed_score_read(shadow_viewer, tmp_path,
     store = shadow_viewer.CitationStore.for_shadow(shadow)
     store.record([identity])
     lock = sqlite3.connect(store.path)
+    # A pre-existing rollback cache can still be locked during WAL activation.
+    lock.execute("PRAGMA journal_mode=DELETE")
     lock.execute("BEGIN EXCLUSIVE")
 
     class UnlockOnOutput(io.StringIO):
