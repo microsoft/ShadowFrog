@@ -8,4 +8,4 @@
 
 **Discovery**: validate_coupon normalizes coupon codes to uppercase via code.upper() before lookup, but calculate_total passes coupon_code directly to get_coupon without normalization. A user who validates "save20" (returns True) and then passes "save20" to calculate_total gets no discount — the coupon silently fails because load_coupon's keys are uppercase. This creates a validate-then-use inconsistency where validated codes don't work.
 
-_(verified, source: exploration, labels: [bug])_
+_(verified, source: exploration, labels: [bug], citation_score: 0)_

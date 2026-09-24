@@ -84,7 +84,7 @@ def _source_files() -> dict[str, Path]:
                 raise ValueError(f"Tooling assets must be regular files: {path}")
             sources[f"{directory.name}/{path.name}"] = path
     required = {
-        "shadow-frog/SKILL.md", "shadow-frog/_coherence.py",
+        "shadow-frog/SKILL.md", "shadow-frog/_coherence.py", "shadow-frog/_citations.py",
         "shadow-frog-dream/SKILL.md", "shadow-frog-dream/dream-tools.py",
         "shadow-frog-dream/_worktree_safety.py",
         *(f"shadow-frog-dream/{name}" for name in TOOLS.values()),

@@ -117,6 +117,13 @@ For example, use Viewer to find relevant knowledge or audit its structure:
 The [Viewer reference](skills/shadow-frog-viewer/SKILL.md) also covers summaries,
 recent discoveries, label filters, preferences, and interactive dream-lineage HTML.
 
+Agents still read shadow files and symbols directly. Each entry carries a visible
+`citation_score`, initially 0, as an approximate hint of how often agents revisit
+it. After consulting an entry, the agent records it once per task with the small
+core `shadow-cite.py` helper; its only job is to update the selected Markdown
+counter safely. No database or special retrieval interface is required. Scores
+never replace relevance, trust, or verification.
+
 ---
 
 ## Choose Dream or Nap
@@ -218,21 +225,21 @@ For example:
 ```markdown
 - authenticate_user() silently returns None on expired tokens
   instead of raising. 3 of 7 callers don't check the return value.
-  _(verified, source: exploration, labels: [bug])_
+  _(verified, source: exploration, labels: [bug], citation_score: 0)_
 ```
 
 **User knowledge**:
 ```markdown
 - The retry logic here took 3 iterations to get right -- it handles
   a subtle race condition during rolling deployments. Do not simplify.
-  _(verified, source: user)_
+  _(verified, source: user, citation_score: 0)_
 ```
 
 **Collaborative work**:
 ```markdown
 - While debugging issue #42, discovered that process_batch() silently
   drops items exceeding 1MB -- logged at DEBUG level only.
-  _(verified, source: interaction)_
+  _(verified, source: interaction, citation_score: 0)_
 ```
 
 | Property | Values | Meaning |
@@ -240,6 +247,7 @@ For example:
 | **Status** | `verified` / `uncertain` / `refuted` | Has the claim been confirmed? |
 | **Source** | `exploration` / `user` / `interaction` | Where did this knowledge come from? |
 | **Labels** | `bug`, `performance`, `security`, `feature-gap`, `tech-debt` | Optional; marks actionable discoveries |
+| **Citation score** | Nonnegative integer; missing means `0` | Approximate agent-reported revisits, stored as `citation_score` in the entry |
 
 ### Trust Hierarchy
 

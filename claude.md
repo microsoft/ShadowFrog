@@ -11,6 +11,8 @@ ShadowFrog/
   skills/
     shadow-frog/SKILL.md         Main entrypoint (docs, reference system, search)
     shadow-frog/_coherence.py    Shared structural parent-connection validation
+    shadow-frog/_citations.py    Visible score metadata and safe per-file increments
+    shadow-frog/shadow-cite.py   Record exact consulted claims after native reads
     shadow-frog-init/            First-time setup (create .shadow/)
       SKILL.md                   Init instructions + fallback steps
       shadow-init.py             Python helper script
@@ -84,7 +86,7 @@ Canonical formal spec: `/shadow-frog`. The shapes below are the minimum an agent
 Per-file discovery (anchored by `file::symbol` heading; labels and `Also involves:` are optional):
 ```
 - <behavioral statement>
-  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>[, labels: [bug, security]])_
+  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>[, labels: [bug, security]], citation_score: 0)_
   Also involves: `file::symbol`, `file::symbol`
 ```
 
@@ -98,18 +100,31 @@ Cross-cutting (`_cross/<slug>.md`, slug = kebab-case from title, e.g. "DB connec
 
 **Discovery**: <behavioral statement>
 
-_(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
+_(<verified|uncertain|refuted>, source: <exploration|user|interaction>, citation_score: 0)_
 ```
 
 Preference (`_prefs.md` — project-wide, no file/symbol anchor):
 ```
 - <preference or convention>
-  _(source: <user|interaction>)_
+  _(source: <user|interaction>, citation_score: 0)_
 ```
 
 - Labels (lowercase, comma-separated): `bug`, `performance`, `security`, `feature-gap`, `tech-debt`. Only for actionable discoveries.
 - `Also involves:` always uses `file::symbol`, never bare file paths.
 - `Dream report: _dreams/<dream-id>/` is optional — only for experiment-derived discoveries.
+
+### Citation Scores
+
+- Keep one visible nonnegative integer `citation_score` in Markdown metadata,
+  after optional labels. New entries start at 0; omitted scores also mean 0.
+- Agents read files/symbols directly and explicitly cite consulted entries once
+  per task. Use core `shadow-cite.py` for serialized exact-claim increments; no
+  database, opaque IDs, or required retrieval service.
+- Score updates must not change discovery prose, provenance, references, or counts.
+  Coordinate ordinary edits with citation writes; only helper calls share its lock.
+- Keep scores when rewording/moving the same claim, and use max rather than sum
+  when combining duplicates or inherited branch state. Scores are approximate,
+  not a global audited count or a trust/confidence value.
 
 ### Verification
 - Observe-based: read source at `file::symbol`, trace logic, confirm claim.

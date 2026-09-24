@@ -147,6 +147,8 @@ _No preferences recorded yet._
 This file stores project-wide user preferences and conventions that are
 not tied to any specific file or symbol. It is populated by
 `/shadow-frog-update` when the user shares general directives.
+New preference/discovery entries use `citation_score: 0`; empty placeholders
+are not knowledge entries and do not have scores.
 
 ### 6. Create `_meta/state.json`
 

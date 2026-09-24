@@ -1,7 +1,7 @@
 ---
 name: shadow-frog-viewer
 description: >-
-  Browse and query the shadow knowledge base: overview, search for files
+  Help users browse and visualize the shadow knowledge base: overview, search for files
   or symbols or text, view preferences, or see recent discoveries.
   Invoke when the user wants to see what's in the shadow, get an
   overview, or find specific knowledge.
@@ -12,7 +12,9 @@ scripts:
 
 # ShadowFrog Viewer
 
-Query and browse `.shadow/` content. Prerequisite: `.shadow/` exists.
+User-facing inspection of `.shadow/` content. Prerequisite: `.shadow/` exists.
+Agents navigate the Markdown files/symbols directly; this viewer is not a
+required retrieval interface.
 
 ## Primary: Python Helper Script
 
@@ -39,6 +41,13 @@ python3 .claude/skills/shadow-frog-viewer/shadow-viewer.py [options]
 | `--check-invariants` | Audit structural integrity — bidirectional cross-references, label/source/category enum compliance, heading format, no-orphan-back-pointer. Exits 0 if clean, 1 with one violation per line. Run after dream reconciliation or before commit. |
 
 No arguments defaults to `--summary`.
+
+Discovery views display the visible Markdown `citation_score` (missing means 0).
+Search/label/top ordering uses it only after source trust and verification status;
+refuted claims remain last. Reading, searching, and automatic previews do not
+increment counts. The agent explicitly records deliberately consulted entries
+with the core `shadow-cite.py` helper once per task. `--recent` is based on shadow
+file modification time, which includes citation updates, not discovery creation time.
 
 ### Options
 

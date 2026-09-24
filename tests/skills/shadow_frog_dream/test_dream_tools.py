@@ -49,6 +49,7 @@ def test_pin_creates_complete_external_snapshot(tmp_git_repo, tmp_path):
     assert Path(packet["manifest"]).is_absolute()
     assert Path(packet["skill_dir"]) == output / "shadow-frog-dream"
     assert (output / "shadow-frog/_coherence.py").is_file()
+    assert (output / "shadow-frog/_citations.py").is_file()
     assert all(Path(path).is_file() for path in packet["instructions"])
     metadata = json.loads(Path(packet["manifest"]).read_text(encoding="utf-8"))
     assert metadata["mode"] == "coherent"

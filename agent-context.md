@@ -13,6 +13,16 @@ This project uses a `.shadow/` knowledge base with verified discoveries about no
 
 The shadow contains discoveries from code analysis and user conversations. Always consult it before making assumptions about code behavior.
 
+Each entry's Markdown metadata includes `citation_score` (initially 0; omitted
+also means 0). After deliberately consulting an entry, increment it once per
+task using `shadow-cite.py` in the core `shadow-frog` skill, supplying the file,
+symbol and exact claim text already read. Batch repeated `--text` arguments
+for one file/section. Coordinate subagent updates through one writer.
+Do not count every entry in an opened file or recount repeated reads.
+The score is approximate revisit frequency, not confidence; relevance and trust
+take precedence. `/shadow-frog-viewer` is for user-facing inspection, not a
+required read path. There is no citation database or retrieval protocol.
+
 ### Key directories
 
 - `.shadow/<path>.md` — per-file shadows with symbol-level discoveries
