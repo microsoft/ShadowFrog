@@ -38,6 +38,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shadow-frog"))
 try:
     from _coherence import MODES, validate_connection
+    from _citations import CitationError, validate_score
 except ImportError as exc:
     raise SystemExit("ERROR: Missing shared shadow-frog/_coherence.py; reinstall the full skill set") from exc
 finally:
@@ -219,6 +220,10 @@ def main():
                 f'{type(disc).__name__}.'
             )
             continue
+        try:
+            validate_score(disc.get('citation_score', 0), f"discoveries[{i}].citation_score")
+        except CitationError as exc:
+            errors.append(str(exc))
         op = (disc.get('op') or 'add').lower()
         if op != 'add':
             errors.append(
@@ -226,6 +231,13 @@ def main():
                 f'by the reconciler today. Drop the op field (defaults to '
                 f'"add"), or split this into a meditate session.'
             )
+
+    for i, cross in enumerate(manifest.get('cross_cutting', []) or []):
+        if isinstance(cross, dict):
+            try:
+                validate_score(cross.get('citation_score', 0), f"cross_cutting[{i}].citation_score")
+            except CitationError as exc:
+                errors.append(str(exc))
 
     # 10. Discoveries must be mirrored into per-file shadows on the dream
     # branch. The reconciler reads manifest entries directly when merging

@@ -2,26 +2,26 @@
 
 This project uses a `.shadow/` knowledge base with verified discoveries about non-obvious code behavior. **You MUST consult the shadow before making any code change.**
 
-1. **Read preferences first** — `.shadow/_prefs.md` contains project conventions.
-2. **Navigate directly** — before editing `<file>`, read `.shadow/<file>.md`
-   and its relevant symbol sections using native file reads/searches.
-3. **Follow cross-cutting links** — inspect the relevant `.shadow/_cross/` entries.
+1. **Check the shadow first** — before editing any file, read its shadow:
+   ```
+   cat .shadow/<file-path>.md
+   ```
+2. **Check preferences** — `cat .shadow/_prefs.md` for project conventions
+3. **Check cross-cutting** — `cat .shadow/_cross/*.md` for multi-file patterns
 4. **Act on what you find** — apply what you learn from the shadow to your work.
 5. **After making changes** — run `/shadow-frog-update` to capture learnings
 
 The shadow contains discoveries from code analysis and user conversations. Always consult it before making assumptions about code behavior.
 
-File/symbol paths are sufficient; no viewer or database is required to read the
-knowledge. For large sections, the optional `shadow-read.py` in the core
-`shadow-frog` skill can retrieve a known file/symbol or search and page results.
-Use the user-facing `/shadow-frog-viewer` when the **user** asks to browse or visualize knowledge,
-not as the mandatory read path for code work.
-
-Helper reads update one local `citation_score` atomically across worktrees;
-continuation chunks share one logical read. Native reads are normal and uncounted.
-Never edit counters in Markdown or reread only to increase them. Scores measure
-exposure, not correctness or usefulness. A shortlist is not exhaustive: inspect
-the specific claim before adding duplicate knowledge.
+Each entry's Markdown metadata includes `citation_score` (initially 0; omitted
+also means 0). After deliberately consulting an entry, increment it once per
+task using `shadow-cite.py` in the core `shadow-frog` skill, supplying the file,
+symbol and exact claim text already read. Batch repeated `--text` arguments
+for one file/section. Coordinate subagent updates through one writer.
+Do not count every entry in an opened file or recount repeated reads.
+The score is approximate revisit frequency, not confidence; relevance and trust
+take precedence. `/shadow-frog-viewer` is for user-facing inspection, not a
+required read path. There is no citation database or retrieval protocol.
 
 ### Key directories
 

@@ -98,7 +98,7 @@ helper commands, and format definitions.
 | [`/shadow-frog-dream`](skills/shadow-frog-dream/SKILL.md) | Run autonomous experiments while you're away |
 | [`/shadow-frog-nap`](skills/shadow-frog-nap/SKILL.md) | Generate reviewed feature-task briefs without implementing them |
 | [`/shadow-frog-meditate`](skills/shadow-frog-meditate/SKILL.md) | Merge duplicates and resolve conflicting discoveries |
-| [`/shadow-frog-viewer`](skills/shadow-frog-viewer/SKILL.md) | User-facing CLI browsing, lineage visualization, and structural audits |
+| [`/shadow-frog-viewer`](skills/shadow-frog-viewer/SKILL.md) | Browse, search, inspect lineage, and audit structural integrity |
 
 As you work, the agent captures your code context as `source: user` and
 collaborative findings as `source: interaction`. After commits, the pre-tool
@@ -110,7 +110,6 @@ For example, use Viewer to find relevant knowledge or audit its structure:
 
 ```
 /shadow-frog-viewer --search "auth"
-/shadow-frog-viewer --symbol src/auth.py::login
 /shadow-frog-viewer --top src/auth.py
 /shadow-frog-viewer --check-invariants
 ```
@@ -118,17 +117,12 @@ For example, use Viewer to find relevant knowledge or audit its structure:
 The [Viewer reference](skills/shadow-frog-viewer/SKILL.md) also covers summaries,
 recent discoveries, label filters, preferences, and interactive dream-lineage HTML.
 
-Agents normally navigate directly from source files/symbols to their mirrored
-Markdown shadows. The **Viewer is for users**; it is not required for agent
-lookup. When a section is too large, agents can use the optional core
-[`shadow-read.py` helper](skills/shadow-frog/retrieval.md) to read a known file or
-symbol within a context budget, or to search and page matching knowledge.
-
-A single local `citation_score` counts helper exposures, not proven usefulness;
-relevance and trust outrank popularity. The core reader and user Viewer share
-safe local bookkeeping across worktrees without changing Markdown or requiring
-a vector index. Native reads remain normal and uncounted. New claims start at
-zero, and long-entry continuation counts as one logical read.
+Agents still read shadow files and symbols directly. Each entry carries a visible
+`citation_score`, initially 0, as an approximate hint of how often agents revisit
+it. After consulting an entry, the agent records it once per task with the small
+core `shadow-cite.py` helper; its only job is to update the selected Markdown
+counter safely. No database or special retrieval interface is required. Scores
+never replace relevance, trust, or verification.
 
 ---
 
@@ -231,21 +225,21 @@ For example:
 ```markdown
 - authenticate_user() silently returns None on expired tokens
   instead of raising. 3 of 7 callers don't check the return value.
-  _(verified, source: exploration, labels: [bug])_
+  _(verified, source: exploration, labels: [bug], citation_score: 0)_
 ```
 
 **User knowledge**:
 ```markdown
 - The retry logic here took 3 iterations to get right -- it handles
   a subtle race condition during rolling deployments. Do not simplify.
-  _(verified, source: user)_
+  _(verified, source: user, citation_score: 0)_
 ```
 
 **Collaborative work**:
 ```markdown
 - While debugging issue #42, discovered that process_batch() silently
   drops items exceeding 1MB -- logged at DEBUG level only.
-  _(verified, source: interaction)_
+  _(verified, source: interaction, citation_score: 0)_
 ```
 
 | Property | Values | Meaning |
@@ -253,6 +247,7 @@ For example:
 | **Status** | `verified` / `uncertain` / `refuted` | Has the claim been confirmed? |
 | **Source** | `exploration` / `user` / `interaction` | Where did this knowledge come from? |
 | **Labels** | `bug`, `performance`, `security`, `feature-gap`, `tech-debt` | Optional; marks actionable discoveries |
+| **Citation score** | Nonnegative integer; missing means `0` | Approximate agent-reported revisits, stored as `citation_score` in the entry |
 
 ### Trust Hierarchy
 

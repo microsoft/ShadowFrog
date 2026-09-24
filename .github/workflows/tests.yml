@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  viewer-compatibility:
-    name: Shadow helpers (Python 3.9)
+  citation-compatibility:
+    name: Citation helpers (Python 3.9)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,17 +18,15 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.9'
-      - name: Exercise the standalone viewer
+      - name: Check citation and viewer entry points
         run: |
-          python skills/shadow-frog-viewer/shadow-viewer.py --help
-          python skills/shadow-frog-viewer/shadow-viewer.py --shadow-dir examples/coupon-demo/.shadow --search coupon --limit 2 --no-record
-          python skills/shadow-frog/shadow-read.py --help
-          python skills/shadow-frog/shadow-read.py cart.py --shadow-dir examples/coupon-demo/.shadow --limit 2 --no-record
+          python skills/shadow-frog/shadow-cite.py --help
+          python skills/shadow-frog-viewer/shadow-viewer.py --shadow-dir examples/coupon-demo/.shadow --check-invariants
 
   pytest:
     name: pytest (${{ matrix.os }}, Python 3.12)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]

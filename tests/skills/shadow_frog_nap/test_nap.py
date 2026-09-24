@@ -416,12 +416,12 @@ def test_cli_export_is_utf8_and_does_not_overwrite_record(nap, record, tmp_path,
     assert json.loads((tmp_path / "nap run.json").read_text(encoding="utf-8")) == record
 
 
-def test_exports_do_not_pollute_discovery_views(record, tmp_path, coupon_demo, shadow_knowledge):
-    before = shadow_knowledge.get_all_shadow_files(coupon_demo / ".shadow")
+def test_exports_do_not_pollute_discovery_views(record, tmp_path, coupon_demo, shadow_viewer):
+    before = shadow_viewer.get_all_shadow_files(coupon_demo / ".shadow")
     output = coupon_demo / ".shadow" / "_meta" / "naps" / "tasks.md"
     result = run_cli(record, tmp_path, coupon_demo, "--export", str(output))
     assert result.returncode == 0, result.stderr
-    assert shadow_knowledge.get_all_shadow_files(coupon_demo / ".shadow") == before
+    assert shadow_viewer.get_all_shadow_files(coupon_demo / ".shadow") == before
     result = run_cli(
         record, tmp_path, coupon_demo,
         "--export", str(coupon_demo / ".shadow" / "nap-proposals.md"),

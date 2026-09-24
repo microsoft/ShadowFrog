@@ -11,10 +11,8 @@ ShadowFrog/
   skills/
     shadow-frog/SKILL.md         Main entrypoint (docs, reference system, search)
     shadow-frog/_coherence.py    Shared structural parent-connection validation
-    shadow-frog/shadow-read.py   Optional bounded agent retrieval by file/symbol
-    shadow-frog/_knowledge.py    Shared parsing, retrieval, and user-facing views
-    shadow-frog/_citations.py    Atomic local citation ledger and retrieval cursors
-    shadow-frog/retrieval.md     On-demand helper and telemetry reference
+    shadow-frog/_citations.py    Visible score metadata and safe per-file increments
+    shadow-frog/shadow-cite.py   Record exact consulted claims after native reads
     shadow-frog-init/            First-time setup (create .shadow/)
       SKILL.md                   Init instructions + fallback steps
       shadow-init.py             Python helper script
@@ -33,9 +31,9 @@ ShadowFrog/
       SKILL.md                   Bounded ideation, evidence, and task export instructions
       nap.py                     Portable record validator, parent context, and exporter
     shadow-frog-meditate/SKILL.md Dedup, merge, and resolve conflicting discoveries
-    shadow-frog-viewer/          User-facing knowledge inspection and visualization
+    shadow-frog-viewer/          Browse and query the shadow knowledge base
       SKILL.md                   Query instructions + shell fallbacks
-      shadow-viewer.py           User CLI using the core shared knowledge implementation
+      shadow-viewer.py           Python helper script
       dream-lineage.py           Dream lineage visualization
   hook-templates/
     shadow-frog-hooks.json       Copilot CLI hook config (sessionStart, preToolUse)
@@ -88,7 +86,7 @@ Canonical formal spec: `/shadow-frog`. The shapes below are the minimum an agent
 Per-file discovery (anchored by `file::symbol` heading; labels and `Also involves:` are optional):
 ```
 - <behavioral statement>
-  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>[, labels: [bug, security]])_
+  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>[, labels: [bug, security]], citation_score: 0)_
   Also involves: `file::symbol`, `file::symbol`
 ```
 
@@ -102,47 +100,36 @@ Cross-cutting (`_cross/<slug>.md`, slug = kebab-case from title, e.g. "DB connec
 
 **Discovery**: <behavioral statement>
 
-_(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
+_(<verified|uncertain|refuted>, source: <exploration|user|interaction>, citation_score: 0)_
 ```
 
 Preference (`_prefs.md` — project-wide, no file/symbol anchor):
 ```
 - <preference or convention>
-  _(source: <user|interaction>)_
+  _(source: <user|interaction>, citation_score: 0)_
 ```
 
 - Labels (lowercase, comma-separated): `bug`, `performance`, `security`, `feature-gap`, `tech-debt`. Only for actionable discoveries.
 - `Also involves:` always uses `file::symbol`, never bare file paths.
 - `Dream report: _dreams/<dream-id>/` is optional — only for experiment-derived discoveries.
 
+### Citation Scores
+
+- Keep one visible nonnegative integer `citation_score` in Markdown metadata,
+  after optional labels. New entries start at 0; omitted scores also mean 0.
+- Agents read files/symbols directly and explicitly cite consulted entries once
+  per task. Use core `shadow-cite.py` for serialized exact-claim increments; no
+  database, opaque IDs, or required retrieval service.
+- Score updates must not change discovery prose, provenance, references, or counts.
+  Coordinate ordinary edits with citation writes; only helper calls share its lock.
+- Keep scores when rewording/moving the same claim, and use max rather than sum
+  when combining duplicates or inherited branch state. Scores are approximate,
+  not a global audited count or a trust/confidence value.
+
 ### Verification
 - Observe-based: read source at `file::symbol`, trace logic, confirm claim.
 - Do-based: write and run a short test/script to confirm or refute.
 - `source: user` and `source: interaction` → always `verified`.
-
-### Citation-Aware Retrieval
-
-- Direct `.shadow/<path>.md` and symbol navigation is primary for agents.
-  Optional agent helpers live under `shadow-frog/`; the Viewer serves user
-  browsing/visualization requests, not a required code-work retrieval gateway.
-- Share parsing, identities and counters through core `_knowledge.py` and
-  `_citations.py`. Hooks use the core reader. Do not duplicate backend logic or
-  add compatibility re-exports in the user Viewer.
-- Keep the discovery grammar unchanged: viewer fingerprints and `citation_score`
-  are derived/local metadata, not additional Markdown fields.
-- Scores start at zero and increment only for content emitted by a retrieval
-  view; expansion chunks share one revision-bound logical read. They measure
-  exposure, not verified usefulness.
-- Use the common-Git SQLite ledger for instrumented multiprocess/worktree updates; do not
-  rewrite shadow files on reads. Telemetry failures must warn without hiding
-  knowledge. Summary/audit/parser-only operations do not increment scores.
-- Native reads remain normal and uncounted. Never make citation accounting a
-  prerequisite for accessing Markdown, or require an extra read merely to count.
-- Rank relevance and trust ahead of scores; preserve room for zero-score entries.
-  Page large results, expand by ID, and never use only the shortlist for dedup.
-- Fingerprints bind kind, canonical anchor, whitespace-preserving parsed claim
-  and refs. Metadata-only edits retain identity; rewritten/merged claims and
-  renamed anchors may reset scores. Deduplication must retain all labels.
 
 ### Dedup
 - Before writing, read existing discoveries at the target symbol.

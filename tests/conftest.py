@@ -54,16 +54,6 @@ def shadow_viewer(repo_root):
 
 
 @pytest.fixture(scope="session")
-def shadow_knowledge(repo_root):
-    return _load_script(repo_root / "skills/shadow-frog/_knowledge.py")
-
-
-@pytest.fixture(scope="session")
-def shadow_reader(repo_root):
-    return _load_script(repo_root / "skills/shadow-frog/shadow-read.py")
-
-
-@pytest.fixture(scope="session")
 def dream_reconcile(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-dream/dream-reconcile.py")
 
@@ -96,6 +86,11 @@ def meditate_repair(repo_root):
 @pytest.fixture(scope="session")
 def coherence(repo_root):
     return _load_script(repo_root / "skills/shadow-frog/_coherence.py")
+
+
+@pytest.fixture(scope="session")
+def citations(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog/_citations.py")
 
 
 @pytest.fixture(scope="session")

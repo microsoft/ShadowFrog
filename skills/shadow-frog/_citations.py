@@ -1,285 +1,179 @@
-"""Shared local citation scores; Markdown remains the authoritative knowledge store."""
+"""Visible Markdown citation metadata and serialized, exact-entry increments."""
 
 from contextlib import contextmanager
-from dataclasses import dataclass
-import hashlib
-import json
 import os
 from pathlib import Path
-import random
 import re
-import sqlite3
-import subprocess
+import stat
+import tempfile
 import time
-import unicodedata
-import zlib
 
 
-PAGE_TTL = 24 * 60 * 60
-RECEIPT_TTL = PAGE_TTL
-MAX_RECEIPTS = 100_000
-MAX_PAGES = 32
-MAX_PAGE_BYTES = 8 * 1024 * 1024
-JOURNAL_BYTES = 1024 * 1024
-CHECKPOINT_PAGES = 256
-SCHEMA_VERSION = 2
+DISCOVERY_META_RE = re.compile(
+    r"_\((\w+),\s*source:\s*(\w+)"
+    r"(?:,\s*labels:\s*\[([^\]]*)\])?"
+    r"(?:,\s*citation_score:\s*([0-9]+))?\)_"
+)
+PREFERENCE_META_RE = re.compile(
+    r"_\(source:\s*(\w+)(?:,\s*citation_score:\s*([0-9]+))?\)_"
+)
 
 
-def discovery_id(kind, anchor, text, refs=()):
-    """Content identity excludes status, provenance, labels, and usage metadata."""
-    value = [kind, anchor, text.strip(), sorted(set(refs))]
-    digest = hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return "d_" + digest[:32]
+class CitationError(ValueError):
+    """An entry cannot be safely identified or its score cannot be updated."""
 
 
-def canonical_path(path):
-    """Use actual directory-entry spelling without folding distinct filesystem names."""
-    resolved = Path(path).resolve()
-    current = Path(resolved.anchor)
-    for part in resolved.parts[1:]:
-        requested = current / part
-        if requested.exists():
-            key = unicodedata.normalize("NFC", part).casefold()
-            matches = []
-            for child in current.iterdir():
-                if child.name == part:
-                    matches = [child]
-                    break
-                if unicodedata.normalize("NFC", child.name).casefold() == key and child.samefile(requested):
-                    matches.append(child)
-            if len(matches) != 1:
-                raise ValueError(f"Cannot identify a unique filesystem path for {requested}")
-            current = matches[0]
-        else:
-            current = requested
-    return current
-
-
-def validate_event_id(value):
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
-        raise ValueError("event ID must be 1-128 letters, digits, or . _ : -")
+def validate_score(value, field="citation_score"):
+    if type(value) is not int or value < 0:
+        raise CitationError(f"{field} must be a nonnegative integer")
     return value
 
 
-def is_busy_error(exc):
-    if not isinstance(exc, sqlite3.OperationalError):
-        return False
-    code = getattr(exc, "sqlite_errorcode", None)
-    return (
-        (code is not None and code & 0xff in (5, 6))  # SQLITE_BUSY / SQLITE_LOCKED
-        or (code is None and str(exc) in ("database is locked", "database table is locked"))
+def metadata_score(line):
+    stripped = line.strip()
+    discovery = DISCOVERY_META_RE.fullmatch(stripped)
+    preference = PREFERENCE_META_RE.fullmatch(stripped)
+    if discovery:
+        return int(discovery.group(4) or 0)
+    if preference:
+        return int(preference.group(2) or 0)
+    raise CitationError("Malformed metadata: use a nonnegative integer citation_score after optional labels")
+
+
+def set_metadata_score(line, score):
+    """Change only the score field, preserving other text and line endings."""
+    validate_score(score)
+    metadata_score(line)
+    if "citation_score:" in line:
+        return re.sub(r"(citation_score:\s*)[0-9]+", lambda match: match.group(1) + str(score), line, count=1)
+    closing = line.rfind(")_")
+    return line[:closing] + f", citation_score: {score}" + line[closing:]
+
+
+def _symbol(value):
+    if value is None:
+        return None
+    value = value.strip().strip("`")
+    return re.sub(r"^(?:class|interface|enum|trait|struct|protocol|module) ", "", value)
+
+
+def _claim(value):
+    # Join visual line wrapping, but do not collapse whitespace inside literals.
+    return re.sub(r"[ \t]*\r?\n[ \t]*", " ", value.strip())
+
+
+def _entries(lines, kind):
+    section = None
+    claim = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        heading = re.fullmatch(r"#{2,3}\s+(?:`(.+)`|(File-Level|Cross-References))", stripped)
+        if heading:
+            section = _symbol(heading.group(1) or heading.group(2))
+            claim = None
+        if kind == "cross" and stripped.startswith("**Discovery**:"):
+            claim = [stripped.partition(":")[2].strip()]
+        elif kind != "cross" and stripped.startswith("- "):
+            claim = [stripped[2:]] if kind == "preference" or section not in (None, "Cross-References") else None
+        elif claim is not None:
+            if stripped.startswith("_("):
+                metadata_score(line)
+                yield section if kind == "file" else None, _claim("\n".join(claim)), index
+                claim = None
+            elif stripped.startswith(("Also involves:", "Dream report:", "#")):
+                claim = None
+            elif stripped:
+                claim.append(stripped)
+
+
+def _target(path, shadow_dir):
+    literal = Path(path).absolute()
+    if shadow_dir is None:
+        root = next((parent for parent in literal.parents if parent.name == ".shadow"), None)
+        if root is None:
+            raise CitationError("Provide a file under .shadow/ or an explicit --shadow-dir")
+    else:
+        root = Path(shadow_dir).absolute()
+    resolved_root = root.resolve()
+    if resolved_root != root.parent.resolve() / root.name:
+        raise CitationError("The shadow root is a filesystem alias; use a real shadow directory before recording citations")
+    resolved = literal.resolve()
+    if not resolved.is_relative_to(resolved_root) or not resolved.is_file():
+        raise CitationError("Citation target must be an existing Markdown file inside the shadow directory")
+    relative = resolved.relative_to(resolved_root)
+    if relative.suffix != ".md" or relative.parts[0] in ("_meta", "_dreams", "_index.md"):
+        raise CitationError("Cite discovery or preference entries, not indexes or dream reports")
+    kind = "preference" if relative.as_posix() == "_prefs.md" else (
+        "cross" if len(relative.parts) == 2 and relative.parts[0] == "_cross" else "file"
     )
+    return resolved, kind
 
 
-@dataclass(frozen=True)
-class CitationStore:
-    """One short-lived connection per operation; SQLite coordinates processes."""
-
-    path: Path
-    scope: str
-    timeout: float = 0.1
-
-    def __post_init__(self):
-        object.__setattr__(self, "path", Path(self.path))
-        if not isinstance(self.scope, str) or not self.scope:
-            raise ValueError("citation scope must be nonempty")
-        if self.timeout <= 0:
-            raise ValueError("citation timeout must be positive")
-
-    @classmethod
-    def for_shadow(cls, shadow_dir):
-        shadow = canonical_path(shadow_dir)
-        env = os.environ.copy()
-        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
-            env.pop(name, None)
-        env["LC_ALL"] = "C"
-        result = subprocess.run(
-            ["git", "-C", str(shadow), "rev-parse", "--show-toplevel", "--git-common-dir"],
-            capture_output=True, text=True, encoding="utf-8", timeout=0.2, env=env,
-        )
-        if result.returncode == 0:
-            root_text, common_text = result.stdout.rstrip("\n").split("\n")
-            root = canonical_path(root_text)
-            common = Path(common_text)
-            if not common.is_absolute():
-                common = shadow / common
-            return cls(
-                canonical_path(common) / "shadowfrog/citations.sqlite3",
-                shadow.relative_to(root).as_posix(),
-            )
-        if "not a git repository" not in result.stderr.lower():
-            raise ValueError(f"Cannot resolve Git citation storage: {result.stderr.strip()}")
-        # Standalone shadows use untracked local state, not a sidecar in .shadow/.
-        base = os.environ.get("LOCALAPPDATA" if os.name == "nt" else "XDG_STATE_HOME")
-        state = Path(base) if base else Path.home() / ".local/state"
-        identity = hashlib.sha256(os.fsencode(shadow)).hexdigest()
-        return cls(state / "shadowfrog/citations" / f"{identity}.sqlite3", str(shadow))
-
-    @contextmanager
-    def _connection(self, *, timeout=None):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path, timeout=self.timeout if timeout is None else timeout)
+@contextmanager
+def _locked(path, timeout):
+    lock = path.with_name(path.name + ".citation.lock")
+    deadline = time.monotonic() + timeout
+    while True:
         try:
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
-                raise ValueError(
-                    f"Unsupported citation database version {version} at {self.path}; "
-                    "use a matching helper or move this local cache aside to reset scores"
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise CitationError(
+                    f"Citation writer busy: {lock}. Retry later; after an interruption, "
+                    "confirm its writer stopped before removing only that lock."
+                ) from None
+            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(f"pid={os.getpid()}\n")
+        yield
+    finally:
+        lock.unlink()
+
+
+def record_citations(path, texts, *, symbol=None, shadow_dir=None, timeout=2.0):
+    """Increment each selected claim once; no retrieval, database, or hidden IDs."""
+    path, kind = _target(path, shadow_dir)
+    if kind == "file" and not symbol:
+        raise CitationError("Per-file citations require --symbol (use File-Level for file-wide knowledge)")
+    if kind != "file" and symbol is not None:
+        raise CitationError("Preferences and cross-cutting discoveries do not use --symbol")
+    if not texts or any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise CitationError("Supply --text with the exact discovery text already consulted")
+    targets = list(dict.fromkeys(_claim(text) for text in texts))
+    selected_symbol = _symbol(symbol)
+    with _locked(path, timeout):
+        original = path.read_bytes()
+        lines = original.decode("utf-8").splitlines(keepends=True)
+        entries = list(_entries(lines, kind))
+        updates = []
+        for text in targets:
+            matches = [
+                index for entry_symbol, entry_text, index in entries
+                if entry_symbol == selected_symbol and entry_text == text
+            ]
+            if len(matches) != 1:
+                raise CitationError(
+                    f"{path}: expected one matching entry for {symbol or kind} / {text!r}, "
+                    f"found {len(matches)}. Re-read that entry; correct the text or resolve duplicates."
                 )
-            # Local worktrees share WAL so readers do not contend with each
-            # small score update. FULL still synchronizes successful commits.
-            mode = db.execute("PRAGMA journal_mode").fetchone()[0]
-            if mode != "wal":
-                mode = db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-            if mode != "wal":
-                raise ValueError(f"Cannot enable local WAL citation storage (got {mode})")
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute(f"PRAGMA journal_size_limit={JOURNAL_BYTES}")
-            db.execute(f"PRAGMA wal_autocheckpoint={CHECKPOINT_PAGES}")
-            if version == 0:
-                with db:
-                    db.execute("BEGIN IMMEDIATE")
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS scores (scope TEXT, id TEXT, "
-                        "citation_score INTEGER NOT NULL CHECK(citation_score >= 0), PRIMARY KEY(scope, id))"
-                    )
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS events (scope TEXT, event TEXT, id TEXT, "
-                        "created REAL NOT NULL, PRIMARY KEY(scope, event, id))"
-                    )
-                    db.execute("CREATE INDEX IF NOT EXISTS event_expiry ON events(created)")
-                    db.execute(
-                        "CREATE TABLE IF NOT EXISTS pages (token TEXT PRIMARY KEY, scope TEXT, "
-                        "request TEXT, catalog TEXT, ids BLOB, created REAL)"
-                    )
-                    db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-            yield db
+            index = matches[0]
+            before = metadata_score(lines[index])
+            lines[index] = set_metadata_score(lines[index], before + 1)
+            updates.append({"text": text, "before": before, "after": before + 1})
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".cite-", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write("".join(lines).encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+            if path.read_bytes() != original:
+                raise CitationError("Shadow changed during citation update; coordinate writers and retry")
+            os.replace(temporary, path)
         finally:
-            db.close()
-
-    def _operation(self, action, *, write=False):
-        """Retry only lock contention; each write attempt is one atomic transaction."""
-        deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                wait = min(0.01, max(0, deadline - time.monotonic()))
-                with self._connection(timeout=wait) as db:
-                    if write:
-                        with db:
-                            db.execute("BEGIN IMMEDIATE")
-                            return action(db)
-                    return action(db)
-            except sqlite3.OperationalError as exc:
-                remaining = deadline - time.monotonic()
-                if not is_busy_error(exc) or remaining <= 0:
-                    raise
-                # Avoid letting repeated writers monopolize SQLite's polling slots.
-                time.sleep(min(remaining, random.uniform(0.001, 0.01)))
-
-    def scores(self, ids):
-        if not self.path.exists() or not ids:
-            return {}
-        ids = list(dict.fromkeys(ids))
-
-        def read(db):
-            result = {}
-            for offset in range(0, len(ids), 400):
-                chunk = ids[offset:offset + 400]
-                placeholders = ",".join("?" for _ in chunk)
-                result.update(db.execute(
-                    f"SELECT id, citation_score FROM scores WHERE scope=? AND id IN ({placeholders})",
-                    [self.scope, *chunk],
-                ))
-            return result
-        return self._operation(read)
-
-    def record(self, ids, event=None):
-        """Count anonymous reads directly; retain explicit retry receipts for one day."""
-        if event is not None:
-            validate_event_id(event)
-        ids = list(dict.fromkeys(ids))
-        if not ids:
-            return
-
-        def update(db):
-            now = time.time()
-            cutoff = now - RECEIPT_TTL
-            db.execute(
-                "DELETE FROM events WHERE rowid IN "
-                "(SELECT rowid FROM events WHERE created < ? LIMIT 1000)", (cutoff,),
-            )
-            receipt_count = db.execute("SELECT COUNT(*) FROM events").fetchone()[0] if event else 0
-            for identity in ids:
-                if event is not None:
-                    prior = db.execute(
-                        "SELECT created FROM events WHERE scope=? AND event=? AND id=?",
-                        (self.scope, event, identity),
-                    ).fetchone()
-                    if prior and prior[0] >= cutoff:
-                        continue
-                    if prior is None:
-                        if receipt_count >= MAX_RECEIPTS:
-                            raise ValueError("Citation retry receipt capacity reached; wait for expiry or use --no-record")
-                        receipt_count += 1
-                    db.execute(
-                        "INSERT INTO events VALUES (?, ?, ?, ?) "
-                        "ON CONFLICT(scope, event, id) DO UPDATE SET created=excluded.created",
-                        (self.scope, event, identity, now),
-                    )
-                db.execute(
-                    "INSERT INTO scores(scope, id, citation_score) VALUES (?, ?, 1) "
-                    "ON CONFLICT(scope, id) DO UPDATE SET citation_score=citation_score+1",
-                    (self.scope, identity),
-                )
-        self._operation(update, write=True)
-
-    def save_page(self, request, catalog, ids):
-        request = hashlib.sha256(request.encode("utf-8")).hexdigest()
-        payload = zlib.compress(json.dumps(ids, separators=(",", ":")).encode("utf-8"))
-        if len(payload) > MAX_PAGE_BYTES:
-            raise ValueError("Result snapshot exceeds local pagination capacity; narrow the query")
-        key = json.dumps([self.scope, request, catalog]).encode("utf-8") + payload
-        token = hashlib.sha256(key).hexdigest()[:32]
-
-        def publish(db):
-            now = time.time()
-            db.execute("DELETE FROM pages WHERE created < ?", (now - PAGE_TTL,))
-            db.execute("DELETE FROM pages WHERE token=?", (token,))
-            rows = db.execute("SELECT token, length(ids) FROM pages ORDER BY created DESC, token").fetchall()
-            used = len(payload)
-            for index, (old_token, size) in enumerate(rows, 1):
-                used += size
-                if index >= MAX_PAGES or used > MAX_PAGE_BYTES:
-                    db.execute("DELETE FROM pages WHERE token=?", (old_token,))
-            db.execute(
-                "INSERT INTO pages VALUES (?, ?, ?, ?, ?, ?)",
-                (token, self.scope, request, catalog, payload, now),
-            )
-        self._operation(publish, write=True)
-        return token
-
-    def load_page(self, token, request, catalog):
-        request = hashlib.sha256(request.encode("utf-8")).hexdigest()
-        if not self.path.exists():
-            raise ValueError("Retrieval cursor expired or unavailable; rerun the query without --cursor")
-        row = self._operation(
-            lambda db: db.execute(
-                "SELECT request, catalog, ids, created FROM pages WHERE token=? AND scope=?",
-                (token, self.scope),
-            ).fetchone()
-        )
-        if not row or row[3] < time.time() - PAGE_TTL:
-            raise ValueError("Retrieval cursor expired or unavailable; rerun the query without --cursor")
-        if row[0] != request:
-            raise ValueError("Cursor belongs to a different query; reuse its original view and filters")
-        if row[1] != catalog:
-            raise ValueError("Shadow knowledge changed; rerun the query without --cursor")
-        try:
-            ids = json.loads(zlib.decompress(row[2]).decode("utf-8"))
-        except (zlib.error, UnicodeError, ValueError, TypeError) as exc:
-            raise ValueError("Invalid local pagination snapshot; rerun the query without --cursor") from exc
-        if not isinstance(ids, list) or not all(isinstance(identity, str) for identity in ids):
-            raise ValueError("Invalid local pagination snapshot; rerun the query without --cursor")
-        return ids
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+    return updates

@@ -72,13 +72,13 @@ and conventions. Representative examples:
 Write as:
 ```markdown
 - <user's words, as close to verbatim as possible>
-  _(verified, source: user)_
+  _(verified, source: user, citation_score: 0)_
 ```
 
 For knowledge emerging from collaborative work (debugging, refactoring, test failures):
 ```markdown
 - <what was discovered and how>
-  _(verified, source: interaction)_
+  _(verified, source: interaction, citation_score: 0)_
 ```
 
 Anchor to the specific `file::symbol`. `source: user` and `source: interaction`
@@ -187,6 +187,10 @@ See `/shadow-frog` § Discovery Format for the verbatim per-file,
 cross-cutting, and preference formats. Rules to keep in mind during
 update sessions:
 
+- Start new claims/preferences with `citation_score: 0`; preserve the score
+  when updating the same knowledge. Citation-only edits do not add discoveries.
+- Record deliberately consulted existing entries once per task using the core
+  `shadow-cite.py` helper, not a retrieval requirement or a second hidden store.
 - Be behavioral: "silently returns None on expired tokens" not "handles token expiration"
 - `source: user` and `source: interaction` → always `verified`, use user's own words
 - `source: exploration` → mark `uncertain` unless verified by code reading or tests

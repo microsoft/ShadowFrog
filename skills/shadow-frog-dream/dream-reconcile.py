@@ -43,6 +43,17 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
+_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shadow-frog"))
+try:
+    from _citations import CitationError, metadata_score, set_metadata_score, validate_score
+except ImportError as exc:
+    raise SystemExit("ERROR: Missing core citation metadata parser; reinstall the full skill set") from exc
+finally:
+    sys.path.pop(0)
+    sys.dont_write_bytecode = _bytecode
+
 # Shared safety gate for `rm -rf <worktree>`. Lives next to this script so
 # bash callers (dream-cleanup.sh, dream-gc.sh) and this module share ONE
 # source of truth for the "is this path safe to remove?" rules. Imported
@@ -262,12 +273,14 @@ def _validate_manifest_paths(repo_root, dream_id, manifest):
     for filename in ('report.md', 'manifest.json', 'patch.diff'):
         _shadow_output_path(repo_root, f'_dreams/{dream_id}/{filename}', f"{label} {filename}")
     for index, disc in _manifest_entries(manifest, 'discoveries', dream_id):
+        validate_score(disc.get('citation_score', 0), f"{label} discoveries[{index}].citation_score")
         field = f"{label} discoveries[{index}].anchor"
         file_part = _anchor_file_part(disc.get('anchor', ''), field)
         if file_part is not None:
             _shadow_file_path(repo_root, file_part, field)
     for index, cross in _manifest_entries(manifest, 'cross_cutting', dream_id):
         field = f"{label} cross_cutting[{index}]"
+        validate_score(cross.get('citation_score', 0), f"{field}.citation_score")
         slug = cross.get('slug', '')
         if not slug:
             continue
@@ -565,10 +578,12 @@ def _merge_meta(existing, new_status, new_source, new_labels):
     return status, source, labels, changed
 
 
-def _format_meta_line(status, source, labels):
+def _format_meta_line(status, source, labels, citation_score=0):
+    validate_score(citation_score)
     parts = [status, f'source: {source}']
     if labels:
         parts.append(f"labels: [{', '.join(labels)}]")
+    parts.append(f"citation_score: {citation_score}")
     return f'  _({", ".join(parts)})_\n'
 
 
@@ -582,13 +597,11 @@ def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id, *
     status = discovery.get('status', 'verified')
     source = discovery.get('source', 'exploration')
     labels = discovery.get('labels', [])
+    citation_score = validate_score(discovery.get('citation_score', 0))
     also_involves = discovery.get('also_involves', [])
 
     # Build the discovery line
-    meta_parts = [status, f'source: {source}']
-    if labels:
-        meta_parts.append(f"labels: [{', '.join(labels)}]")
-    meta_line = f'  _({", ".join(meta_parts)})_'
+    meta_line = _format_meta_line(status, source, labels, citation_score).rstrip("\n")
 
     lines_to_add = [f'- {text}\n', f'{meta_line}\n']
     if also_involves:
@@ -639,9 +652,12 @@ def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id, *
                 return False
             merged = _merge_meta(existing_meta, status, source, labels)
             m_status, m_source, m_labels, changed = merged
+            previous_score = metadata_score(lines[meta_idx])
+            merged_score = max(previous_score, citation_score)
+            changed = changed or merged_score != previous_score
             if not changed:
                 return False
-            lines[meta_idx] = _format_meta_line(m_status, m_source, m_labels)
+            lines[meta_idx] = _format_meta_line(m_status, m_source, m_labels, merged_score)
             with open(shadow_path, 'w', encoding="utf-8") as f:
                 f.writelines(lines)
             return True
@@ -752,7 +768,7 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
     return True
 
 
-def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root):
+def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root, citation_score=0):
     """Union new refs into an existing _cross/<slug>.md **Refs**: section.
 
     When two dreams use the same cross-cutting slug, the later one must not
@@ -762,6 +778,7 @@ def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root):
     """
     cross_path = _checked_shadow_destination(repo_root, cross_path, "cross-cutting destination")
     _validate_refs(repo_root, new_refs, "cross-cutting refs")
+    validate_score(citation_score)
     try:
         with open(cross_path, encoding="utf-8") as f:
             content = f.read()
@@ -785,7 +802,15 @@ def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root):
         else:
             break
     to_add = [r for r in new_refs if r and r not in existing]
-    if not to_add:
+    score_changed = False
+    for index, line in enumerate(lines):
+        if line.strip().startswith("_(") and "source:" in line:
+            previous_score = metadata_score(line)
+            if citation_score > previous_score:
+                lines[index] = set_metadata_score(line, citation_score)
+                score_changed = True
+            break
+    if not to_add and not score_changed:
         return False
     lines[block_end:block_end] = [f'- `{r}`' for r in to_add]
     with open(cross_path, 'w', encoding="utf-8") as f:
@@ -855,8 +880,10 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
                     f"**Category**: {cross.get('category', 'behavior')}\n"
                     f"**Refs**:\n{refs_str}\n\n"
                     f"**Discovery**: {cross.get('text', '')}\n\n"
-                    f"_({cross.get('status', 'verified')}, "
-                    f"source: {cross.get('source', 'exploration')})_\n"
+                    + _format_meta_line(
+                        cross.get('status', 'verified'), cross.get('source', 'exploration'),
+                        cross.get('labels', []), cross.get('citation_score', 0),
+                    ).lstrip()
                 )
                 with open(cross_path, 'w', encoding="utf-8") as f:
                     f.write(content)
@@ -865,7 +892,10 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
                 # Cross file already exists (e.g. a prior dream used the same
                 # slug). Union our refs into its **Refs**: block so it stays
                 # consistent with the back-pointers added below.
-                if _merge_refs_into_cross_file(cross_path, refs, repo_root=repo_root):
+                if _merge_refs_into_cross_file(
+                    cross_path, refs, repo_root=repo_root,
+                    citation_score=cross.get('citation_score', 0),
+                ):
                     merged_count += 1
                 else:
                     skipped_count += 1
@@ -2080,6 +2110,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (CoherentLineageError, UnsafeShadowPath) as exc:
+    except (CoherentLineageError, UnsafeShadowPath, CitationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -78,13 +78,13 @@ def _source_files() -> dict[str, Path]:
     sources = {}
     for directory in (DREAM_DIR, CORE_DIR):
         for path in directory.iterdir():
-            if path.suffix not in (".py", ".sh", ".md"):
+            if path.name != "SKILL.md" and path.suffix not in (".py", ".sh"):
                 continue
             if path.is_symlink() or not path.is_file():
                 raise ValueError(f"Tooling assets must be regular files: {path}")
             sources[f"{directory.name}/{path.name}"] = path
     required = {
-        "shadow-frog/SKILL.md", "shadow-frog/retrieval.md", "shadow-frog/_coherence.py",
+        "shadow-frog/SKILL.md", "shadow-frog/_coherence.py", "shadow-frog/_citations.py",
         "shadow-frog-dream/SKILL.md", "shadow-frog-dream/dream-tools.py",
         "shadow-frog-dream/_worktree_safety.py",
         *(f"shadow-frog-dream/{name}" for name in TOOLS.values()),

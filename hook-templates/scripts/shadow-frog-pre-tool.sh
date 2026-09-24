@@ -6,7 +6,7 @@
 # When a mutation tool (edit/create/str_replace/write) targets a file with
 # a shadow that has actionable discoveries (bug/security labels), the
 # top entries are inlined into additionalContext via
-# shadow-frog/shadow-read.py --top. Per-session dedup ensures the same file's
+# shadow-viewer.py --top. Per-session dedup ensures the same file's
 # content is injected at most once per Copilot CLI process.
 
 # This hook is ADVISORY — it only injects shadow context, it is NOT a security
@@ -19,7 +19,7 @@
 #   3. trap on TERM/HUP/INT — converts runner-initiated signal kills to 0.
 #      (bash 3.2+ on macOS and bash 5+ on Linux verified: EXIT alone is NOT
 #      enough — SIGTERM still produces exit 143/-15 without a TERM trap.)
-#   4. Every external call (git, python3, shadow-read.py) MUST be wrapped in
+#   4. Every external call (git, python3, shadow-viewer.py) MUST be wrapped in
 #      a bounded subprocess timeout. If the foreground child hangs, bash will
 #      queue the signal until the child returns, so the trap can't save us
 #      unless boundedness holds. CI enforces this via .github/workflows/shellcheck.yml.
@@ -133,13 +133,13 @@ if [ "$IS_MUTATION" = "1" ]; then
                     if [ -n "$0" ]; then
                         SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || SCRIPT_DIR=""
                     fi
-                    # Resolve reader + run it inside ONE Python block. Every
-                    # external call (git rev-parse, reader subprocess) is
+                    # Resolve viewer + run it inside ONE Python block. Every
+                    # external call (git rev-parse, viewer subprocess) is
                     # bounded with subprocess.run(timeout=...) so a hung git
-                    # or hung reader can't blow the hook's 5s budget — even
+                    # or hung viewer can't blow the hook's 5s budget — even
                     # the trap pyramid can't help if bash is blocked waiting
                     # on an unbounded foreground child (signals are queued).
-                    # Total bounded work here is ~1.5s (rev-parse 0.5s + reader 1.0s).
+                    # Total bounded work here is ~1.5s (rev-parse 0.5s + viewer 1.0s).
                     TOP_OUTPUT=$(SF_SCRIPT_DIR="$SCRIPT_DIR" SF_REL_PATH="$REL_PATH" python3 - <<'PYEOF' 2>/dev/null || true
 import os, subprocess, sys
 
@@ -155,7 +155,7 @@ def _git(args, timeout):
         pass
     return ''
 
-# Locate the core shadow-read.py helper. Order:
+# Locate shadow-viewer.py. Order:
 #   1. Script-relative — works for source repo dev AND project installs
 #      (hooks at .github/hooks/scripts/ co-located with .github/skills/).
 #   2-3. Parent repo's .github/ or .claude/ skills — useful when the hook
@@ -164,21 +164,21 @@ repo_root = _git(['rev-parse', '--show-toplevel'], 0.5)
 
 candidates = []
 if script_dir:
-    candidates.append(os.path.join(script_dir, '..', '..', 'skills', 'shadow-frog', 'shadow-read.py'))
+    candidates.append(os.path.join(script_dir, '..', '..', 'skills', 'shadow-frog-viewer', 'shadow-viewer.py'))
 if repo_root:
-    candidates.append(os.path.join(repo_root, '.github', 'skills', 'shadow-frog', 'shadow-read.py'))
-    candidates.append(os.path.join(repo_root, '.claude', 'skills', 'shadow-frog', 'shadow-read.py'))
+    candidates.append(os.path.join(repo_root, '.github', 'skills', 'shadow-frog-viewer', 'shadow-viewer.py'))
+    candidates.append(os.path.join(repo_root, '.claude', 'skills', 'shadow-frog-viewer', 'shadow-viewer.py'))
 
-reader = ''
+viewer = ''
 for candidate in candidates:
     if os.path.isfile(candidate):
-        reader = candidate
+        viewer = candidate
         break
 
-if reader:
+if viewer:
     try:
         r = subprocess.run(
-            ['python3', reader,
+            ['python3', viewer,
              '--shadow-dir', '.shadow',
              '--top', rel_path,
              '--top-labels', 'bug,security',
@@ -188,13 +188,11 @@ if reader:
         )
         if r.returncode == 0:
             sys.stdout.write(r.stdout.strip())
-            if r.stderr.strip():
-                sys.stdout.write("\n[ShadowFrog] Reader reported a warning; rerun it directly for details. Citation updates may be unavailable.")
     except Exception:
         pass
 PYEOF
 )
-                    # Only inline when the reader produced an actionable
+                    # Only inline when the viewer produced an actionable
                     # response (non-empty and not the "no discoveries" sentinel).
                     if [ -n "$TOP_OUTPUT" ] && [[ "$TOP_OUTPUT" != "No actionable"* ]]; then
                         MSG="[ShadowFrog] Actionable discoveries for ${REL_PATH} (verify against source before acting):
@@ -210,7 +208,7 @@ fi
 # Staleness warning (appended when shadow is behind HEAD).
 # All git work is bounded with per-call subprocess timeouts so a huge/locked
 # repo can't blow past the hook's 5s budget. Timeouts sum to 2.0s here,
-# matched with the reader's ~1.5s above + bash overhead = ~4s worst case,
+# matched with the viewer's ~1.5s above + bash overhead = ~4s worst case,
 # leaving 1s headroom under timeoutSec=5. Any failure/timeout -> no warning.
 CHANGED=$(python3 - <<'PYEOF' 2>/dev/null || echo ""
 import json, subprocess

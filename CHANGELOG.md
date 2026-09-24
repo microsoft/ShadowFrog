@@ -10,11 +10,11 @@ shadow knowledge bases for any codebase.
 ## Unreleased
 
 ### Added
-- **Single-score knowledge retrieval (draft)** — derived discovery fingerprints,
-  zero-default local citation scores, and concurrent-safe SQLite bookkeeping
-  shared across Git worktrees. Optional core file/symbol retrieval, stable
-  pagination, and individual expansion avoid loading entire large sections.
-  Citation scores measure emitted content, not correctness or proven usefulness.
+- **Visible knowledge citations** — `citation_score` lives alongside discovery
+  metadata in Markdown. Agents record consulted entries once per task after
+  normal file/symbol reads. A small locked increment helper preserves other
+  content; Viewer and reconciliation understand the same score field without
+  a database or additional retrieval workflow.
 
 ### Fixed
 - **Reconciliation path containment** — validate untrusted manifest destinations
@@ -23,17 +23,6 @@ shadow knowledge bases for any codebase.
   than modifying files outside the shadow tree.
 
 ### Changed
-- Citation writes retry temporary SQLite lock contention within their existing
-  wait budget and use fully synchronized local WAL storage so readers do not
-  block concurrent score updates.
-- Retrieval keeps file/symbol identities consistent, preserves literal whitespace
-  and duplicate labels, and binds expansion continuations to one unchanged logical
-  read. Compact hooks share their budget across several previews, and local retry
-  receipts, pagination snapshots, and journals have explicit retention limits.
-- Direct file/symbol navigation remains the agent default. Optional agent
-  retrieval lives in `shadow-frog`; the Viewer serves user browsing and
-  visualization. Both share parsing and citation metadata. Hooks use the core
-  reader and remain fail-open while surfacing citation warnings.
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed
   repeated guidance and examples in the core, Dream, Init, Meditate, Update,

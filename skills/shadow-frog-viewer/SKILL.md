@@ -1,12 +1,10 @@
 ---
 name: shadow-frog-viewer
 description: >-
-  Help users browse and visualize their collected shadow knowledge in the
-  terminal or as an interactive dream-lineage report. Show an overview,
-  search results, preferences, recent discoveries, and structural audits.
-  Invoke when the user asks to inspect the shadow. For agents' own code work,
-  direct file/symbol navigation is primary; optional retrieval helpers live
-  in the core shadow-frog skill.
+  Help users browse and visualize the shadow knowledge base: overview, search for files
+  or symbols or text, view preferences, or see recent discoveries.
+  Invoke when the user wants to see what's in the shadow, get an
+  overview, or find specific knowledge.
 scripts:
   - shadow-viewer.py
   - dream-lineage.py
@@ -14,15 +12,13 @@ scripts:
 
 # ShadowFrog Viewer
 
-**User-facing inspection and visualization** of `.shadow/`. Prerequisite:
-`.shadow/` exists. An agent can run these views on the user's behalf, but this
-skill is not the agent's required knowledge interface. Agent work starts with
-the mirrored file/symbol locations; the core `shadow-read.py` is optional for
-large sections or targeted searches.
+User-facing inspection of `.shadow/` content. Prerequisite: `.shadow/` exists.
+Agents navigate the Markdown files/symbols directly; this viewer is not a
+required retrieval interface.
 
 ## Primary: Python Helper Script
 
-The companion script `shadow-viewer.py` supports Python 3.9+ and lives beside
+The companion script `shadow-viewer.py` lives in the same directory as
 this SKILL.md file. To find and run it:
 
 ```bash
@@ -37,32 +33,30 @@ python3 .claude/skills/shadow-frog-viewer/shadow-viewer.py [options]
 | Command | What it shows |
 |---------|--------------|
 | `--summary` | Overview: counts, source/status/label breakdown, per-file table, cross-cutting titles (default) |
-| `--search QUERY` | Bounded search across paths, symbols, text, cross-cutting entries, and preferences |
-| `--file FILE` | Browse one known source file's shadow, including file-level and cross-cutting knowledge |
-| `--symbol FILE::SYMBOL` | Bounded discoveries at an exact symbol, plus matching cross-cutting refs; use `File-Level` for a file-level section |
-| `--get ID` | Expand one current discovery; long expansions return a revision-bound continuation |
-| `--prefs` | Project-wide preferences; follow all pages before treating them as complete |
-| `--recent [N]` | Most recent discovery previews by file mtime (default page size: 10) |
-| `--labels LABEL` | Bounded discoveries matching labels (e.g., `bug`, `security`, `bug,performance`) |
-| `--top FILE` | Compact actionable previews (default: up to 3 entries, 600 characters). Not an exhaustive file view. Agent hooks use the separate core reader. |
+| `--search QUERY` | Universal search — matches file names, symbol names, and discovery text. Includes cross-cutting and preferences |
+| `--prefs` | Project-wide preferences |
+| `--recent [N]` | N most recent discoveries with full content (default: 10) |
+| `--labels LABEL` | Discoveries filtered by label (e.g., `bug`, `security`, `bug,performance`) |
+| `--top FILE` | Top actionable discoveries for FILE — concise output (default: 3 entries, ~600 chars) suitable for the preToolUse hook. Includes both per-file shadow entries and any `_cross/` discoveries that reference FILE. Verified discoveries rank first. |
 | `--check-invariants` | Audit structural integrity — bidirectional cross-references, label/source/category enum compliance, heading format, no-orphan-back-pointer. Exits 0 if clean, 1 with one violation per line. Run after dream reconciliation or before commit. |
 
 No arguments defaults to `--summary`.
+
+Discovery views display the visible Markdown `citation_score` (missing means 0).
+Search/label/top ordering uses it only after source trust and verification status;
+refuted claims remain last. Reading, searching, and automatic previews do not
+increment counts. The agent explicitly records deliberately consulted entries
+with the core `shadow-cite.py` helper once per task. `--recent` is based on shadow
+file modification time, which includes citation updates, not discovery creation time.
 
 ### Options
 
 | Flag | Effect |
 |------|--------|
 | `--shadow-dir DIR` | Override .shadow/ location (default: auto-detect from CWD) |
-| `--limit N` | Positive page size for file, search, symbol, labels, or preferences (default: 10) |
-| `--max-chars N` | Hard output cap, including metadata/newline (default: 4000; minimum 256, or 0 for explicit uncapped output). Use `--top-max-chars` with `--top`. |
-| `--cursor TOKEN` | Continue the same view and filters using the returned ordering snapshot |
-| `--text-cursor TOKEN` | Continue the same `--get` body and logical read; copy the returned token rather than fabricating an offset |
-| `--event-id ID` | Optional retry ID: each discovery counts at most once per ID within 24 hours (1-128 letters/digits or `. _ : -`) |
-| `--no-record` | Do not increase citation scores; existing scores still rank results, and pagination may store a local snapshot |
 | `--top-labels LABELS` | Comma-separated label filter for `--top` (default: `bug,security`). Empty string disables label filtering. |
 | `--top-limit N` | Max discoveries to show in `--top` (default: 3) |
-| `--top-max-chars N` | Hard cap on `--top` total output length (default: 600; minimum 256). Use 0 for no cap. |
+| `--top-max-chars N` | Hard cap on `--top` total output length (default: 600). Use 0 for no cap. |
 
 ### Examples
 
@@ -70,33 +64,12 @@ No arguments defaults to `--summary`.
 # Search file names, symbols, discoveries, cross-cutting entries, and preferences
 python3 shadow-viewer.py --search "token expiry"
 
-# Inspect one symbol without loading its entire shadow
-python3 shadow-viewer.py --symbol src/auth.py::UserAuth.validate --limit 5
-
-# Expand a returned id, or continue the same search with its returned cursor
-python3 shadow-viewer.py --get DISCOVERY_ID
-python3 shadow-viewer.py --search "token expiry" --cursor CURSOR_TOKEN
-
 # Security and performance issues
 python3 shadow-viewer.py --labels security,performance
 
 # Broaden the per-file label filter and show up to 5 entries
 python3 shadow-viewer.py --top src/auth.py --top-labels bug,security,performance --top-limit 5
 ```
-
-### Scores and Continuation
-
-Replace `DISCOVERY_ID` and `CURSOR_TOKEN` with exact returned values. Content
-views display the same IDs and local `citation_score` as the optional core
-reader, recording only the entries they show. Scores measure helper exposure,
-not correctness or proven use; direct file reads remain normal and uncounted.
-Knowledge is still plain Markdown at its file/symbol location, not in the ledger.
-
-Use returned cursors to continue, `--get` to inspect a claim, and `--no-record`
-when browsing should not affect scores. Forward any stderr diagnostics to the
-user; optional telemetry failures must not hide knowledge. See the shared
-[retrieval reference](../shadow-frog/retrieval.md) for exact identity, budget,
-retry, and local storage contracts.
 
 ## Dream Lineage Visualization
 
@@ -160,7 +133,7 @@ find .shadow -name '*.md' -not -path '*/_meta/*' -printf '%T@ %p\n' | sort -rn |
 
 ## Responding to the User
 
-- Preserve the meaning of returned trust/status and citation information;
-  scores are not confidence estimates. Expand or page results on user request.
+- Preserve `--top` output as-is; it is intentionally compact and pre-formatted
+  for the preToolUse hook.
 - If the shadow is empty or has no discoveries, suggest running
   `/shadow-frog-dream` to populate it
