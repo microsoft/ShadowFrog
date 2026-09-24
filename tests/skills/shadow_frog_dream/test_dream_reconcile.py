@@ -354,6 +354,12 @@ def test_add_cross_reference_backpointer_replaces_placeholder(
 # merge_discovery_into_file
 # ===========================================================================
 
+def _shadow_under(repo, name="foo.md"):
+    shadow = repo / ".shadow" / name
+    shadow.parent.mkdir(parents=True, exist_ok=True)
+    return shadow
+
+
 def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
     shadow = tmp_path / ".shadow" / "src" / "foo.py.md"
     written = dream_reconcile.merge_discovery_into_file(
@@ -362,6 +368,7 @@ def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
         {"text": "Returns None on empty input.",
          "status": "verified", "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     assert written is True
     assert shadow.is_file()
@@ -374,7 +381,7 @@ def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
 
 
 def test_merge_discovery_replaces_no_discoveries_placeholder(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n_No discoveries yet._\n\n## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
     )
@@ -383,6 +390,7 @@ def test_merge_discovery_replaces_no_discoveries_placeholder(dream_reconcile, tm
         {"text": "Actual discovery.", "status": "verified",
          "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     body = shadow.read_text(encoding="utf-8")
     assert "_No discoveries yet._" not in body
@@ -390,7 +398,7 @@ def test_merge_discovery_replaces_no_discoveries_placeholder(dream_reconcile, tm
 
 
 def test_merge_discovery_appends_after_existing_bullets(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- existing discovery\n  _(verified, source: exploration)_\n\n"
         "## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
@@ -400,6 +408,7 @@ def test_merge_discovery_appends_after_existing_bullets(dream_reconcile, tmp_pat
         {"text": "Another discovery.", "status": "verified",
          "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     body = shadow.read_text(encoding="utf-8")
     assert "- existing discovery" in body
@@ -409,7 +418,7 @@ def test_merge_discovery_appends_after_existing_bullets(dream_reconcile, tmp_pat
 
 
 def test_merge_discovery_skips_duplicate(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- already here\n  _(verified, source: exploration)_\n\n"
         "## Cross-References\n\n_No cross-cutting discoveries yet._\n", encoding="utf-8"
@@ -418,14 +427,15 @@ def test_merge_discovery_skips_duplicate(dream_reconcile, tmp_path):
         str(shadow), "foo",
         {"text": "already here", "status": "verified", "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     assert written is False
 
 
 def test_merge_discovery_empty_text_returns_false(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     written = dream_reconcile.merge_discovery_into_file(
-        str(shadow), "foo", {"text": "   "}, "20260101-000000Z-x"
+        str(shadow), "foo", {"text": "   "}, "20260101-000000Z-x", repo_root=str(tmp_path),
     )
     assert written is False
     assert not shadow.exists()
@@ -441,7 +451,7 @@ def _xref_footer():
 
 
 def test_merge_discovery_unions_labels_on_exact_match(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- claim text here\n  _(verified, source: exploration, labels: [bug])_\n"
         + _xref_footer(), encoding="utf-8"
@@ -451,6 +461,7 @@ def test_merge_discovery_unions_labels_on_exact_match(dream_reconcile, tmp_path)
         {"text": "claim text here", "status": "verified",
          "source": "exploration", "labels": ["security"]},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     assert written is True
     body = shadow.read_text(encoding="utf-8")
@@ -460,7 +471,7 @@ def test_merge_discovery_unions_labels_on_exact_match(dream_reconcile, tmp_path)
 
 
 def test_merge_discovery_upgrades_source_trust(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- some claim\n  _(verified, source: exploration)_\n"
         + _xref_footer(), encoding="utf-8"
@@ -469,6 +480,7 @@ def test_merge_discovery_upgrades_source_trust(dream_reconcile, tmp_path):
         str(shadow), "foo",
         {"text": "some claim", "status": "verified", "source": "user"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     assert written is True
     body = shadow.read_text(encoding="utf-8")
@@ -477,7 +489,7 @@ def test_merge_discovery_upgrades_source_trust(dream_reconcile, tmp_path):
 
 
 def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(uncertain, source: exploration)_\n"
         + _xref_footer(), encoding="utf-8"
@@ -486,6 +498,7 @@ def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_pat
         str(shadow), "foo",
         {"text": "a claim", "status": "verified", "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     assert written is True
     body = shadow.read_text(encoding="utf-8")
@@ -493,7 +506,7 @@ def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_pat
 
 
 def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(verified, source: exploration)_\n"
         + _xref_footer(), encoding="utf-8"
@@ -502,6 +515,7 @@ def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
         str(shadow), "foo",
         {"text": "a claim", "status": "uncertain", "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     # Nothing to upgrade → no write.
     assert written is False
@@ -509,7 +523,7 @@ def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
 
 
 def test_merge_discovery_never_touches_refuted(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         "## `foo`\n\n- a claim\n  _(refuted, source: exploration)_\n"
         + _xref_footer(), encoding="utf-8"
@@ -520,6 +534,7 @@ def test_merge_discovery_never_touches_refuted(dream_reconcile, tmp_path):
         {"text": "a claim", "status": "verified", "source": "exploration",
          "labels": ["bug"]},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     body = shadow.read_text(encoding="utf-8")
     # Status stays refuted; labels may still union.
@@ -532,7 +547,7 @@ def test_merge_discovery_fuzzy_match_still_skips(dream_reconcile, tmp_path):
     they may be genuinely different claims."""
     existing = ("- the function returns none when the input list is "
                 "completely empty or missing entirely")
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     shadow.write_text(
         f"## `foo`\n\n{existing}\n  _(uncertain, source: exploration)_\n"
         + _xref_footer(), encoding="utf-8"
@@ -544,6 +559,7 @@ def test_merge_discovery_fuzzy_match_still_skips(dream_reconcile, tmp_path):
         str(shadow), "foo",
         {"text": new_text, "status": "verified", "source": "exploration"},
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     # Treated as fuzzy duplicate → skipped, metadata untouched.
     assert written is False
@@ -585,7 +601,7 @@ class TestMetaMergeHelpers:
 
 
 def test_merge_discovery_with_also_involves_and_labels(dream_reconcile, tmp_path):
-    shadow = tmp_path / "foo.md"
+    shadow = _shadow_under(tmp_path)
     dream_reconcile.merge_discovery_into_file(
         str(shadow), "foo",
         {
@@ -594,6 +610,7 @@ def test_merge_discovery_with_also_involves_and_labels(dream_reconcile, tmp_path
             "also_involves": ["other.py::thing", "more.py::stuff"],
         },
         "20260101-000000Z-x",
+        repo_root=str(tmp_path),
     )
     body = shadow.read_text(encoding="utf-8")
     assert "labels: [bug, security]" in body
@@ -3223,7 +3240,7 @@ class TestCanonicalHeaderHelpers:
 
 class TestMergeRefsIntoCrossFile:
     def _write_cross(self, tmp_path, refs):
-        p = tmp_path / "slug.md"
+        p = _shadow_under(tmp_path, "_cross/slug.md")
         body = ["# Title", "", "**Category**: pattern", "**Refs**:"]
         body += [f"- `{r}`" for r in refs]
         body += ["", "**Discovery**: something", ""]
@@ -3233,7 +3250,7 @@ class TestMergeRefsIntoCrossFile:
     def test_unions_new_refs(self, dream_reconcile, tmp_path):
         p = self._write_cross(tmp_path, ["src/a.py::f"])
         changed = dream_reconcile._merge_refs_into_cross_file(
-            str(p), ["src/b.py::g", "src/a.py::f"]
+            str(p), ["src/b.py::g", "src/a.py::f"], repo_root=str(tmp_path),
         )
         assert changed is True
         text = p.read_text(encoding="utf-8")
@@ -3246,21 +3263,21 @@ class TestMergeRefsIntoCrossFile:
         p = self._write_cross(tmp_path, ["src/a.py::f"])
         before = p.read_text(encoding="utf-8")
         changed = dream_reconcile._merge_refs_into_cross_file(
-            str(p), ["src/a.py::f"]
+            str(p), ["src/a.py::f"], repo_root=str(tmp_path),
         )
         assert changed is False
         assert p.read_text(encoding="utf-8") == before
 
     def test_missing_file_returns_false(self, dream_reconcile, tmp_path):
         assert dream_reconcile._merge_refs_into_cross_file(
-            str(tmp_path / "nope.md"), ["x::y"]
+            str(tmp_path / ".shadow/_cross/nope.md"), ["x::y"], repo_root=str(tmp_path),
         ) is False
 
     def test_no_refs_block_returns_false(self, dream_reconcile, tmp_path):
-        p = tmp_path / "norefs.md"
+        p = _shadow_under(tmp_path, "_cross/norefs.md")
         p.write_text("# Title\n\nNo refs section here.\n", encoding="utf-8")
         assert dream_reconcile._merge_refs_into_cross_file(
-            str(p), ["x::y"]
+            str(p), ["x::y"], repo_root=str(tmp_path),
         ) is False
         # File untouched.
         assert "No refs section here." in p.read_text(encoding="utf-8")

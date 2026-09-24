@@ -948,6 +948,11 @@ or manually imitate its branch-deletion steps.
 
 ### What the Reconciler Does
 
+Manifest destinations are preflighted before any writes, including in dry runs.
+Absolute/traversal paths and symlinks escaping `.shadow/` fail with a nonzero
+exit. Repair the indicated manifest field or filesystem alias before retrying;
+do not bypass containment checks.
+
 1. **Discovers** new branches (namespace-filtered, not in `_index.md`)
 2. **Reads/validates** manifests from remote branches
 3. **Merges** discoveries into main's per-file shadows (semantic dedup; on an exact-text duplicate it upgrades the existing entry's metadata — unions labels, raises source trust, promotes `uncertain`→`verified` — but never alters a `refuted` status)

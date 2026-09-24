@@ -28,7 +28,8 @@ Steps (idempotent, safe to rerun):
     8. Verify all artifacts present
     9. (Optional) Prune unprotected reconciled branches — only after push
 
-Exits 0 on success, 1 on verification or coherent-lineage read failure.
+Exits 0 on success, 1 on verification, unsafe output paths, or lineage failure.
+Manifest destinations are validated before writes, including in dry runs.
 On a lineage read failure, restore the indexed manifest or repair its stale
 index entry after checking descendants; no branches are deleted.
 """
@@ -40,7 +41,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 # Shared safety gate for `rm -rf <worktree>`. Lives next to this script so
 # bash callers (dream-cleanup.sh, dream-gc.sh) and this module share ONE
@@ -150,6 +151,139 @@ def _canonical_header_lines(shadow_path):
     ]
 
 
+class UnsafeShadowPath(ValueError):
+    """Untrusted metadata or a filesystem alias escapes the shadow output tree."""
+
+
+_WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+    *(f'COM{suffix}' for suffix in '123456789¹²³'),
+    *(f'LPT{suffix}' for suffix in '123456789¹²³'),
+}
+
+
+def _is_windows_reserved_part(part):
+    """Return whether one path component names a Windows device."""
+    basename = part.rstrip(' .').split('.', 1)[0].upper()
+    return basename in _WINDOWS_RESERVED_NAMES
+
+
+def _relative_parts(value, field, *, single=False):
+    if not isinstance(value, str) or not value:
+        raise UnsafeShadowPath(f"{field}: expected a nonempty relative path, got {value!r}")
+    parts = value.split('/')
+    if (
+        any(not part.rstrip(' .') for part in parts)
+        or any(_is_windows_reserved_part(part) for part in parts)
+        or any(char in value for char in ('\\', ':', '\0', '\r', '\n'))
+        or PureWindowsPath(value).drive
+        or (single and len(parts) != 1)
+    ):
+        raise UnsafeShadowPath(f"{field}: unsafe relative path {value!r}")
+    return parts
+
+
+def _checked_shadow_destination(repo_root, destination, field):
+    """Check lexical and resolved containment, including root and leaf symlinks."""
+    try:
+        repo = Path(repo_root).absolute()
+        shadow = repo / '.shadow'
+        target = Path(destination).absolute()
+        try:
+            relative = target.relative_to(shadow)
+        except ValueError:
+            raise UnsafeShadowPath(f"{field}: destination is outside .shadow: {destination!r}") from None
+        _relative_parts(relative.as_posix(), field)
+        resolved_repo = repo.resolve()
+        resolved_shadow = shadow.resolve()
+        resolved_target = target.resolve()
+        if resolved_shadow == resolved_repo or not resolved_shadow.is_relative_to(resolved_repo):
+            raise UnsafeShadowPath(f"{field}: .shadow resolves outside the repository")
+        if resolved_target == resolved_shadow or not resolved_target.is_relative_to(resolved_shadow):
+            raise UnsafeShadowPath(f"{field}: destination resolves outside .shadow: {destination!r}")
+        return str(target)
+    except (OSError, RuntimeError) as exc:
+        raise UnsafeShadowPath(f"{field}: cannot establish destination containment: {exc}") from exc
+
+
+def _shadow_output_path(repo_root, relative, field):
+    parts = _relative_parts(relative, field)
+    return _checked_shadow_destination(
+        repo_root, Path(repo_root).absolute().joinpath('.shadow', *parts), field,
+    )
+
+
+def _shadow_file_path(repo_root, file_part, field):
+    _relative_parts(file_part, field)
+    return _shadow_output_path(repo_root, file_part + '.md', field)
+
+
+def _anchor_file_part(anchor, field):
+    if not isinstance(anchor, str):
+        raise UnsafeShadowPath(f"{field}: expected anchor text, got {anchor!r}")
+    if '::' not in anchor:
+        return None
+    file_part = anchor.split('::', 1)[0]
+    _relative_parts(file_part, field)
+    return file_part
+
+
+def _manifest_entries(manifest, key, dream_id):
+    entries = manifest.get(key, [])
+    if not isinstance(entries, list):
+        raise UnsafeShadowPath(f"dream {dream_id} {key}: expected a list")
+    for index, entry in enumerate(entries):
+        if isinstance(entry, str):
+            entry = (
+                {'anchor': '', 'text': entry} if key == 'discoveries' else
+                {'slug': re.sub(r'[^a-z0-9]+', '-', entry[:60].lower()).strip('-'),
+                 'description': entry}
+            )
+        if not isinstance(entry, dict):
+            raise UnsafeShadowPath(f"dream {dream_id} {key}[{index}]: expected an object")
+        yield index, entry
+
+
+def _validate_refs(repo_root, refs, field):
+    if not isinstance(refs, list):
+        raise UnsafeShadowPath(f"{field}: expected a list")
+    for index, ref in enumerate(refs):
+        label = f"{field}[{index}]"
+        file_part = _anchor_file_part(ref, label)
+        if file_part is not None:
+            _shadow_file_path(repo_root, file_part, label)
+
+
+def _validate_manifest_paths(repo_root, dream_id, manifest):
+    label = f"dream {dream_id}"
+    _relative_parts(dream_id, f"{label} dream_id", single=True)
+    if not isinstance(manifest, dict):
+        raise UnsafeShadowPath(f"{label}: manifest must be an object")
+    for filename in ('report.md', 'manifest.json', 'patch.diff'):
+        _shadow_output_path(repo_root, f'_dreams/{dream_id}/{filename}', f"{label} {filename}")
+    for index, disc in _manifest_entries(manifest, 'discoveries', dream_id):
+        field = f"{label} discoveries[{index}].anchor"
+        file_part = _anchor_file_part(disc.get('anchor', ''), field)
+        if file_part is not None:
+            _shadow_file_path(repo_root, file_part, field)
+    for index, cross in _manifest_entries(manifest, 'cross_cutting', dream_id):
+        field = f"{label} cross_cutting[{index}]"
+        slug = cross.get('slug', '')
+        if not slug:
+            continue
+        _relative_parts(slug, f"{field}.slug", single=True)
+        _shadow_output_path(repo_root, f'_cross/{slug}.md', f"{field}.slug")
+        _validate_refs(repo_root, cross.get('refs', []) or [], f"{field}.refs")
+
+
+def _validate_reconciliation_paths(repo_root, manifests):
+    """Preflight the entire batch before publishing any discovery or metadata."""
+    for relative in ('_dreams/_index.md', '_meta/state.json', '_index.md'):
+        _shadow_output_path(repo_root, relative, f"reconciliation {relative}")
+    for _, dream_id, manifest in manifests:
+        _validate_manifest_paths(repo_root, dream_id, manifest)
+
+
 # --- Git helpers ---
 
 def git(*args, cwd=None, check=True):
@@ -248,6 +382,7 @@ def load_manifests(repo_root, branches):
     skipped = []
 
     for branch, dream_id in branches:
+        _relative_parts(dream_id, f"dream {dream_id} dream_id", single=True)
         manifest_path = f'.shadow/_dreams/{dream_id}/manifest.json'
         raw = git_show(f'origin/{branch}', manifest_path, cwd=repo_root)
 
@@ -261,6 +396,8 @@ def load_manifests(repo_root, branches):
             skipped.append((branch, dream_id, f"invalid JSON: {e}"))
             continue
 
+        if not isinstance(manifest, dict):
+            raise UnsafeShadowPath(f"dream {dream_id}: manifest must be an object")
         # Validate dream_id consistency
         m_did = manifest.get('dream_id', '')
         if m_did != dream_id:
@@ -274,6 +411,7 @@ def load_manifests(repo_root, branches):
 
         manifests.append((branch, dream_id, manifest))
 
+    _validate_reconciliation_paths(repo_root, manifests)
     return manifests, skipped
 
 
@@ -434,8 +572,9 @@ def _format_meta_line(status, source, labels):
     return f'  _({", ".join(parts)})_\n'
 
 
-def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id):
+def merge_discovery_into_file(shadow_path, anchor_symbol, discovery, dream_id, *, repo_root):
     """Merge a single discovery into a shadow file. Returns True if written."""
+    shadow_path = _checked_shadow_destination(repo_root, shadow_path, f"dream {dream_id} discovery")
     text = discovery.get('text', '').strip()
     if not text:
         return False
@@ -544,7 +683,10 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
     `_cross/<slug>.md` must have a matching entry in each referenced file's
     ## Cross-References section. Idempotent (skips if back-pointer exists).
     """
-    shadow_path = os.path.join(repo_root, '.shadow', file_part + '.md')
+    field = f"dream {dream_id} back-pointer"
+    shadow_path = _shadow_file_path(repo_root, file_part, field)
+    _relative_parts(slug, f"{field} slug", single=True)
+    _shadow_output_path(repo_root, f'_cross/{slug}.md', f"{field} cross file")
     # Relative link from .shadow/<file_part>.md back up to .shadow/_cross/<slug>.md.
     # For a top-level file (no slashes) the prefix is empty; each directory of
     # depth adds one "../". Otherwise the markdown link is broken and the
@@ -610,7 +752,7 @@ def add_cross_reference_backpointer(repo_root, file_part, slug, title, dream_id)
     return True
 
 
-def _merge_refs_into_cross_file(cross_path, new_refs):
+def _merge_refs_into_cross_file(cross_path, new_refs, *, repo_root):
     """Union new refs into an existing _cross/<slug>.md **Refs**: section.
 
     When two dreams use the same cross-cutting slug, the later one must not
@@ -618,6 +760,8 @@ def _merge_refs_into_cross_file(cross_path, new_refs):
     at this cross file (below), so its **Refs**: block must list them or the
     bidirectional-reference invariant breaks. Returns True if modified.
     """
+    cross_path = _checked_shadow_destination(repo_root, cross_path, "cross-cutting destination")
+    _validate_refs(repo_root, new_refs, "cross-cutting refs")
     try:
         with open(cross_path, encoding="utf-8") as f:
             content = f.read()
@@ -651,22 +795,21 @@ def _merge_refs_into_cross_file(cross_path, new_refs):
 
 def merge_discoveries(repo_root, manifests, dry_run=False):
     """Merge all discoveries from manifests into main's shadow files."""
+    _validate_reconciliation_paths(repo_root, manifests)
     merged_count = 0
     skipped_count = 0
 
     for branch, dream_id, manifest in manifests:
-        discoveries = manifest.get('discoveries', [])
-        for disc in discoveries:
-            # Normalize string discoveries to dicts
-            if isinstance(disc, str):
-                disc = {'anchor': '', 'text': disc}
+        for index, disc in _manifest_entries(manifest, 'discoveries', dream_id):
             anchor = disc.get('anchor', '')
             if '::' not in anchor:
                 skipped_count += 1
                 continue
 
             file_part, symbol = anchor.split('::', 1)
-            shadow_path = os.path.join(repo_root, '.shadow', file_part + '.md')
+            shadow_path = _shadow_file_path(
+                repo_root, file_part, f"dream {dream_id} discoveries[{index}].anchor",
+            )
 
             if dry_run:
                 print(f"  Would merge: {anchor} <- {disc.get('text', '')[:60]}")
@@ -676,22 +819,22 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
             # Ensure shadow directory exists
             os.makedirs(os.path.dirname(shadow_path), exist_ok=True)
 
-            if merge_discovery_into_file(shadow_path, symbol, disc, dream_id):
+            if merge_discovery_into_file(
+                shadow_path, symbol, disc, dream_id, repo_root=repo_root,
+            ):
                 merged_count += 1
             else:
                 skipped_count += 1
 
         # Handle cross-cutting discoveries
-        cross_cutting = manifest.get('cross_cutting', [])
-        for cross in cross_cutting:
-            # Normalize string entries to dicts
-            if isinstance(cross, str):
-                cross = {'slug': re.sub(r'[^a-z0-9]+', '-', cross[:60].lower()).strip('-'), 'description': cross}
+        for index, cross in _manifest_entries(manifest, 'cross_cutting', dream_id):
             slug = cross.get('slug', '')
             if not slug:
                 continue
 
-            cross_path = os.path.join(repo_root, '.shadow', '_cross', f'{slug}.md')
+            cross_path = _shadow_output_path(
+                repo_root, f'_cross/{slug}.md', f"dream {dream_id} cross_cutting[{index}].slug",
+            )
             refs = cross.get('refs', []) or []
             title = cross.get('title', slug)
 
@@ -722,7 +865,7 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
                 # Cross file already exists (e.g. a prior dream used the same
                 # slug). Union our refs into its **Refs**: block so it stays
                 # consistent with the back-pointers added below.
-                if _merge_refs_into_cross_file(cross_path, refs):
+                if _merge_refs_into_cross_file(cross_path, refs, repo_root=repo_root):
                     merged_count += 1
                 else:
                     skipped_count += 1
@@ -749,11 +892,18 @@ def merge_discoveries(repo_root, manifests, dry_run=False):
 
 def mirror_reports(repo_root, manifests, dry_run=False):
     """Copy report.md, manifest.json, patch.diff from branches to main."""
+    _validate_reconciliation_paths(repo_root, manifests)
     mirrored = 0
     corrupted = []
 
     for branch, dream_id, manifest in manifests:
-        dream_dir = os.path.join(repo_root, '.shadow', '_dreams', dream_id)
+        dream_dir = _shadow_output_path(repo_root, f'_dreams/{dream_id}', f"dream {dream_id} archive")
+        paths = {
+            filename: _shadow_output_path(
+                repo_root, f'_dreams/{dream_id}/{filename}', f"dream {dream_id} {filename}",
+            )
+            for filename in ('report.md', 'manifest.json', 'patch.diff')
+        }
 
         if dry_run:
             print(f"  Would mirror: {dream_id}/")
@@ -778,16 +928,16 @@ def mirror_reports(repo_root, manifests, dry_run=False):
                     # and patch below are still mirrored unconditionally so a
                     # single bad frontmatter line never discards valid
                     # artifacts (discoveries are read from the manifest).
-                    with open(os.path.join(dream_dir, 'report.md'), 'w', encoding="utf-8") as f:
+                    with open(paths['report.md'], 'w', encoding="utf-8") as f:
                         f.write(f"# Corrupted Report\n\nContained content from {report_did}.\n"
                                 f"Original on branch: {branch}\n")
 
             if not report_corrupt:
-                with open(os.path.join(dream_dir, 'report.md'), 'w', encoding="utf-8") as f:
+                with open(paths['report.md'], 'w', encoding="utf-8") as f:
                     f.write(report)
 
         # Mirror manifest
-        with open(os.path.join(dream_dir, 'manifest.json'), 'w', encoding="utf-8") as f:
+        with open(paths['manifest.json'], 'w', encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
         # Mirror patch
@@ -802,7 +952,7 @@ def mirror_reports(repo_root, manifests, dry_run=False):
         # write only when truly absent.
         patch = git_show(f'origin/{branch}', f'.shadow/_dreams/{dream_id}/patch.diff', cwd=repo_root)
         if patch is not None:
-            with open(os.path.join(dream_dir, 'patch.diff'), 'w', encoding="utf-8") as f:
+            with open(paths['patch.diff'], 'w', encoding="utf-8") as f:
                 f.write(patch)
 
         mirrored += 1
@@ -892,7 +1042,8 @@ def _resolve_parent_branch(repo_root, branch, dream_id, manifest):
 
 def update_index(repo_root, manifests, dry_run=False):
     """Add entries to _dreams/_index.md for reconciled branches."""
-    index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
+    _validate_reconciliation_paths(repo_root, manifests)
+    index_path = _shadow_output_path(repo_root, '_dreams/_index.md', "dream index")
 
     if dry_run:
         for branch, dream_id, manifest in manifests:
@@ -970,7 +1121,7 @@ def _count_discoveries(shadow_path):
 
 def update_state(repo_root, manifests, dry_run=False):
     """Update _meta/state.json with dream reconciliation metadata."""
-    state_path = os.path.join(repo_root, '.shadow', '_meta', 'state.json')
+    state_path = _shadow_output_path(repo_root, '_meta/state.json', "state.json")
 
     if not os.path.isfile(state_path):
         if dry_run:
@@ -1132,7 +1283,7 @@ def rebuild_top_index(repo_root, dry_run=False):
     init provenance survives reconciler rewrites. Honors `dry_run`.
     """
     shadow_dir = os.path.join(repo_root, '.shadow')
-    index_path = os.path.join(shadow_dir, '_index.md')
+    index_path = _shadow_output_path(repo_root, '_index.md', "shadow index")
 
     if dry_run:
         print("  Would regenerate _index.md")
@@ -1743,6 +1894,8 @@ def main():
         print("ERROR: Not in a git repository", file=sys.stderr)
         sys.exit(1)
 
+    _validate_reconciliation_paths(repo_root, [])
+
     # Resolve namespace
     dream_ns = namespace_override or os.environ.get('DREAM_NAMESPACE', '')
     if not dream_ns:
@@ -1927,6 +2080,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except CoherentLineageError as exc:
+    except (CoherentLineageError, UnsafeShadowPath) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
