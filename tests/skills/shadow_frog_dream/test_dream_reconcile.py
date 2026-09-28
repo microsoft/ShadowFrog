@@ -375,7 +375,7 @@ def test_merge_discovery_creates_new_shadow(dream_reconcile, tmp_path):
     body = shadow.read_text(encoding="utf-8")
     assert "## `do_thing`" in body
     assert "- Returns None on empty input." in body
-    assert "_(verified, source: exploration)_" in body
+    assert "_(verified, source: exploration, citation_score: 0)_" in body
     assert "Dream report: `_dreams/20260101-000000Z-x/`" in body
     assert "## Cross-References" in body
 
@@ -502,7 +502,7 @@ def test_merge_discovery_upgrades_uncertain_to_verified(dream_reconcile, tmp_pat
     )
     assert written is True
     body = shadow.read_text(encoding="utf-8")
-    assert "_(verified, source: exploration)_" in body
+    assert "_(verified, source: exploration, citation_score: 0)_" in body
 
 
 def test_merge_discovery_never_downgrades_verified(dream_reconcile, tmp_path):
@@ -1426,7 +1426,7 @@ def test_merge_discoveries_creates_cross_cutting_file_with_back_pointers(
     assert "**Category**: behavior" in body
     assert "`src/auth.py::login`" in body
     assert "`lib/session.py::Session`" in body
-    assert "_(verified, source: exploration)_" in body
+    assert "_(verified, source: exploration, citation_score: 0)_" in body
 
     # Each referenced per-file shadow must have a back-pointer.
     auth = (repo / ".shadow" / "src" / "auth.py.md").read_text(encoding="utf-8")

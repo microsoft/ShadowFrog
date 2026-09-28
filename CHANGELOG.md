@@ -7,7 +7,14 @@ shadow knowledge bases for any codebase.
 
 ---
 
-## Unreleased
+## 2026-09-28
+
+### Added
+- **Visible knowledge citations** — `citation_score` lives alongside discovery
+  metadata in Markdown. Agents record consulted entries once per task after
+  normal file/symbol reads. A small locked increment helper preserves other
+  content; Viewer and reconciliation understand the same score field without
+  a database or additional retrieval workflow.
 
 ### Fixed
 - **Reconciliation path containment** — validate untrusted manifest destinations

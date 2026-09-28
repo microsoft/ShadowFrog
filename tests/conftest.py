@@ -89,6 +89,11 @@ def coherence(repo_root):
 
 
 @pytest.fixture(scope="session")
+def citations(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog/_citations.py")
+
+
+@pytest.fixture(scope="session")
 def nap(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-nap/nap.py")
 

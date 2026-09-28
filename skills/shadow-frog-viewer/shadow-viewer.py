@@ -32,11 +32,16 @@ from datetime import datetime
 from pathlib import Path
 
 
-_DISCOVERY_META_RE = re.compile(
-    r"_\((\w+),\s*source:\s*(\w+)"
-    r"(?:,\s*labels:\s*\[([^\]]*)\])?"
-    r"\)_"
-)
+_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shadow-frog"))
+try:
+    from _citations import DISCOVERY_META_RE as _DISCOVERY_META_RE, PREFERENCE_META_RE, CitationError, metadata_score
+except ImportError as exc:
+    raise SystemExit("ERROR: Missing core citation metadata parser; reinstall the full skill set") from exc
+finally:
+    sys.path.pop(0)
+    sys.dont_write_bytecode = _bytecode
 
 
 def warn(msg):
@@ -71,7 +76,7 @@ def parse_discovery(line, continuation_lines=None):
         warn(f"parse_discovery: bad line input ({type(line).__name__}): {e}")
         return {"text": str(line) if line else ""}
 
-    meta = {}
+    meta = {"citation_score": 0}
     full_text = text
 
     if continuation_lines:
@@ -83,6 +88,7 @@ def parse_discovery(line, continuation_lines=None):
                 if m:
                     meta["status"] = m.group(1)
                     meta["source"] = m.group(2)
+                    meta["citation_score"] = int(m.group(4) or 0)
                     if m.group(3):
                         meta["labels"] = [
                             l.strip()
@@ -91,9 +97,12 @@ def parse_discovery(line, continuation_lines=None):
                         ]
                 else:
                     # _(source: type)_ (preferences format)
-                    m2 = re.match(r"_\(source:\s*(\w+)\)_", stripped)
+                    m2 = PREFERENCE_META_RE.fullmatch(stripped)
                     if m2:
                         meta["source"] = m2.group(1)
+                        meta["citation_score"] = int(m2.group(2) or 0)
+                    elif stripped.startswith("_(") and "citation_score:" in stripped:
+                        warn("Invalid citation_score metadata; repair it before recording citations")
                     elif stripped.startswith("Also involves:"):
                         refs = re.findall(r"`([^`]+)`", stripped)
                         meta["also_involves"] = refs
@@ -304,7 +313,7 @@ def parse_cross_cutting(shadow_dir):
             warn(f"Cannot read cross-cutting file {f}: {e}")
             continue
 
-        entry = {"slug": f.stem, "file": str(f.name)}
+        entry = {"slug": f.stem, "file": str(f.name), "citation_score": 0}
 
         try:
             # Title
@@ -343,6 +352,7 @@ def parse_cross_cutting(shadow_dir):
             if m:
                 entry["status"] = m.group(1)
                 entry["source"] = m.group(2)
+                entry["citation_score"] = int(m.group(4) or 0)
                 if m.group(3):
                     entry["labels"] = [
                         l.strip()
@@ -446,6 +456,17 @@ def collect_all_discoveries(shadow_dir):
 
 
 # --- View Functions ---
+
+def _citation_rank(item):
+    if item.get("status") == "refuted":
+        trust = 5
+    elif item.get("source") == "user":
+        trust = 0
+    elif item.get("source") == "interaction":
+        trust = 1
+    else:
+        trust = {"verified": 2, "uncertain": 3}.get(item.get("status"), 4)
+    return trust, -item.get("citation_score", 0)
 
 
 def view_summary(shadow_dir):
@@ -620,6 +641,7 @@ def view_search(shadow_dir, query):
                             "text": text,
                             "status": d.get("status", "?"),
                             "source": d.get("source", "?"),
+                            "citation_score": d.get("citation_score", 0),
                             "also_involves": d.get("also_involves", []),
                             "match": (
                                 "file" if file_name_hit else
@@ -680,11 +702,12 @@ def view_search(shadow_dir, query):
             for file, discs in sorted(by_file.items()):
                 print(f"\n{file} ({len(discs)} matches)")
                 print("-" * (len(file) + 15))
-                for d in discs:
+                for d in sorted(discs, key=_citation_rank):
                     sym = d["symbol"]
                     print(f"  {file}::{sym}")
                     print(f"  {d['text'][:120]}")
                     print(f"  ({d['status']}, source: {d['source']})")
+                    print(f"  citation_score: {d['citation_score']}")
                     if d.get("also_involves"):
                         print(
                             f"  Also involves: "
@@ -698,13 +721,14 @@ def view_search(shadow_dir, query):
         try:
             print(f"\nCross-cutting ({len(cross_matches)} matches)")
             print("-" * 30)
-            for e in cross_matches:
+            for e in sorted(cross_matches, key=_citation_rank):
                 title = e.get("title", e.get("slug", "?"))
                 cat = e.get("category", "?")
                 status = e.get("status", "?")
                 source = e.get("source", "?")
                 print(f"\n  {title}")
                 print(f"  Category: {cat} | {status}, source: {source}")
+                print(f"  citation_score: {e.get('citation_score', 0)}")
                 print(f"  Refs: {', '.join(e.get('refs', [])[:5])}")
                 if e.get("discovery"):
                     print(f"  {e['discovery'][:120]}")
@@ -716,8 +740,9 @@ def view_search(shadow_dir, query):
         try:
             print(f"\nPreferences ({len(pref_matches)} matches)")
             print("-" * 30)
-            for p in pref_matches:
+            for p in sorted(pref_matches, key=_citation_rank):
                 print(f"  [{p.get('source', '?')}] {p['text'][:120]}")
+                print(f"  citation_score: {p.get('citation_score', 0)}")
         except Exception as e:
             warn(f"Search: failed to render preference results: {e}")
 
@@ -736,10 +761,11 @@ def view_prefs(shadow_dir):
 
     print(f"Project Preferences ({len(prefs)} total)")
     print("=" * 40)
-    for p in prefs:
+    for p in sorted(prefs, key=_citation_rank):
         try:
             source = p.get("source", "?")
             print(f"\n  [{source}] {p['text']}")
+            print(f"  citation_score: {p.get('citation_score', 0)}")
         except Exception as e:
             warn(f"Failed to render preference: {e}")
 
@@ -772,6 +798,7 @@ def view_labels(shadow_dir, label_filter):
                     "status": entry.get("status", "?"),
                     "source": entry.get("source", "?"),
                     "labels": entry["labels"],
+                    "citation_score": entry.get("citation_score", 0),
                 })
     except Exception as e:
         warn(f"Failed to include cross-cutting in label search: {e}")
@@ -806,7 +833,7 @@ def view_labels(shadow_dir, label_filter):
             continue
         print(f"\n[{lbl}] ({len(discs)} discoveries)")
         print("-" * 30)
-        for d in discs:
+        for d in sorted(discs, key=_citation_rank):
             try:
                 sym = d.get("symbol", "?")
                 src_file = d.get("file", "?")
@@ -814,6 +841,7 @@ def view_labels(shadow_dir, label_filter):
                 print(f"  {d['text'][:120]}")
                 print(f"  ({d.get('status', '?')}, "
                       f"source: {d.get('source', '?')})")
+                print(f"  citation_score: {d.get('citation_score', 0)}")
                 all_labels = d.get("labels", [])
                 other = [l for l in all_labels if l.lower() != lbl]
                 if other:
@@ -850,6 +878,7 @@ def view_recent(shadow_dir, count=10):
                         "text": d.get("text", ""),
                         "status": d.get("status", "?"),
                         "source": d.get("source", "?"),
+                        "citation_score": d.get("citation_score", 0),
                         "mtime": mtime,
                     })
             except Exception as e:
@@ -877,6 +906,7 @@ def view_recent(shadow_dir, count=10):
                             "text": e.get("discovery", e.get("title", "")),
                             "status": e.get("status", "?"),
                             "source": e.get("source", "?"),
+                            "citation_score": e.get("citation_score", 0),
                             "mtime": mtime,
                         })
                 except Exception as e:
@@ -897,6 +927,7 @@ def view_recent(shadow_dir, count=10):
                     "text": p.get("text", ""),
                     "status": "-",
                     "source": p.get("source", "?"),
+                    "citation_score": p.get("citation_score", 0),
                     "mtime": mtime,
                 })
     except Exception as e:
@@ -928,6 +959,7 @@ def view_recent(shadow_dir, count=10):
                 print(f"  {item.get('text', '')[:120]}")
                 print(f"  ({item.get('status', '?')}, "
                       f"source: {item.get('source', '?')})")
+            print(f"  citation_score: {item.get('citation_score', 0)}")
         except Exception as e:
             warn(f"Recent: failed to render item: {e}")
 
@@ -940,9 +972,9 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
     file. Pulls from both the per-file shadow and any _cross/ entries
     whose refs touch this file.
 
-    Ranking: verified > uncertain > refuted; within a tier, source
-    order is preserved. Output is hard-capped at max_chars (the trailing
-    "(...)" marker still fits).
+    Source trust/status precedes the visible citation score; equal scores
+    preserve document order. Reading does not increment citations.
+    Output is hard-capped at max_chars (the trailing "(...)" marker still fits).
     """
     norm = file_path.strip()
     if norm.startswith("./"):
@@ -964,6 +996,8 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
                     "anchor": d.get("symbol") or "file-level",
                     "text": d.get("text", "").strip(),
                     "status": d.get("status", "?"),
+                    "source": d.get("source", "?"),
+                    "citation_score": d.get("citation_score", 0),
                     "labels": sorted(disc_labels),
                 })
         except Exception as e:
@@ -982,6 +1016,8 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
                 "anchor": f"_cross/{entry.get('file', entry.get('slug', '?'))}",
                 "text": (entry.get("discovery") or entry.get("title") or "").strip(),
                 "status": entry.get("status", "?"),
+                "source": entry.get("source", "?"),
+                "citation_score": entry.get("citation_score", 0),
                 "labels": sorted(cross_labels),
             })
     except Exception as e:
@@ -994,8 +1030,7 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
         )
         return
 
-    tier = {"verified": 0, "uncertain": 1, "refuted": 2}
-    candidates.sort(key=lambda d: tier.get(d.get("status", "?"), 3))
+    candidates.sort(key=_citation_rank)
 
     shown = candidates[:limit]
     header = (
@@ -1008,7 +1043,7 @@ def view_top(shadow_dir, file_path, labels_filter, limit, max_chars):
         anchor = d["anchor"]
         text = d["text"].replace("\n", " ").strip()
         lines.append(
-            f"- [{labels}] `{anchor}` ({d['status']}): {text}"
+            f"- [{labels}] `{anchor}` ({d['status']}, citation_score: {d['citation_score']}): {text}"
         )
 
     out = "\n".join(lines)
@@ -1069,6 +1104,13 @@ def view_check_invariants(shadow_dir):
     also_involves_re = re.compile(r"^\s*Also involves:\s*(.+)$", re.I)
     file_sym_re = re.compile(r"`([^`]+::[^`]+)`")
 
+    def check_citation(path, line_number, line):
+        if line.strip().startswith("_(") and "citation_score:" in line:
+            try:
+                metadata_score(line)
+            except CitationError as exc:
+                v(path, line_number, "citation_score", str(exc))
+
     for shadow_path in get_all_shadow_files(shadow_dir):
         try:
             rel = shadow_path.relative_to(shadow_dir)
@@ -1084,6 +1126,7 @@ def view_check_invariants(shadow_dir):
         declared = set()
         for ln, raw in enumerate(text.split("\n"), 1):
             line = raw.rstrip()
+            check_citation(rel, ln, line)
 
             heading = md_heading_re.match(line)
             if heading:
@@ -1170,6 +1213,8 @@ def view_check_invariants(shadow_dir):
                 continue
 
             rel_cf = cf.relative_to(shadow_dir)
+            for line_number, line in enumerate(text.splitlines(), 1):
+                check_citation(rel_cf, line_number, line)
 
             # Category enum check
             cat_m = re.search(r"\*\*Category\*\*:\s*(.+)", text)
@@ -1234,6 +1279,14 @@ def view_check_invariants(shadow_dir):
                   f"refs {shadow_rel} but that shadow's ## "
                   f"Cross-References does not link back to "
                   f"_cross/{slug}.md")
+
+    prefs_path = shadow_dir / "_prefs.md"
+    if prefs_path.is_file():
+        try:
+            for line_number, line in enumerate(prefs_path.read_text(encoding="utf-8").splitlines(), 1):
+                check_citation("_prefs.md", line_number, line)
+        except (OSError, UnicodeError) as exc:
+            v("_prefs.md", 0, "unreadable", str(exc))
 
     # Output
     if not violations:
