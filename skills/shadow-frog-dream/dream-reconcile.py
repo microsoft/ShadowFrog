@@ -45,6 +45,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
+from typing import Optional
 
 _bytecode = sys.dont_write_bytecode
 sys.dont_write_bytecode = True
@@ -1705,16 +1706,17 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False,
             kept += 1
             continue
         refs = subprocess.run(
-            ['git', 'for-each-ref', '--format=%(objectname)',
+            ['git', 'for-each-ref', '--format=%(refname) %(objectname)',
              f'refs/heads/{branch}', f'refs/remotes/origin/{branch}'],
             capture_output=True, text=True, cwd=repo_root, encoding="utf-8",
         )
-        if refs.returncode != 0 or not refs.stdout.strip() or any(
+        branch_tips = dict(line.split(' ', 1) for line in refs.stdout.splitlines())
+        if refs.returncode != 0 or not branch_tips or any(
             subprocess.run(
                 ['git', 'merge-base', '--is-ancestor', tip, archived_tip],
                 capture_output=True, text=True, cwd=repo_root, encoding="utf-8",
             ).returncode != 0
-            for tip in refs.stdout.splitlines()
+            for tip in branch_tips.values()
         ):
             print(
                 f"  KEEPING {branch} - cannot confirm its tips are covered by indexed "
@@ -1754,17 +1756,18 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False,
             if 'remote ref does not exist' not in result.stderr:
                 print(f"  ⚠️  Failed to delete remote {branch}: {result.stderr.strip()}")
 
-        # Delete local
-        result = subprocess.run(
-            ['git', 'branch', '-D', branch],
-            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
-        )
-        if result.returncode == 0:
-            print(f"  🗑  Deleted local: {branch}")
-        else:
-            print(f"  ⚠️  Failed to delete local {branch}: {result.stderr.strip()}")
-            kept += 1
-            continue
+        # Experiments reconciled on another clone may have no local branch.
+        if f'refs/heads/{branch}' in branch_tips:
+            result = subprocess.run(
+                ['git', 'branch', '-D', branch],
+                capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
+            )
+            if result.returncode == 0:
+                print(f"  🗑  Deleted local: {branch}")
+            else:
+                print(f"  ⚠️  Failed to delete local {branch}: {result.stderr.strip()}")
+                kept += 1
+                continue
         # Also delete the remote-tracking ref
         subprocess.run(
             ['git', 'branch', '-dr', f'origin/{branch}'],
@@ -1800,13 +1803,14 @@ class WorktreeRegistration:
     """The registration state for one candidate worktree path."""
 
     state: str
-    branch: str | None = None
+    branch: Optional[str] = None
 
 
 def _registered_worktree_branch(repo_root, candidate_path):
     """Return a registration result for `candidate_path`.
 
-    Parses `git worktree list --porcelain` output:
+    Parses NUL-delimited `git worktree list --porcelain -z` output
+    (shown as lines here):
         worktree /abs/path
         HEAD <sha>
         branch refs/heads/<name>
@@ -1829,11 +1833,12 @@ def _registered_worktree_branch(repo_root, candidate_path):
             if sys.path and sys.path[0] == script_dir:
                 sys.path.pop(0)
         result = subprocess.run(
-            ['git', 'worktree', 'list', '--porcelain'],
-            capture_output=True, text=True, cwd=repo_root, timeout=10,
-            encoding="utf-8",
+            ['git', 'worktree', 'list', '--porcelain', '-z'],
+            capture_output=True, cwd=repo_root, timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+        # Text mode would rewrite carriage returns inside otherwise valid paths.
+        output = result.stdout.decode("utf-8")
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return WorktreeRegistration("indeterminate")
     if result.returncode != 0:
         return WorktreeRegistration("indeterminate")
@@ -1851,7 +1856,7 @@ def _registered_worktree_branch(repo_root, candidate_path):
 
     cur_path = None
     cur_branch = None
-    for line in result.stdout.splitlines():
+    for line in output.split('\0'):
         if line.startswith('worktree '):
             # Flush previous entry if it matched.
             if cur_path is not None and _matches(cur_path):

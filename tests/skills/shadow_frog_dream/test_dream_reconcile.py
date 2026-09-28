@@ -2233,8 +2233,9 @@ def test_update_state_records_last_commit_sha(dream_reconcile, tmp_git_repo):
 # ===========================================================================
 
 @pytest.mark.slow
+@pytest.mark.parametrize("local_branch", [True, False])
 def test_cleanup_branches_actually_deletes_when_all_checks_pass(
-    dream_reconcile, tmp_git_repo
+    dream_reconcile, tmp_git_repo, local_branch
 ):
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
@@ -2261,6 +2262,9 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
     _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    if not local_branch:
+        _git("branch", "-D", branch, cwd=tmp_git_repo, env=env)
 
     # Pre-check: branch exists on origin.
     pre = _git("ls-remote", "--heads", "origin", branch,
@@ -3609,8 +3613,17 @@ def test_cleanup_branches_also_removes_worktree(
     "unpushed", "diverged", "pushed", "tracked-edit", "untracked-file",
     "unknown-tip", "unresolvable-tip",
 ])
+@pytest.mark.parametrize("base_name", [
+    "worktrees", "worktrees-caf\u00e9",
+    pytest.param("worktrees-line\t\n", marks=pytest.mark.skipif(
+        os.name == "nt", reason="requires POSIX path characters",
+    )),
+    pytest.param("worktrees-carriage\r", marks=pytest.mark.skipif(
+        os.name == "nt", reason="requires POSIX path characters",
+    )),
+])
 def test_cleanup_branches_preserves_unarchived_work(
-    dream_reconcile, tmp_git_repo, tmp_path, capsys, change,
+    dream_reconcile, tmp_git_repo, tmp_path, capsys, change, base_name,
 ):
     env = _seed_repo(tmp_git_repo)
     _add_bare_remote(tmp_git_repo, env)
@@ -3637,7 +3650,7 @@ def test_cleanup_branches_preserves_unarchived_work(
     if change == "diverged":
         _git("update-ref", f"refs/heads/{branch}", f"{published_tip}^", published_tip,
              cwd=tmp_git_repo, env=env)
-    base = tmp_path / "worktrees"
+    base = tmp_path / base_name
     worktree = base / "proj" / "dream-preserve"
     worktree.parent.mkdir(parents=True)
     _git("worktree", "add", "-q", str(worktree), branch, cwd=tmp_git_repo, env=env)
@@ -3826,11 +3839,20 @@ class TestRegisteredWorktreeBranch:
     """Coverage of registration states used by fail-closed worktree cleanup."""
 
     @pytest.mark.slow
+    @pytest.mark.parametrize("name", [
+        "wt", "wt-caf\u00e9",
+        pytest.param("wt\tline\n", marks=pytest.mark.skipif(
+            os.name == "nt", reason="requires POSIX path characters",
+        )),
+        pytest.param("wt-carriage\r", marks=pytest.mark.skipif(
+            os.name == "nt", reason="requires POSIX path characters",
+        )),
+    ])
     def test_returns_branch_for_registered_path(
-        self, dream_reconcile, tmp_git_repo, tmp_path
+        self, dream_reconcile, tmp_git_repo, tmp_path, name
     ):
         env = _seed_repo(tmp_git_repo)
-        wt = tmp_path / "wt"
+        wt = tmp_path / name
         _git("worktree", "add", "-q", "-b", "feature-x", str(wt),
              cwd=tmp_git_repo, env=env)
         registration = dream_reconcile._registered_worktree_branch(
@@ -3912,15 +3934,16 @@ class TestRegisteredWorktreeBranch:
         assert marker.read_text(encoding="utf-8") == "preserve me\n"
         assert "detached ownership" in capsys.readouterr().out
 
+    @pytest.mark.parametrize("returncode, stdout", [(1, b""), (0, b"\xff")])
     def test_returns_indeterminate_when_git_query_fails(
-        self, dream_reconcile, tmp_git_repo, tmp_path, monkeypatch
+        self, dream_reconcile, tmp_git_repo, tmp_path, monkeypatch, returncode, stdout
     ):
         _seed_repo(tmp_git_repo)
         original_run = dream_reconcile.subprocess.run
 
         def failed_query(args, **kwargs):
-            if args == ["git", "worktree", "list", "--porcelain"]:
-                return subprocess.CompletedProcess(args, 1, "", "git failed")
+            if args == ["git", "worktree", "list", "--porcelain", "-z"]:
+                return subprocess.CompletedProcess(args, returncode, stdout, b"git failed")
             return original_run(args, **kwargs)
 
         monkeypatch.setattr(dream_reconcile.subprocess, "run", failed_query)
@@ -3934,12 +3957,12 @@ class TestRegisteredWorktreeBranch:
         self, dream_reconcile, monkeypatch
     ):
         result = subprocess.CompletedProcess(
-            ["git", "worktree", "list", "--porcelain"],
+            ["git", "worktree", "list", "--porcelain", "-z"],
             0,
-            "worktree C:\\Dreams\\Dream-Same\n"
-            "HEAD deadbeef\n"
-            "branch refs/heads/dream/proj/20260420-110000Z-same\n",
-            "",
+            b"worktree C:\\Dreams\\Dream-Same\0"
+            b"HEAD deadbeef\0"
+            b"branch refs/heads/dream/proj/20260420-110000Z-same\0\0",
+            b"",
         )
         monkeypatch.setattr(
             dream_reconcile.subprocess, "run", lambda *args, **kwargs: result

@@ -592,16 +592,38 @@ class TestDreamSetupValidation:
         assert result.returncode != 0
         assert "slug" in result.stderr.lower()
 
-    def test_invalid_slug_rejected(self, tmp_path):
+    @pytest.mark.parametrize("slug", ["bad slug!!", "valid\n"])
+    def test_invalid_slug_rejected(self, tmp_path, slug):
         repo = tmp_path / "repo"
         repo.mkdir()
         _make_git_repo(repo)
         result = run_dream_setup(
-            ["--slug", "bad slug!!", "--repo-root", str(repo)],
+            ["--slug", slug, "--repo-root", str(repo), "--dry-run"],
             cwd=repo,
         )
         assert result.returncode != 0
         assert "must match" in result.stderr
+
+    @pytest.mark.parametrize("source", ["argument", "environment", "task_info"])
+    def test_rejects_namespace_with_trailing_newline(self, tmp_path, source):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo(repo)
+        args = ["--slug", "valid", "--repo-root", str(repo), "--dry-run"]
+        env = {}
+        if source == "argument":
+            args += ["--namespace", "valid\n"]
+        elif source == "environment":
+            env["DREAM_NAMESPACE"] = "valid\n"
+        else:
+            (repo / "TASK_INFO.json").write_text(
+                json.dumps({"dream_namespace": "valid\n"}), encoding="utf-8",
+            )
+
+        result = run_dream_setup(args, cwd=repo, env_extra=env)
+
+        assert result.returncode != 0
+        assert "must match" in result.stderr or "unsafe characters" in result.stderr
 
 
 @pytest.mark.slow

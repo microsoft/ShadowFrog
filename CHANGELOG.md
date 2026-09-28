@@ -24,6 +24,9 @@ shadow knowledge bases for any codebase.
 - **Dream setup and cleanup safeguards** — preserve repository-path whitespace
   and retain unarchived branch commits or dirty registered worktrees during
   reconciliation cleanup.
+- **Dream lifecycle compatibility** — preserve Python 3.9 execution and
+  worktree identity for unusual paths, correctly report remote-only branch
+  cleanup, and reject newline-terminated slugs and namespaces.
 - **Reconciliation path containment** — validate untrusted manifest destinations
   and filesystem aliases before writing discoveries, cross-references, or
   archives. Unsafe paths fail explicitly, including during dry runs, rather

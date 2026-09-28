@@ -244,11 +244,11 @@ def main():
         _err("ERROR: --slug is required")
         _err("Usage: dream-setup.py --slug t01-name [--base-branch BRANCH]")
         sys.exit(1)
-    if not SAFE_RE.match(slug):
+    if not SAFE_RE.fullmatch(slug):
         _err(f"ERROR: --slug must match {SAFE_RE.pattern} (got: {slug})")
         _err("  Use kebab-case alphanumerics like 't01-csv-fuzzer'.")
         sys.exit(1)
-    if opts["namespace"] and not SAFE_RE.match(opts["namespace"]):
+    if opts["namespace"] and not SAFE_RE.fullmatch(opts["namespace"]):
         _err(f"ERROR: --namespace must match {SAFE_RE.pattern} "
              f"(got: {opts['namespace']})")
         sys.exit(1)
@@ -312,7 +312,7 @@ def main():
         _err(f"ERROR: {exc}")
         sys.exit(1)
 
-    if not SAFE_RE.match(dream_ns):
+    if not SAFE_RE.fullmatch(dream_ns):
         _err(f"ERROR: Resolved DREAM_NS contains unsafe characters: {dream_ns}")
         _err(f"  Allowed: {SAFE_RE.pattern}")
         _err("  Override with --namespace or set DREAM_NAMESPACE.")
