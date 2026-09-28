@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from copy import deepcopy
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -164,13 +165,13 @@ class TestFindShadowDir:
         result = dream_lineage.find_shadow_dir(str(shadow))
         assert result == str(shadow)
 
-    def test_hint_nonexistent_falls_through(self, dream_lineage, tmp_path, monkeypatch):
-        """When hint doesn't exist, falls through to cwd-based detection."""
+    def test_hint_nonexistent_is_not_silently_replaced(self, dream_lineage, tmp_path, monkeypatch):
+        """An explicit invalid input must not select another repository's shadow."""
         monkeypatch.chdir(tmp_path)
         shadow = tmp_path / ".shadow"
         shadow.mkdir()
-        result = dream_lineage.find_shadow_dir("/nonexistent/path")
-        assert result == ".shadow" or result == str(shadow)
+        with pytest.raises(dream_lineage.LineageError, match="--shadow-dir"):
+            dream_lineage.find_shadow_dir(str(tmp_path / "missing"))
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +397,28 @@ class _BalanceChecker(HTMLParser):
             self.errors.append(f"close {tag} not in stack")
 
 
+_HTML_TEXT = (
+    '<img onerror="void(0)" data-lineage-test=\'marker\'> & "café" 雪 🐸 &amp;'
+)
+
+
+class _ContentParser(HTMLParser):
+    """Collect decoded text and actual elements/attributes without executing HTML."""
+
+    def __init__(self, html_text):
+        super().__init__(convert_charrefs=True)
+        self.elements = []
+        self.text = []
+        self.feed(html_text)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, tuple(attrs)))
+
+    def handle_data(self, data):
+        self.text.append(data)
+
+
 def _li_runs_inside_ul(html_text: str) -> bool:
     """Verify every <li> is contained within a <ul> or <ol>.
 
@@ -535,6 +558,90 @@ class TestCompactNode:
         assert out.count("ct-line") >= 3
 
 
+@pytest.mark.parametrize("renderer,suffix", [
+    ("node_html", " tests"),
+    ("compact_node", "t"),
+])
+class TestNodeMetadataEscaping:
+    """Both node renderers preserve metadata as literal, unmodified text."""
+
+    @pytest.mark.parametrize("field", ["short", "tests"])
+    @pytest.mark.parametrize("value", [
+        _HTML_TEXT,
+        '  café & "double" \'single\' 雪 🐸  ',
+        "&lt;img onerror=&quot;void(0)&quot;&gt; &amp;",
+    ], ids=["tag", "unicode-spaces", "literal-entities"])
+    def test_metadata_is_text_not_markup(
+        self, dream_lineage, renderer, suffix, field, value,
+    ):
+        render = getattr(dream_lineage, renderer)
+        branch = "dream/proj/experiment"
+        control = {branch: {
+            "short": "experiment", "tests": "7",
+            "title": 'Title & "雪" 🐸', "full_report": "Report body",
+        }}
+        meta = deepcopy(control)
+        meta[branch][field] = value
+        children = {branch: []}
+        before = deepcopy((meta, children))
+
+        parsed = _ContentParser(render(branch, meta, children))
+        baseline = _ContentParser(render(branch, control, children))
+
+        assert parsed.elements == baseline.elements
+        expected = value + suffix if field == "tests" else value
+        assert parsed.text.count(expected) == 1
+        assert 'Title & "雪" 🐸' in parsed.text
+        assert (meta, children) == before
+
+    @pytest.mark.parametrize("has_metadata", [False, True])
+    def test_missing_short_escapes_branch_fallback(
+        self, dream_lineage, renderer, suffix, has_metadata,
+    ):
+        render = getattr(dream_lineage, renderer)
+        branch = f"dream/proj/{_HTML_TEXT}"
+        meta = {branch: {"full_report": "Report body"}} if has_metadata else {}
+        children = {}
+        before = deepcopy((meta, children))
+        control = deepcopy(meta)
+        control.setdefault(branch, {})["short"] = "experiment"
+
+        parsed = _ContentParser(render(branch, meta, children))
+
+        assert parsed.elements == _ContentParser(render(branch, control, children)).elements
+        assert parsed.text.count(branch) == 1
+        assert (meta, children) == before
+
+    @pytest.mark.parametrize("info,short,tests", [
+        ({}, "branch", None),
+        ({"short": "", "tests": ""}, "", None),
+        ({"short": "0", "tests": "0"}, "0", "0"),
+        ({"tests": 0}, "branch", None),
+        ({"tests": None}, "branch", None),
+        ({"tests": 7}, "branch", "7"),
+        ({"tests": "007"}, "branch", "007"),
+        ({"tests": 2.5}, "branch", "2.5"),
+    ])
+    def test_empty_and_numeric_display_semantics(
+        self, dream_lineage, renderer, suffix, info, short, tests,
+    ):
+        meta = {"branch": info}
+        before = deepcopy(meta)
+        out = getattr(dream_lineage, renderer)("branch", meta, {})
+        parsed = _ContentParser(out)
+
+        name = re.search(r'<span class="(?:name|ct-name)"[^>]*>(.*?)</span>', out)
+        assert name and name.group(1) == short
+        badges = [
+            attrs for tag, attrs in parsed.elements
+            if dict(attrs).get("class") in {"badge test", "ct-test"}
+        ]
+        assert len(badges) == (0 if tests is None else 1)
+        if tests is not None:
+            assert tests + suffix in parsed.text
+        assert meta == before
+
+
 # ---------------------------------------------------------------------------
 # generate_html — happy path on coupon-demo
 # ---------------------------------------------------------------------------
@@ -637,6 +744,128 @@ class TestGenerateHtmlCouponDemo:
         assert "3 fresh" in msg
 
 
+class TestGenerateHtmlEscaping:
+    """Real index, manifest, and report files exercise every rendering path."""
+
+    @pytest.mark.parametrize("count_field", ["tests_passed", "test_count"])
+    @pytest.mark.parametrize("via_cli", [
+        False,
+        pytest.param(True, marks=[pytest.mark.slow, pytest.mark.integration]),
+    ], ids=["function", "cli"])
+    def test_untrusted_metadata_remains_literal(
+        self, dream_lineage, tmp_path, count_field, via_cli,
+    ):
+        shadow = tmp_path / ".shadow"
+        rows = [
+            ("20250101-120000Z-root & 'café 雪' 🐸", "investigation", "useful",
+             f"Root title {_HTML_TEXT}", "dream/proj/root", "main", "aaa"),
+            ("20250102-120000Z-fresh & 'café 雪' 🐸", "investigation", "useful",
+             f"Fresh title {_HTML_TEXT}", "dream/proj/fresh", "main", "bbb"),
+        ]
+        report = f"**Evidence**\n\n{_HTML_TEXT}\n\n```text\n{_HTML_TEXT}\n```"
+        reports = {row[0]: report for row in rows}
+        manifests = {row[0]: {count_field: _HTML_TEXT} for row in rows}
+        dreams = _build_dreams(shadow, rows, reports, manifests)
+        index_only = [
+            (f"20250103-120000Z-chain-name {_HTML_TEXT}", "investigation", "useful",
+             "Chain child", "dream/proj/child", "dream/proj/root", "ccc"),
+            (f"20250104-120000Z-fresh-name {_HTML_TEXT}", "investigation", "useful",
+             "Fresh leaf", "dream/proj/leaf", "main", "ddd"),
+        ]
+        # Index-only IDs can contain markup without creating invalid Windows filenames.
+        with (dreams / "_index.md").open("a", encoding="utf-8") as index:
+            for row in index_only:
+                index.write("| " + " | ".join(row) + " |\n")
+        inputs = {path: path.read_bytes() for path in dreams.rglob("*") if path.is_file()}
+
+        meta, children = dream_lineage.load_index(str(shadow))
+        dream_lineage.load_reports(str(shadow), meta)
+        for row in rows + index_only:
+            assert meta[row[4]]["short"] == row[0].split("Z-")[-1]
+        for row in rows:
+            assert meta[row[4]]["tests"] == _HTML_TEXT
+            assert meta[row[4]]["full_report"] == report
+        before = deepcopy((meta, children))
+        for branch in meta:
+            dream_lineage.node_html(branch, meta, children)
+            dream_lineage.compact_node(branch, meta, children)
+        assert (meta, children) == before
+
+        out = tmp_path / "lineage.html"
+        if via_cli:
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--shadow-dir", str(shadow),
+                 "-o", str(out)],
+                capture_output=True, text=True, encoding="utf-8",
+                cwd=tmp_path, timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+        else:
+            dream_lineage.generate_html(str(shadow), str(out))
+        parsed = _ContentParser(out.read_text(encoding="utf-8"))
+
+        assert all(tag != "img" for tag, attrs in parsed.elements)
+        assert all(
+            name not in {"onerror", "data-lineage-test"}
+            for tag, attrs in parsed.elements for name, value in attrs
+        )
+        for row in rows + index_only:
+            short = row[0].split("Z-")[-1]
+            assert parsed.text.count(short) == (3 if row[0] in reports else 2)
+        for row in rows:
+            assert parsed.text.count(row[3]) == 2
+            assert f"✅ {row[3]}" in parsed.text
+        assert parsed.text.count(f"{_HTML_TEXT} tests") == 2
+        assert parsed.text.count(f"{_HTML_TEXT}t") == 2
+        assert parsed.text.count(_HTML_TEXT) == 2
+        assert parsed.text.count(_HTML_TEXT + "\n") == 2
+        assert {path: path.read_bytes() for path in inputs} == inputs
+
+    @pytest.mark.parametrize("manifest,expected", [
+        (None, ""),
+        ({}, ""),
+        ({"tests_passed": ""}, ""),
+        ({"test_count": ""}, ""),
+        ({"tests_passed": 0}, "0"),
+        ({"test_count": 0}, "0"),
+        ({"tests_passed": "0"}, "0"),
+        ({"test_count": "007"}, "007"),
+        ({"tests_passed": 7}, "7"),
+        ({"test_count": 2.5}, "2.5"),
+        ({"tests_passed": None}, "None"),
+        ({"tests_passed": "", "test_count": 99}, ""),
+        ({"tests_passed": 0, "test_count": 99}, "0"),
+        ({"tests_passed": 7, "test_count": _HTML_TEXT}, "7"),
+    ])
+    def test_manifest_count_display_semantics(
+        self, dream_lineage, tmp_path, manifest, expected,
+    ):
+        shadow = tmp_path / ".shadow"
+        did = "20250101-120000Z-counts"
+        branch = f"dream/proj/{did}"
+        manifests = {} if manifest is None else {did: manifest}
+        _build_dreams(
+            shadow,
+            [(did, "investigation", "useful", "Counts", branch, "main", "aaa")],
+            manifests=manifests,
+        )
+        meta, _ = dream_lineage.load_index(str(shadow))
+        dream_lineage.load_reports(str(shadow), meta)
+        assert meta[branch]["tests"] == expected
+
+        out = tmp_path / "lineage.html"
+        dream_lineage.generate_html(str(shadow), str(out))
+        parsed = _ContentParser(out.read_text(encoding="utf-8"))
+        badges = [
+            attrs for tag, attrs in parsed.elements
+            if dict(attrs).get("class") in {"badge test", "ct-test"}
+        ]
+        assert len(badges) == (2 if expected else 0)
+        if expected:
+            assert parsed.text.count(expected + " tests") == 1
+            assert parsed.text.count(expected + "t") == 1
+
+
 # ---------------------------------------------------------------------------
 # generate_html — synthetic edge cases
 # ---------------------------------------------------------------------------
@@ -660,13 +889,12 @@ class TestGenerateHtmlEdgeCases:
         assert "<template id=" not in html
 
     def test_missing_dreams_dir_exits(self, dream_lineage, tmp_path):
-        """generate_html → load_index sys.exit(1) when _index.md is missing."""
+        """A missing required index raises an actionable input error."""
         shadow = tmp_path / ".shadow"
         shadow.mkdir()
         out = tmp_path / "out.html"
-        with pytest.raises(SystemExit) as exc:
+        with pytest.raises(dream_lineage.LineageError, match="_index.md"):
             dream_lineage.generate_html(str(shadow), str(out))
-        assert exc.value.code == 1
 
     def test_dream_in_index_but_dir_missing(self, dream_lineage, tmp_path, capsys):
         """If a dream is in _index.md but its folder is missing, render anyway."""
@@ -690,7 +918,7 @@ class TestGenerateHtmlEdgeCases:
         assert "<template id=" not in html
 
     def test_malformed_index_rows_skipped(self, dream_lineage, tmp_path, capsys):
-        """Lines with fewer than 8 pipe-delimited parts are silently ignored."""
+        """Malformed rows do not prevent rendering the valid experiment."""
         shadow = tmp_path / ".shadow"
         dreams = shadow / "_dreams"
         dreams.mkdir(parents=True)
@@ -991,3 +1219,139 @@ class TestTreeDepthCycleGuard:
         out = tmp_path / "lineage.html"
         dream_lineage.generate_html(shadow, out)
         assert out.exists()
+
+
+@pytest.mark.slow
+class TestLineageDiagnostics:
+    def _fixture(self, tmp_path):
+        shadow = tmp_path / ".shadow"
+        did = "20250101-120000Z-diagnostics"
+        branch = f"dream/proj/{did}"
+        _build_dreams(
+            shadow, [(did, "investigation", "useful", "Diagnostics", branch, "main", "abc")],
+        )
+        return shadow, shadow / "_dreams" / did
+
+    def _run(self, shadow, output, cwd):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--shadow-dir", str(shadow), "-o", str(output)],
+            cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+
+    @pytest.mark.parametrize("failure", [
+        "explicit-shadow", "index-encoding", "index-directory",
+        "output-directory", "output-parent", "output-encoding",
+    ])
+    def test_required_failures_are_actionable_and_do_not_claim_success(self, tmp_path, failure):
+        shadow, dream = self._fixture(tmp_path)
+        output = tmp_path / "lineage.html"
+        output.write_text("previous report\n", encoding="utf-8")
+        expected = output
+        if failure == "explicit-shadow":
+            shadow = tmp_path / "missing-shadow"
+            expected = shadow
+        elif failure == "index-encoding":
+            expected = shadow / "_dreams/_index.md"
+            expected.write_bytes(b"\xff")
+        elif failure == "index-directory":
+            expected = shadow / "_dreams/_index.md"
+            expected.unlink()
+            expected.mkdir()
+        elif failure == "output-directory":
+            output = tmp_path / "output-directory"
+            output.mkdir()
+            expected = output
+        elif failure == "output-parent":
+            output = tmp_path / "missing-parent/lineage.html"
+            expected = output
+        else:
+            (dream / "manifest.json").write_text(
+                json.dumps({"tests_passed": "\ud800"}), encoding="utf-8",
+            )
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 1
+        assert "ERROR:" in result.stderr and repr(str(expected)) in result.stderr
+        assert "retry" in result.stderr.lower() or "rerun" in result.stderr.lower()
+        assert "Traceback" not in result.stderr
+        assert "Wrote " not in result.stdout
+        assert (tmp_path / "lineage.html").read_text(encoding="utf-8") == "previous report\n"
+
+    @pytest.mark.parametrize("failure,field", [
+        ("manifest-json", "manifest.json"),
+        ("manifest-object", "manifest.json"),
+        ("manifest-parent", "parent_branch"),
+        ("manifest-discoveries", "discoveries"),
+        ("report-encoding", "report.md"),
+        ("report-directory", "report.md"),
+        ("index-row", "_index.md"),
+        ("index-duplicate", "_index.md"),
+    ])
+    def test_recoverable_omissions_warn_with_context(self, tmp_path, failure, field):
+        shadow, dream = self._fixture(tmp_path)
+        output = tmp_path / "lineage.html"
+        manifest = dream / "manifest.json"
+        if failure == "manifest-json":
+            manifest.write_text("{broken", encoding="utf-8")
+        elif failure == "manifest-object":
+            manifest.write_text("[]", encoding="utf-8")
+        elif failure == "manifest-parent":
+            manifest.write_text(json.dumps({"parent_branch": {"wrong": "type"}}), encoding="utf-8")
+        elif failure == "manifest-discoveries":
+            manifest.write_text(json.dumps({"discoveries": None}), encoding="utf-8")
+        elif failure == "report-encoding":
+            (dream / "report.md").write_bytes(b"\xff")
+        elif failure == "report-directory":
+            (dream / "report.md").mkdir()
+        elif failure == "index-row":
+            with (shadow / "_dreams/_index.md").open("a", encoding="utf-8") as stream:
+                stream.write("| malformed row\n")
+        else:
+            index = shadow / "_dreams/_index.md"
+            with index.open("a", encoding="utf-8") as stream:
+                stream.write(index.read_text(encoding="utf-8").splitlines()[-1] + "\n")
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert output.exists() and "Wrote " in result.stdout
+        assert "WARNING:" in result.stderr and field in result.stderr
+        assert repr(str(shadow))[1:-1] in result.stderr
+        assert "rerun" in result.stderr.lower()
+        assert "Traceback" not in result.stderr
+
+    def test_missing_optional_files_are_not_errors(self, tmp_path):
+        shadow, _ = self._fixture(tmp_path)
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert result.stderr == ""
+
+    @pytest.mark.parametrize("parent", [False, 0, [], {}, ["dream/proj/parent"]])
+    def test_invalid_parent_types_warn_without_crashing(self, tmp_path, parent):
+        shadow, dream = self._fixture(tmp_path)
+        (dream / "manifest.json").write_text(
+            json.dumps({"parent_branch": parent}), encoding="utf-8",
+        )
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert "WARNING:" in result.stderr and "parent_branch" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_literal_html_metadata_is_not_reported_as_an_error(self, tmp_path):
+        shadow, dream = self._fixture(tmp_path)
+        (dream / "manifest.json").write_text(
+            json.dumps({"tests_passed": '<img src=x onerror="alert(1)">'}),
+            encoding="utf-8",
+        )
+        output = tmp_path / "lineage.html"
+        result = self._run(shadow, output, tmp_path)
+        assert result.returncode == 0 and result.stderr == ""
+        assert "&lt;img" in output.read_text(encoding="utf-8")
+
+    def test_unreachable_cycle_warns_instead_of_silently_omitting_nodes(self, tmp_path):
+        shadow = tmp_path / ".shadow"
+        _build_dreams(shadow, [
+            ("a", "investigation", "useful", "A", "dream/p/a", "dream/p/b", "a"),
+            ("b", "investigation", "useful", "B", "dream/p/b", "dream/p/a", "b"),
+        ])
+        result = self._run(shadow, tmp_path / "lineage.html", tmp_path)
+        assert result.returncode == 0
+        assert "WARNING:" in result.stderr and "parent" in result.stderr.lower()
+        assert "_index.md" in result.stderr

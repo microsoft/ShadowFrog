@@ -10,7 +10,9 @@ description: >-
   to create it, shadow-frog-update to refresh it, shadow-frog-dream
   for autonomous experiments, shadow-frog-nap for lightweight feature-task
   ideation, shadow-frog-meditate for shadow hygiene,
-  or shadow-frog-viewer to browse it.
+  or shadow-frog-viewer for user-facing browsing and visualization.
+scripts:
+  - shadow-cite.py
 ---
 
 # ShadowFrog
@@ -41,6 +43,56 @@ to that code location.
 6. **When the user states a preference or convention** (not tied to any
    specific file): write it to `_prefs.md` immediately.
 7. **After code changes**: run `/shadow-frog-update`
+
+## Record Revisited Knowledge
+
+Continue navigating directly to shadow files and symbol headings. Each
+discovery or preference has one visible `citation_score`: a nonnegative integer,
+initially 0. Missing scores also mean 0. It is approximate, agent-reported
+revisit frequency, not confidence or proof of usefulness.
+
+When updating an existing shadow, preserve all knowledge and existing scores:
+missing `citation_score` fields mean `0` and are added on the first recorded
+citation, so no reinitialization is required.
+
+After deliberately consulting an entry, record one citation for it **per task**.
+Do not count every entry merely because its file was opened, repeat the count
+on rereads, or count automatic previews that you did not use. Batch updates when
+practical; the agent/coordinator tracks which entries it already counted.
+
+Use the small increment helper to avoid competing score edits. It does not
+retrieve knowledge, create a database, or require opaque IDs:
+
+```text
+python .github/skills/shadow-frog/shadow-cite.py .shadow/src/auth.py.md --symbol UserAuth.validate --text "Rejects expired tokens."
+python .github/skills/shadow-frog/shadow-cite.py .shadow/_prefs.md --text "Keep public APIs stable."
+```
+
+For Claude Code, use `.claude/skills/`. Copy the exact claim text already read;
+omit the bullet marker and metadata. Line wrapping is joined, but spaces inside
+literals remain significant.
+Use `--symbol File-Level` for file-wide entries; omit `--symbol` for preferences
+and `_cross/` files. Repeat `--text` to update several entries in one section
+atomically. `--shadow-dir` identifies an explicit nonstandard shadow root.
+Unknown/ambiguous claims and invalid scores fail with corrective feedback.
+Fenced examples and unrelated headings are not citation targets.
+
+The helper locks only its target file and publishes the score changes atomically.
+Coordinate citation writes with ordinary knowledge edits; unrelated editors do
+not participate in this lock. Subagents should report consulted entries to their
+coordinator rather than race full-file rewrites. If a lock survives interruption,
+confirm its writer stopped before removing that specific `.citation.lock` file.
+
+Scores stay with the Markdown and travel through Git. They are not exact global
+counts across branches/clones: when merging the same knowledge, keep the larger
+score rather than summing inherited counts. Keep scores when rewording/moving
+the same claim; a genuinely new claim starts at 0. Citation-only edits do not
+create discoveries or change discovery totals.
+
+Treat higher scores as a secondary hint after relevance and trust. Never omit
+a relevant user constraint or new discovery because its score is low. Native
+searches and targeted reads remain the normal tools; `/shadow-frog-viewer`
+serves user browsing and does not automatically record citations.
 
 ## Directory Layout
 
@@ -81,7 +133,7 @@ The symbol name is the stable anchor.
 ## File-Level
 
 - This module has no __all__ — all top-level names are public.
-  _(verified, source: exploration)_
+  _(verified, source: exploration, citation_score: 0)_
 
 ## `class UserAuth`
 
@@ -89,12 +141,12 @@ The symbol name is the stable anchor.
 
 - Catches ALL exceptions and returns False — swallows
   connection errors, making network failures look like invalid tokens.
-  _(verified, source: exploration)_
+  _(verified, source: exploration, citation_score: 0)_
 
 ## `authenticate_user`
 
 - Silently returns None on expired tokens. Callers must check.
-  _(verified, source: exploration, labels: [bug])_
+  _(verified, source: exploration, labels: [bug], citation_score: 0)_
   Also involves: `src/middleware.py::require_auth`
 
 ## Cross-References
@@ -134,7 +186,7 @@ Examples:
 **Discovery**: All database access goes through a connection pool that
 silently reconnects on failure. First request after DB restart is slow (~2s).
 
-_(verified, source: exploration)_
+_(verified, source: exploration, citation_score: 0)_
 ```
 
 ## Preferences File (`_prefs.md`)
@@ -146,19 +198,19 @@ specific file or symbol. These guide all agent work across the codebase.
 # Preferences
 
 - No backward compatibility — only keep the latest code, no shims or aliases.
-  _(source: user)_
+  _(source: user, citation_score: 0)_
 
 - Use snake_case for all Python function and variable names.
-  _(source: user)_
+  _(source: user, citation_score: 0)_
 
 - Prefer small, focused PRs over large sweeping changes.
-  _(source: interaction)_
+  _(source: interaction, citation_score: 0)_
 ```
 
 Format:
 ```
 - <preference or convention>
-  _(source: <user|interaction>)_
+  _(source: <user|interaction>, citation_score: 0)_
 ```
 
 Preferences are always trusted (same rank as `source: user`). They don't
@@ -174,21 +226,21 @@ When to write to `_prefs.md` vs per-file shadow vs `_cross/`:
 Per-file discoveries (no IDs — anchored by their `file::symbol` heading):
 ```
 - <behavioral statement>
-  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
+  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>, citation_score: 0)_
   Also involves: `file::symbol`, `file::symbol`
 ```
 
 With labels (optional — only when the discovery is actionable):
 ```
 - <behavioral statement>
-  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>, labels: [bug, security])_
+  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>, labels: [bug, security], citation_score: 0)_
   Also involves: `file::symbol`
 ```
 
 With dream report link (optional — only for experiment-derived discoveries):
 ```
 - <behavioral statement>
-  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
+  _(<verified|uncertain|refuted>, source: <exploration|user|interaction>, citation_score: 0)_
   Dream report: `_dreams/<dream-id>/`
 ```
 
@@ -202,7 +254,7 @@ Cross-cutting discoveries (one per `_cross/<slug>.md` file):
 
 **Discovery**: <behavioral statement>
 
-_(<verified|uncertain|refuted>, source: <exploration|user|interaction>)_
+_(<verified|uncertain|refuted>, source: <exploration|user|interaction>, citation_score: 0)_
 ```
 
 Slug naming: use descriptive kebab-case derived from the title.
@@ -227,7 +279,7 @@ Omit labels entirely for pure observational knowledge.
 
 Labels go in the metadata line:
 ```
-_(verified, source: exploration, labels: [bug])_
+_(verified, source: exploration, labels: [bug], citation_score: 0)_
 ```
 
 Cross-cutting discoveries can also have labels — add them to the metadata line.
@@ -239,6 +291,7 @@ Cross-cutting discoveries can also have labels — add them to the metadata line
 - `source: user` — human stated it in conversation
 - `source: interaction` — emerged from collaborative work (debugging, refactoring)
 - `labels: [...]` — optional, actionable labels (see table above)
+- `citation_score: N` — nonnegative integer after optional labels; new entries use 0 and omitted values mean 0
 - `Also involves:` — `file::symbol` refs to other code locations (required if discovery touches other files)
 - `Dream report:` — optional, `_dreams/<dream-id>/` link for experiment-derived discoveries
 - `Category` (cross-cutting only): pattern, behavior, edge-case, contract, performance, intent, warning, history, convention

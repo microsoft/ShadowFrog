@@ -89,6 +89,11 @@ def coherence(repo_root):
 
 
 @pytest.fixture(scope="session")
+def citations(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog/_citations.py")
+
+
+@pytest.fixture(scope="session")
 def nap(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-nap/nap.py")
 
@@ -98,9 +103,9 @@ def nap(repo_root):
 @pytest.fixture
 def make_symlink():
     """Create a symlink, skipping only when Windows denies the privilege."""
-    def create(link, target):
+    def create(link, target, *, target_is_directory=False):
         try:
-            link.symlink_to(target)
+            link.symlink_to(target, target_is_directory=target_is_directory)
         except OSError as exc:
             if os.name == "nt" and exc.winerror == 1314:
                 pytest.skip(

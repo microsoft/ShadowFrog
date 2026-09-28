@@ -620,6 +620,15 @@ Follow the dedup and writing rules in `/shadow-frog`. Dream discoveries
 are typically `source: exploration`. Mark `verified` when confirmed by
 running code; `uncertain` if not fully testable.
 
+New discoveries start with visible `citation_score: 0`. Keep that field in
+the corresponding manifest entry as well. Existing knowledge that informed
+the task can be cited once through the core increment helper or reported to
+the coordinator for serialized updates. Do not count merely enumerated entries.
+Scores are approximate within the relevant checkout; reconciliation preserves
+the larger score when the same claim is supplied again, rather than summing
+inherited counts. Counter-only branch edits are not imported unless represented
+in a matching manifest discovery; they do not justify unsupported `op` values.
+
 #### How to Append
 
 Find the `##`/`###` heading for the symbol, then:
@@ -650,7 +659,7 @@ Example:
 ```
 - /api/upload accepts paths from request body without normalization,
   allowing `../` traversal into /etc/.
-  _(verified, source: exploration, labels: [bug, security])_
+  _(verified, source: exploration, labels: [bug, security], citation_score: 0)_
   Dream report: `_dreams/20260518-161200Z-upload-traversal/`
 ```
 
@@ -690,7 +699,7 @@ Per-file discoveries should reference the dream report:
 ```
 - Retrying with exponential backoff recovers from 99% of transient errors,
   but must exclude 4xx or it retries bad requests for 30s.
-  _(verified, source: exploration)_
+  _(verified, source: exploration, citation_score: 0)_
   Dream report: `_dreams/20250612-143012Z-retry-logic/`
 ```
 
@@ -715,6 +724,7 @@ After shadow writes, create `.shadow/_dreams/$DREAM_ID/manifest.json`:
       "status": "verified",
       "source": "exploration",
       "labels": ["bug"],
+      "citation_score": 0,
       "also_involves": ["src/parsers/utils.py::unescape"],
       "dream_report": "_dreams/<DREAM_ID>/"
     }
@@ -738,6 +748,9 @@ Manifest `op` values: only `add` is supported by the reconciler today.
 reject any discovery whose `op` is not `add`. To revise or contradict an
 existing discovery, run a meditate session against main's `.shadow/`
 instead of trying to do it from a dream branch.
+
+`citation_score` on per-file or cross-cutting manifest entries is a nonnegative
+integer, defaulting to 0. It is a reuse hint, never a verification or trust signal.
 
 **Hard gate — discoveries must be mirrored into per-file shadows.** The
 reconciler merges `manifest.json` entries into main directly (so discoveries
@@ -913,7 +926,7 @@ rich area and the second half keeps digging there instead of spreading.
 2. Each agent gets its own branch (inherently isolated)
 3. Each agent writes its own manifest in its `$DREAM_ID/` directory
 4. Do NOT write to main or shared files (`_index.md`, `state.json`)
-5. Do NOT update metadata — reconciled post-dream by orchestrator
+5. Do NOT update shared indexes or `state.json` — reconciled post-dream by orchestrator
 6. Broad mode: fetch once and use the initial snapshot. Coherent mode: after a
    parent is pushed, the orchestrator refreshes that parent's ref/commit and
    branch map before launching its children. Siblings share the refreshed
@@ -956,6 +969,11 @@ preconditions before retrying. Do not fall back to a worktree-local reconciler
 or manually imitate its branch-deletion steps.
 
 ### What the Reconciler Does
+
+Manifest destinations are preflighted before any writes, including in dry runs.
+Absolute/traversal paths and symlinks escaping `.shadow/` fail with a nonzero
+exit. Repair the indicated manifest field or filesystem alias before retrying;
+do not bypass containment checks.
 
 1. **Discovers** new branches (namespace-filtered, not in `_index.md`)
 2. **Reads/validates** manifests from remote branches

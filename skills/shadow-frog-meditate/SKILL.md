@@ -55,7 +55,7 @@ orchestrator can auto-apply resolutions. This is critical for automation —
 prose recommendations require manual interpretation.
 
 ```
-{"action": "merge", "file": "src/auth.py.md", "symbol": "authenticate_user", "keep": "- silently returns None on expired tokens...", "remove": "- returns None when token expires...", "merged": "- authenticate_user() silently returns None on expired tokens instead of raising. 3 of 7 callers don't check.\n  _(verified, source: exploration)_", "reason": "duplicate: same claim, different wording"}
+{"action": "merge", "file": "src/auth.py.md", "symbol": "authenticate_user", "keep": "- silently returns None on expired tokens...", "remove": "- returns None when token expires...", "merged": "- authenticate_user() silently returns None on expired tokens instead of raising. 3 of 7 callers don't check.\n  _(verified, source: exploration, citation_score: 0)_", "reason": "duplicate: same claim, different wording"}
 {"action": "merge", "file": "src/db.py.md", "symbol": "connect", "keep": "- connection pool exhaustion...", "remove": "- pool runs out...", "merged": "...", "reason": "near-duplicate: first extends second"}
 {"action": "conflict", "file": "src/auth.py.md", "symbol": "validate_token", "entry_a": "- raises ValueError...", "entry_b": "- returns False...", "resolution": "verified_a", "reason": "code inspection: line 42 raises ValueError"}
 {"action": "conflict", "file": "src/cache.py.md", "symbol": "invalidate", "entry_a": "...", "entry_b": "...", "resolution": "escalate", "reason": "both claims have evidence, needs user input"}
@@ -97,6 +97,7 @@ Combine into a single discovery:
 - Keep the **stronger** trust: `source: user` > `source: interaction` > `source: exploration`
 - Keep the **stronger** status: `verified` > `uncertain` > `refuted`
 - Merge `Also involves:` refs (union of both)
+- Preserve the larger `citation_score`; do not sum counts that may share history.
 - Delete the weaker entry
 
 ### Near-Duplicates → Absorb
@@ -105,6 +106,7 @@ The broader discovery absorbs the narrower one:
 - Expand the broader entry to include any extra detail from the narrower
 - Delete the narrower entry
 - Preserve the stronger trust/status between the two
+- Preserve the larger citation score for the merged knowledge.
 
 ### Conflicts → Investigate
 
@@ -279,6 +281,8 @@ malformed discovery is worse than a duplicate; it breaks the viewer
 parser and downstream agents.
 
 Meditate-specific rules:
+- Keep visible citation scores when rewording or moving the same knowledge;
+  a new behavioral claim starts at 0. Counts never override trust or correctness.
 - When merging, take the **union** of `labels: [...]` from both entries.
 - When merging, preserve every `Also involves: file::symbol` from both
   entries (union, not intersection).

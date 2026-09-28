@@ -46,6 +46,12 @@ them only while active or resumed work needs them. Hash verification detects
 unexpected changes to the pinned bundle; it is not an attestation that arbitrary
 third-party code is trustworthy.
 
+Reconciliation treats remote manifest paths as untrusted and confines discovery,
+back-pointer, archive, and metadata writes to the shadow tree. Unsafe paths and
+outward-pointing symlinks stop reconciliation before publication. This does not
+validate discovery truth, sandbox experiment code, or protect against concurrent
+local filesystem tampering.
+
 A detailed discussion of ShadowFrog, including how it was developed and tested, can be found in our [blog post](https://microsoft.github.io/debug-gym/blog/2026/06/shadow-frog/).
 
 ### Intended Uses

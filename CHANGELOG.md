@@ -7,19 +7,39 @@ shadow knowledge bases for any codebase.
 
 ---
 
-## Unreleased
+## 2026-09-28
 
 ### Added
+- **Visible knowledge citations** — `citation_score` lives alongside discovery
+  metadata in Markdown. Agents record consulted entries once per task after
+  normal file/symbol reads. A small locked increment helper preserves other
+  content; Viewer and reconciliation understand the same score field without
+  a database or additional retrieval workflow.
 - **Cross-platform Dream setup** — `dream-setup.py` replaces the Bash entry
   point with JSON output and a canonical native temporary root. Setup and
   reconciliation share namespace resolution; pinned tooling includes the new
   helpers, and cleanup receives the resolved root explicitly.
+
+### Fixed
+- **Reconciliation path containment** — validate untrusted manifest destinations
+  and filesystem aliases before writing discoveries, cross-references, or
+  archives. Unsafe paths fail explicitly, including during dry runs, rather
+  than modifying files outside the shadow tree.
 
 ### Changed
 - **More concise documentation** — consolidated README onboarding and workflow
   guidance, with advanced operations linked to the skill references. Condensed
   repeated guidance and examples in the core, Dream, Init, Meditate, Update,
   and Viewer skills while preserving data formats, policy limits, and safety gates.
+
+### Fixed
+- **Lineage error feedback** — required input/output failures now name the
+  affected path and repair action on stderr. Recoverable metadata omissions
+  and malformed rows produce visible warnings instead of silent fallbacks;
+  invalid explicit shadow paths no longer select a different shadow.
+- **Lineage HTML escaping** — render experiment names (including branch fallbacks)
+  and manifest test counts as literal text in timeline and compact tree views,
+  without changing stored metadata or empty/zero count display behavior (#37).
 
 ---
 
