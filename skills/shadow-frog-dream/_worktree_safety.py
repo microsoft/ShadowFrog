@@ -16,11 +16,10 @@ A path is considered safe to remove ONLY when ALL of these hold:
    path is STRICTLY INSIDE the resolved base — not equal to it, and not
    above it.
 6. The path matches the exact dream-worktree shape `<base>/<ns>/dream-<slug>`
-   where `<ns>` and `<slug>` are each `[A-Za-z0-9._-]+` (the same `SAFE_RE`
-   that `dream-setup.sh` already enforces on the inputs).
+   where `<ns>` and `<slug>` are each `[A-Za-z0-9._-]+`.
 
 These rules are deliberately strict: they reject anything that doesn't look
-like a dream worktree created by `dream-setup.sh`. That means we will NEVER
+like a dream worktree created by `dream-setup.py`. That means we will NEVER
 `rm -rf` a path the user happens to point us at — only paths that match the
 namespace's own creation contract.
 
@@ -38,8 +37,7 @@ import re
 import sys
 from pathlib import Path, PurePath
 
-# Same regex `dream-setup.sh` validates --slug and --namespace against.
-# Keep these in lockstep — if one widens, the other must follow.
+# Cleanup accepts the broader shape that legacy dream worktrees may have used.
 _SAFE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # Defense-in-depth: even if rule 5 (strictly under base) holds, refuse

@@ -10,6 +10,7 @@ Options:
     --verify-only        Only run post-reconciliation verification (checks
                          all dreams already in _index.md, not just unreconciled)
     --namespace NS       Override DREAM_NAMESPACE
+    --worktree-base DIR  Override the dream worktree root used for cleanup
     --cleanup-branches   Prune only unprotected reconciled branches.
                          Retains coherent lineages and their canonical
                          index ancestors, including repaired/fallback parents.
@@ -35,13 +36,16 @@ index entry after checking descendants; no branches are deleted.
 """
 
 import json
+import importlib.util
 import os
 import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
+from typing import Optional
 
 _bytecode = sys.dont_write_bytecode
 sys.dont_write_bytecode = True
@@ -370,8 +374,8 @@ def _read_indexed_dream_ids(repo_root):
     return existing
 
 
-def _read_indexed_branches(repo_root):
-    """Return (branch, dream_id, resolved parent) rows from the canonical index."""
+def _read_indexed_branches(repo_root, dream_ns=None):
+    """Return canonical (branch, dream_id, parent) rows, optionally namespace-filtered."""
     index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
     rows = []
     if not os.path.isfile(index_path):
@@ -384,7 +388,9 @@ def _read_indexed_branches(repo_root):
                 if len(parts) >= 6 and parts[1]:
                     dream_id = parts[1]
                     branch = parts[5]
-                    if branch:
+                    if branch and (
+                        dream_ns is None or branch.startswith(f"dream/{dream_ns}/")
+                    ):
                         parent = parts[6] if len(parts) >= 7 else ''
                         rows.append((branch, dream_id, parent))
     return rows
@@ -1525,7 +1531,8 @@ class CoherentLineageError(RuntimeError):
     """Cleanup cannot safely determine which baseline refs must be retained."""
 
 
-def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
+def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False,
+                     worktree_root=None):
     """Delete reconciled dream branches (local and remote).
 
     Only deletes a branch if:
@@ -1535,11 +1542,21 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
     - The dream_id appears in _index.md
     - No un-reconciled branches list this branch as parent
     - The branch is not part of a coherent lineage retained for task baselines
+    - Local and remote-tracking tips are covered by the indexed tip_commit
+    - Its registered worktree can be removed without forcing away changes
 
     Returns (deleted, kept) counts.
     """
     index_path = os.path.join(repo_root, '.shadow', '_dreams', '_index.md')
     indexed_ids = _read_indexed_dream_ids(repo_root) if os.path.isfile(index_path) else set()
+    indexed_tips = {}
+    if os.path.isfile(index_path):
+        with open(index_path, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith('|'):
+                    parts = [p.strip() for p in line.split('|')]
+                    if len(parts) >= 8:
+                        indexed_tips.setdefault((parts[5], parts[1]), set()).add(parts[7])
 
     # Check if SHADOWFROG_KEEP_BRANCHES is set
     if os.environ.get('SHADOWFROG_KEEP_BRANCHES', '').strip() in ('1', 'true', 'yes'):
@@ -1615,8 +1632,13 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
 
     deleted = 0
     kept = 0
+    namespace_prefix = f"dream/{dream_ns}/"
 
     for branch, dream_id, manifest in manifests:
+        if not branch.startswith(namespace_prefix):
+            print(f"  ⚠️  KEEPING {branch} — outside namespace {dream_ns}")
+            kept += 1
+            continue
         dream_dir = os.path.join(repo_root, '.shadow', '_dreams', dream_id)
 
         if branch in retained:
@@ -1673,10 +1695,53 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
             kept += 1
             continue
 
+        # Published artifacts cover the indexed tip, not later branch commits.
+        tips = indexed_tips.get((branch, dream_id), set())
+        archived_tip = next(iter(tips)) if len(tips) == 1 else ''
+        if not re.fullmatch(r'[0-9a-fA-F]{7,40}', archived_tip):
+            print(
+                f"  KEEPING {branch} - missing, invalid, or ambiguous indexed tip_commit; "
+                "verify the archive and repair its index entry before retrying cleanup."
+            )
+            kept += 1
+            continue
+        refs = subprocess.run(
+            ['git', 'for-each-ref', '--format=%(refname) %(objectname)',
+             f'refs/heads/{branch}', f'refs/remotes/origin/{branch}'],
+            capture_output=True, text=True, cwd=repo_root, encoding="utf-8",
+        )
+        branch_tips = dict(line.split(' ', 1) for line in refs.stdout.splitlines())
+        if refs.returncode != 0 or not branch_tips or any(
+            subprocess.run(
+                ['git', 'merge-base', '--is-ancestor', tip, archived_tip],
+                capture_output=True, text=True, cwd=repo_root, encoding="utf-8",
+            ).returncode != 0
+            for tip in branch_tips.values()
+        ):
+            print(
+                f"  KEEPING {branch} - cannot confirm its tips are covered by indexed "
+                f"tip_commit {archived_tip}; preserve follow-up work and commit/push "
+                "the updated reconciliation before retrying cleanup."
+            )
+            kept += 1
+            continue
+
         # All checks passed — delete
         if dry_run:
             print(f"  Would delete: {branch}")
             deleted += 1
+            continue
+
+        # Remove the registered worktree before deleting its branch. Git
+        # refuses to delete a branch that remains checked out in a worktree.
+        if not _gc_worktree_after_merge(
+            repo_root, dream_ns, dream_id, branch, worktree_root,
+        ):
+            print(
+                f"  KEEPING {branch} - worktree cleanup was unsafe or failed; "
+                "preserve its changes or repair its metadata before retrying cleanup."
+            )
+            kept += 1
             continue
 
         # Delete remote first (network op that can fail)
@@ -1691,35 +1756,30 @@ def cleanup_branches(repo_root, manifests, dream_ns, dry_run=False):
             if 'remote ref does not exist' not in result.stderr:
                 print(f"  ⚠️  Failed to delete remote {branch}: {result.stderr.strip()}")
 
-        # Delete local
-        result = subprocess.run(
-            ['git', 'branch', '-D', branch],
-            capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
-        )
-        if result.returncode == 0:
-            print(f"  🗑  Deleted local: {branch}")
+        # Experiments reconciled on another clone may have no local branch.
+        if f'refs/heads/{branch}' in branch_tips:
+            result = subprocess.run(
+                ['git', 'branch', '-D', branch],
+                capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
+            )
+            if result.returncode == 0:
+                print(f"  🗑  Deleted local: {branch}")
+            else:
+                print(f"  ⚠️  Failed to delete local {branch}: {result.stderr.strip()}")
+                kept += 1
+                continue
         # Also delete the remote-tracking ref
         subprocess.run(
             ['git', 'branch', '-dr', f'origin/{branch}'],
             capture_output=True, text=True, cwd=repo_root, encoding="utf-8"
         )
 
-        # Best-effort worktree GC — the directory at
-        # `${DREAM_WORKTREE_BASE:-/tmp/shadowfrog-dreams}/<ns>/dream-<slug>`
-        # is now orphaned (its branch is gone). Removing it here closes the
-        # leak documented in bug-worktree-leak.md.
-        #
-        # `branch` is the branch we just deleted; passing it lets the GC
-        # refuse to remove a path that another dream (sharing the same
-        # slug) has reclaimed for its own live worktree.
-        _gc_worktree_after_merge(repo_root, dream_ns, dream_id, branch)
-
         deleted += 1
 
     return deleted, kept
 
 
-# Compiled here so the error message is consistent with `dream-setup.sh`.
+# Compiled here so the error message is consistent with `dream-setup.py`.
 # DREAM_ID format: YYYYMMDD-HHMMSSZ-<slug>. The leading timestamp is
 # fixed-width (8 digits + '-' + 6 digits + 'Z' + '-' = 17 chars), but we
 # anchor on the regex to be robust against drift.
@@ -1738,12 +1798,19 @@ def _slug_from_dream_id(dream_id):
     return m.group(2) if m else None
 
 
-def _registered_worktree_branch(repo_root, candidate_path):
-    """Return the branch name (without `refs/heads/` prefix) that git has
-    registered at `candidate_path`, or `None` if no worktree is registered
-    at that path (or git can't tell). Detached-HEAD worktrees return `None`.
+@dataclass(frozen=True)
+class WorktreeRegistration:
+    """The registration state for one candidate worktree path."""
 
-    Parses `git worktree list --porcelain` output:
+    state: str
+    branch: Optional[str] = None
+
+
+def _registered_worktree_branch(repo_root, candidate_path):
+    """Return a registration result for `candidate_path`.
+
+    Parses NUL-delimited `git worktree list --porcelain -z` output
+    (shown as lines here):
         worktree /abs/path
         HEAD <sha>
         branch refs/heads/<name>
@@ -1752,70 +1819,96 @@ def _registered_worktree_branch(repo_root, candidate_path):
         HEAD <sha>
         detached
 
-    Paths are compared after `realpath` so macOS `/tmp` ↔ `/private/tmp` and
-    other symlinked-base setups don't break the match.
+    Paths are compared after normalized realpath resolution so macOS
+    `/tmp` ↔ `/private/tmp` and Windows case-only differences do not break
+    the match. Detached and indeterminate results are intentionally distinct
+    from an unregistered path so deletion can fail closed.
     """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     try:
+        sys.path.insert(0, script_dir)
+        try:
+            from _worktree_paths import canonical_worktree_path
+        finally:
+            if sys.path and sys.path[0] == script_dir:
+                sys.path.pop(0)
         result = subprocess.run(
-            ['git', 'worktree', 'list', '--porcelain'],
-            capture_output=True, text=True, cwd=repo_root, timeout=10,
-            encoding="utf-8",
+            ['git', 'worktree', 'list', '--porcelain', '-z'],
+            capture_output=True, cwd=repo_root, timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+        # Text mode would rewrite carriage returns inside otherwise valid paths.
+        output = result.stdout.decode("utf-8")
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return WorktreeRegistration("indeterminate")
     if result.returncode != 0:
-        return None
+        return WorktreeRegistration("indeterminate")
 
     try:
-        target = os.path.realpath(candidate_path)
+        target = canonical_worktree_path(candidate_path)
     except (OSError, ValueError):
-        return None
+        return WorktreeRegistration("indeterminate")
 
     def _matches(p):
         try:
-            return os.path.realpath(p) == target
+            return canonical_worktree_path(p) == target
         except (OSError, ValueError):
             return False
 
     cur_path = None
     cur_branch = None
-    for line in result.stdout.splitlines():
+    for line in output.split('\0'):
         if line.startswith('worktree '):
             # Flush previous entry if it matched.
             if cur_path is not None and _matches(cur_path):
-                return cur_branch
+                return WorktreeRegistration(
+                    "attached" if cur_branch else "detached", cur_branch
+                )
             cur_path = line[len('worktree '):]
             cur_branch = None
         elif line.startswith('branch '):
             ref = line[len('branch '):]
             cur_branch = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else ref
     if cur_path is not None and _matches(cur_path):
-        return cur_branch
-    return None
+        return WorktreeRegistration(
+            "attached" if cur_branch else "detached", cur_branch
+        )
+    return WorktreeRegistration("unregistered")
 
 
-def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None):
-    """Remove the dream worktree directory after its branch has been
-    deleted. Safety-gated by `_worktree_safety.safe_worktree_path` — will
+def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None,
+                             worktree_root=None):
+    """Remove the dream worktree before deleting its archived branch.
+    Safety-gated by `_worktree_safety.safe_worktree_path` — will
     NEVER `rm -rf` a path outside `$DREAM_WORKTREE_BASE/<ns>/dream-<slug>`.
 
     Cross-deletion guard: worktree paths are keyed on slug only (see
-    `dream-setup.sh`: `WORKTREE_DIR=<base>/<ns>/dream-<slug>`), but
+    `dream-setup.py`: `WORKTREE_DIR=<base>/<ns>/dream-<slug>`), but
     `dream_id` includes a timestamp. So two dreams that re-use the same
     slug at different times share a worktree path. If the path we're
     about to GC is currently registered to a DIFFERENT branch — i.e. a
     later dream has reclaimed it — we must NOT touch it. Pass
     `deleted_branch` to enable this check.
 
-    All failures are swallowed: the branch delete already succeeded, so a
-    leaked worktree (the pre-fix steady state) is strictly less bad than
-    an aborted cleanup_branches() loop.
+    Return False on uncertain ownership or removal failure, so the caller
+    retains the branch. Unrelated worktrees and unsafe GC paths are skipped.
+    Registered worktrees are never force-removed or deleted by the fallback.
     """
     try:
         slug = _slug_from_dream_id(dream_id)
         if not slug:
-            return  # Can't derive worktree path — bail silently.
-        base = os.environ.get('DREAM_WORKTREE_BASE', '/tmp/shadowfrog-dreams')
+            return True  # No matching worktree path to remove.
+        paths_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "_worktree_paths.py"
+        )
+        paths_spec = importlib.util.spec_from_file_location(
+            "_worktree_paths", paths_path
+        )
+        if paths_spec is None or paths_spec.loader is None:
+            raise ImportError(f"cannot load worktree path helper: {paths_path}")
+        paths_module = importlib.util.module_from_spec(paths_spec)
+        paths_spec.loader.exec_module(paths_module)
+        resolve_worktree_root = paths_module.resolve_worktree_root
+        base = resolve_worktree_root(worktree_root)
         candidate = os.path.join(base, dream_ns, f'dream-{slug}')
 
         # Import lazily so this module remains importable for tests that
@@ -1832,32 +1925,44 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
             resolved = safe_worktree_path(candidate, base)
         except UnsafePath as exc:
             print(f"  ⚠️  Skipping worktree GC for {dream_id}: {exc}")
-            return
+            return True
 
         # Cross-deletion guard: refuse to touch a path another dream owns.
-        # Only consult git when we know which branch we expected (i.e.,
-        # `deleted_branch` was passed by `cleanup_branches`). Callers that
-        # pre-date this guard (tests, future ad-hoc invocations) default to
-        # the original behavior — still gated by the safety check above.
+        registered = _registered_worktree_branch(repo_root, str(resolved))
+        if registered.state == "indeterminate":
+            print(f"  Skipping worktree GC for {dream_id}: indeterminate ownership")
+            return False
         if deleted_branch:
-            registered = _registered_worktree_branch(repo_root, str(resolved))
-            if registered is not None and registered != deleted_branch:
+            if registered.state == "attached" and registered.branch == deleted_branch:
+                pass
+            elif registered.state == "unregistered":
+                pass
+            else:
+                if registered.state == "attached":
+                    detail = f"now belongs to {registered.branch}"
+                else:
+                    detail = f"has {registered.state} ownership"
                 print(
                     f"  ↳ Skipping worktree GC for {dream_id}: "
-                    f"path {resolved} now belongs to {registered}"
+                    f"path {resolved} {detail}"
                 )
-                return
+                return True
 
         # Polite path first: let git update its own bookkeeping.
         worktree_removed = False
         result = subprocess.run(
-            ['git', 'worktree', 'remove', str(resolved), '--force'],
+            ['git', 'worktree', 'remove', str(resolved)],
             capture_output=True, text=True, cwd=repo_root,
             encoding="utf-8",
         )
         if result.returncode == 0:
             worktree_removed = True
             print(f"  🗑  Removed worktree: {resolved}")
+        elif registered.state != "unregistered":
+            print(
+                f"  Skipping worktree GC for {dream_id}: {result.stderr.strip()}"
+            )
+            return False
         # Fallback: directory may still be on disk (git failed, dead
         # gitdir pointer, etc.). The safety gate already proved the path
         # is `<base>/<ns>/dream-<slug>` so the rm is bounded.
@@ -1868,15 +1973,17 @@ def _gc_worktree_after_merge(repo_root, dream_ns, dream_id, deleted_branch=None)
             except OSError as exc:
                 # Worst case: leak the directory but don't break cleanup.
                 print(f"  ⚠️  Worktree rm failed for {resolved}: {exc}")
-                return
+                return False
         # Clean up git's stale-worktree bookkeeping.
         subprocess.run(
             ['git', 'worktree', 'prune'],
             capture_output=True, text=True, cwd=repo_root,
             encoding="utf-8",
         )
-    except Exception as exc:  # noqa: BLE001 — GC must never crash cleanup.
+        return True
+    except (ImportError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"  ⚠️  Worktree GC raised for {dream_id}: {exc}")
+        return False
 
 
 # --- Main orchestration ---
@@ -1891,6 +1998,7 @@ def main():
     verify_only = False
     cleanup = False
     namespace_override = None
+    worktree_base_override = None
 
     args = sys.argv[1:]
     i = 0
@@ -1910,6 +2018,12 @@ def main():
                 print("ERROR: --namespace requires a value", file=sys.stderr)
                 sys.exit(1)
             namespace_override = args[i]
+        elif args[i] == '--worktree-base':
+            i += 1
+            if i >= len(args):
+                print("ERROR: --worktree-base requires a value", file=sys.stderr)
+                sys.exit(1)
+            worktree_base_override = args[i]
         elif not args[i].startswith('-'):
             repo_root = args[i]
         else:
@@ -1930,25 +2044,22 @@ def main():
 
     _validate_reconciliation_paths(repo_root, [])
 
-    # Resolve namespace
-    dream_ns = namespace_override or os.environ.get('DREAM_NAMESPACE', '')
-    if not dream_ns:
-        task_info = os.path.join(repo_root, 'TASK_INFO.json')
-        if os.path.isfile(task_info):
-            try:
-                dream_ns = json.load(open(task_info, encoding="utf-8")).get('dream_namespace', '')
-            except (json.JSONDecodeError, OSError):
-                pass
-    if not dream_ns:
-        env_file = os.path.join(repo_root, '.env')
-        if os.path.isfile(env_file):
-            with open(env_file, encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith('DREAM_NAMESPACE='):
-                        dream_ns = line.split('=', 1)[1].strip()
-                        break
-    if not dream_ns:
-        dream_ns = os.path.basename(repo_root)
+    # Resolve namespace using the same precedence and parsing as setup.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        sys.path.insert(0, script_dir)
+        try:
+            from _dream_namespace import (
+                NamespaceConfigurationError,
+                resolve_dream_namespace,
+            )
+        finally:
+            if sys.path and sys.path[0] == script_dir:
+                sys.path.pop(0)
+        dream_ns = resolve_dream_namespace(repo_root, namespace_override)
+    except (ImportError, NamespaceConfigurationError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"=== Dream Reconciliation ===")
     print(f"Repo: {repo_root}")
@@ -2000,7 +2111,7 @@ def main():
         # the branches already in the index. This is the canonical post-push
         # flow: reconcile → push → re-run with --cleanup-branches.
         if cleanup:
-            indexed = _read_indexed_branches(repo_root)
+            indexed = _read_indexed_branches(repo_root, dream_ns)
             if not indexed:
                 print("  Nothing in _index.md to clean up either.")
                 sys.exit(0)
@@ -2022,7 +2133,8 @@ def main():
             print()
             print("Step 9: Cleaning up reconciled branches...")
             deleted, kept = cleanup_branches(
-                repo_root, cleanup_manifests, dream_ns, dry_run=dry_run
+                repo_root, cleanup_manifests, dream_ns, dry_run=dry_run,
+                worktree_root=worktree_base_override,
             )
             print(f"  Deleted: {deleted}, Kept: {kept}")
         sys.exit(0)
@@ -2106,7 +2218,8 @@ def main():
             print("  ⚠️  Run this AFTER 'git push' succeeds on main.")
             print("  Checking artifacts on main...")
         deleted, kept = cleanup_branches(
-            repo_root, manifests, dream_ns, dry_run=dry_run
+            repo_root, manifests, dream_ns, dry_run=dry_run,
+            worktree_root=worktree_base_override,
         )
         print(f"  Deleted: {deleted}, Kept: {kept}")
 

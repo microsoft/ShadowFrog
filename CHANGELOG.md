@@ -15,8 +15,18 @@ shadow knowledge bases for any codebase.
   normal file/symbol reads. A small locked increment helper preserves other
   content; Viewer and reconciliation understand the same score field without
   a database or additional retrieval workflow.
+- **Cross-platform Dream setup** — `dream-setup.py` replaces the Bash entry
+  point with JSON output and a canonical native temporary root. Setup and
+  reconciliation share namespace resolution; pinned tooling includes the new
+  helpers, and cleanup receives the resolved root explicitly.
 
 ### Fixed
+- **Dream setup and cleanup safeguards** — preserve repository-path whitespace
+  and retain unarchived branch commits or dirty registered worktrees during
+  reconciliation cleanup.
+- **Dream lifecycle compatibility** — preserve Python 3.9 execution and
+  worktree identity for unusual paths, correctly report remote-only branch
+  cleanup, and reject newline-terminated slugs and namespaces.
 - **Reconciliation path containment** — validate untrusted manifest destinations
   and filesystem aliases before writing discoveries, cross-references, or
   archives. Unsafe paths fail explicitly, including during dry runs, rather
