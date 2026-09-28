@@ -7,7 +7,7 @@ shadow knowledge bases for any codebase.
 
 ---
 
-## Unreleased
+## 2026-09-28
 
 ### Added
 - **Visible knowledge citations** — `citation_score` lives alongside discovery
