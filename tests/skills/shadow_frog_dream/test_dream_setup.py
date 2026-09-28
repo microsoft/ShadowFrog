@@ -6,8 +6,8 @@ and the throttled best-effort auto-GC.
 
 Cross-platform: invokes the Python entry point directly (no bash). The two
 auto-GC tests that assert an orphan is actually *swept* still need the bash
-`dream-gc.sh`, so they are skipped on Windows until `dream-gc.py` exists;
-every other test runs on all OSes.
+`dream-gc.sh`, so they are skipped on Windows until `dream-gc.py` exists.
+POSIX filename regressions also skip Windows; other tests run on all OSes.
 """
 import json
 import importlib.util
@@ -227,10 +227,37 @@ class TestDreamSetupHappyPath:
         data = json.loads(result.stdout)
         assert data["base_commit"] == main_head
 
-    def test_uses_system_temp_root_without_override(self, tmp_path):
+    @pytest.mark.skipif(os.name == "nt", reason="requires POSIX path characters")
+    @pytest.mark.parametrize("suffix", [" ", "\t", "\n"])
+    @pytest.mark.parametrize("explicit_root", [False, True])
+    def test_preserves_repository_path_whitespace(self, tmp_path, suffix, explicit_root):
+        repo = tmp_path / f"source repo{suffix}"
+        repo.mkdir()
+        _make_git_repo(repo)
+        args = ["--slug", "path-whitespace", "--namespace", "test"]
+        if explicit_root:
+            args += ["--repo-root", str(repo)]
+
+        result = run_dream_setup(
+            args, cwd=repo,
+            env_extra={
+                "DREAM_GC_AUTO": "0",
+                "DREAM_WORKTREE_BASE": str(tmp_path / "worktrees"),
+            },
+        )
+
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert Path(data["repo_root"]) == repo.resolve()
+        assert Path(data["worktree_dir"]).is_dir()
+
+    def test_uses_system_temp_root_without_override(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"
         repo.mkdir()
         _make_git_repo(repo)
+        inherited_temp = tmp_path / "inherited-temp"
+        inherited_temp.mkdir()
+        monkeypatch.setenv("TMPDIR", str(inherited_temp))
         system_temp = tmp_path / "system-temp"
         system_temp.mkdir()
 
@@ -239,6 +266,7 @@ class TestDreamSetupHappyPath:
             cwd=repo,
             env_extra={
                 "DREAM_GC_AUTO": "0",
+                "TMPDIR": str(system_temp),
                 "TEMP": str(system_temp),
                 "TMP": str(system_temp),
             },
@@ -250,6 +278,7 @@ class TestDreamSetupHappyPath:
         assert Path(data["worktree_root"]) == expected_root
         assert Path(data["worktree_base"]) == expected_root / repo.name
         assert Path(data["worktree_dir"]) == expected_root / repo.name / "dream-t02-default-root"
+        assert not (inherited_temp / "shadowfrog-dreams").exists()
 
     def test_relative_worktree_root_is_emitted_as_absolute(self, tmp_path):
         repo = tmp_path / "repo"
@@ -299,7 +328,7 @@ class TestDreamSetupHappyPath:
             "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
             "|----------|----------|---------|-------|--------|--------|------------|\n"
             f"| {context['dream_id']} | test | useful | Test | "
-            f"{context['branch_name']} | main | deadbeef |\n",
+            f"{context['branch_name']} | main | {context['base_commit']} |\n",
             encoding="utf-8",
         )
         env = _base_env(repo)

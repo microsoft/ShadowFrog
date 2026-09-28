@@ -860,6 +860,7 @@ def test_cleanup_branches_proceeds_when_shadow_committed_and_pushed(
     dream_id = "20260420-150500Z-clean"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
 
     # Mirror artifacts + index onto main, then commit and push.
     _seed_dream_artifacts(tmp_git_repo, dream_id)
@@ -868,7 +869,7 @@ def test_cleanup_branches_proceeds_when_shadow_committed_and_pushed(
         "# Dream Experiment Archive\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -2240,6 +2241,7 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
     dream_id = "20260420-050000Z-realdel"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
 
     # All safety conditions satisfied:
     # 1. HEAD == origin/main → ancestor check OK.
@@ -2251,7 +2253,7 @@ def test_cleanup_branches_actually_deletes_when_all_checks_pass(
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
 
     # Commit + push the reconciliation so .shadow/ is clean and HEAD is on
@@ -2288,13 +2290,14 @@ def test_cleanup_branches_keeps_branch_when_local_delete_fails(
     dream_id = "20260420-050050Z-local-failure"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -2730,13 +2733,14 @@ def test_cleanup_branches_keep_branches_env_falsy_does_not_block(
     dream_id = "20260420-050500Z-zero"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     monkeypatch.setenv("SHADOWFROG_KEEP_BRANCHES", "0")
     # Commit + push so .shadow/ is clean (dirty-tree guard would otherwise fire).
@@ -3236,6 +3240,8 @@ def test_cli_cleanup_branches_never_deletes_other_namespace(tmp_git_repo):
     outside_branch = make_dream_branch(
         tmp_git_repo, env, "outside", outside_id, _default_manifest(outside_id)
     )
+    inside_tip = _git("rev-parse", inside_branch, cwd=tmp_git_repo, env=env).stdout.strip()
+    outside_tip = _git("rev-parse", outside_branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, inside_id)
     _seed_dream_artifacts(tmp_git_repo, outside_id)
     _write_index(
@@ -3243,8 +3249,8 @@ def test_cli_cleanup_branches_never_deletes_other_namespace(tmp_git_repo):
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {inside_id} | test | useful | Inside | {inside_branch} | main | deadbeef |\n"
-        f"| {outside_id} | test | useful | Outside | {outside_branch} | main | deadbeef |\n",
+        f"| {inside_id} | test | useful | Inside | {inside_branch} | main | {inside_tip} |\n"
+        f"| {outside_id} | test | useful | Outside | {outside_branch} | main | {outside_tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -3563,13 +3569,14 @@ def test_cleanup_branches_also_removes_worktree(
     dream_id = "20260420-070000Z-gctest"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -3598,6 +3605,75 @@ def test_cleanup_branches_also_removes_worktree(
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("change", [
+    "unpushed", "diverged", "pushed", "tracked-edit", "untracked-file",
+    "unknown-tip", "unresolvable-tip",
+])
+def test_cleanup_branches_preserves_unarchived_work(
+    dream_reconcile, tmp_git_repo, tmp_path, capsys, change,
+):
+    env = _seed_repo(tmp_git_repo)
+    _add_bare_remote(tmp_git_repo, env)
+    dream_id = "20260928-100000Z-preserve"
+    manifest = _default_manifest(dream_id)
+    branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id, manifest)
+    published_tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
+    indexed_tip = published_tip
+    if change == "unknown-tip":
+        indexed_tip = "unknown"
+    elif change == "unresolvable-tip":
+        indexed_tip = "0" * 40
+    _seed_dream_artifacts(tmp_git_repo, dream_id)
+    _write_index(
+        tmp_git_repo,
+        "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
+        "|----------|----------|---------|-------|--------|--------|------------|\n"
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {indexed_tip} |\n",
+    )
+    _git("add", "-A", cwd=tmp_git_repo, env=env)
+    _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
+    _git("push", "-q", "origin", "main", cwd=tmp_git_repo, env=env)
+
+    if change == "diverged":
+        _git("update-ref", f"refs/heads/{branch}", f"{published_tip}^", published_tip,
+             cwd=tmp_git_repo, env=env)
+    base = tmp_path / "worktrees"
+    worktree = base / "proj" / "dream-preserve"
+    worktree.parent.mkdir(parents=True)
+    _git("worktree", "add", "-q", str(worktree), branch, cwd=tmp_git_repo, env=env)
+    marker = worktree / ("new.txt" if change == "untracked-file" else "README.md")
+    if change in {"unpushed", "diverged", "pushed", "tracked-edit", "untracked-file"}:
+        marker.write_text("Keep this work.\n", encoding="utf-8")
+    if change in {"unpushed", "diverged", "pushed"}:
+        _git("add", "-A", cwd=worktree, env=env)
+        _git("commit", "-q", "-m", "follow-up work", cwd=worktree, env=env)
+        assert not _git("status", "--porcelain", cwd=worktree, env=env).stdout
+        if change == "pushed":
+            _git("push", "-q", "origin", branch, cwd=worktree, env=env)
+    contents = marker.read_text(encoding="utf-8")
+    local_tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
+    remote_before = _git("ls-remote", "--heads", "origin", branch,
+                         cwd=tmp_git_repo, env=env).stdout
+
+    assert dream_reconcile.cleanup_branches(
+        str(tmp_git_repo), [(branch, dream_id, manifest)], "proj",
+        worktree_root=str(base),
+    ) == (0, 1)
+
+    assert marker.read_text(encoding="utf-8") == contents
+    assert _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip() == local_tip
+    assert _git("ls-remote", "--heads", "origin", branch,
+                cwd=tmp_git_repo, env=env).stdout == remote_before
+    assert f"refs/heads/{branch}" in _git(
+        "for-each-ref", "--format=%(refname)", "--contains", local_tip,
+        cwd=tmp_git_repo, env=env,
+    ).stdout
+    output = capsys.readouterr().out
+    assert "KEEPING" in output
+    assert "retry" in output
+
+
+@pytest.mark.slow
 def test_cleanup_branches_worktree_gc_falls_back_on_dead_gitdir(
     dream_reconcile, tmp_git_repo, tmp_path, monkeypatch
 ):
@@ -3609,13 +3685,14 @@ def test_cleanup_branches_worktree_gc_falls_back_on_dead_gitdir(
     dream_id = "20260420-080000Z-dead"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -3656,13 +3733,14 @@ def test_cleanup_branches_worktree_gc_refuses_unsafe_base(
     dream_id = "20260420-090000Z-unsafe"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -3711,13 +3789,14 @@ def test_cleanup_branches_worktree_gc_skips_unparseable_dream_id(
     dream_id = "not-a-real-dream-id"
     branch = make_dream_branch(tmp_git_repo, env, "proj", dream_id,
                                _default_manifest(dream_id))
+    tip = _git("rev-parse", branch, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_id} | bug hunting | useful | T | {branch} | main | abc1234 |\n",
+        f"| {dream_id} | bug hunting | useful | T | {branch} | main | {tip} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile", cwd=tmp_git_repo, env=env)
@@ -3906,13 +3985,14 @@ def test_cleanup_branches_does_not_clobber_concurrent_slug_collision(
                                  _default_manifest(dream_a_id))
     branch_b = make_dream_branch(tmp_git_repo, env, "proj", dream_b_id,
                                  _default_manifest(dream_b_id))
+    tip_a = _git("rev-parse", branch_a, cwd=tmp_git_repo, env=env).stdout.strip()
     _seed_dream_artifacts(tmp_git_repo, dream_a_id)
     _write_index(
         tmp_git_repo,
         "# Dream Experiments\n\n"
         "| dream_id | category | verdict | title | branch | parent | tip_commit |\n"
         "|----------|----------|---------|-------|--------|--------|------------|\n"
-        f"| {dream_a_id} | bug hunting | useful | A | {branch_a} | main | abc1234 |\n",
+        f"| {dream_a_id} | bug hunting | useful | A | {branch_a} | main | {tip_a} |\n",
     )
     _git("add", "-A", cwd=tmp_git_repo, env=env)
     _git("commit", "-q", "-m", "reconcile A", cwd=tmp_git_repo, env=env)

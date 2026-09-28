@@ -77,7 +77,7 @@ def _resolve_repo_root(path):
     if r.returncode != 0:
         _err("ERROR: Not in a git repository")
         sys.exit(1)
-    return os.path.abspath(r.stdout.strip())
+    return os.path.abspath(r.stdout.removesuffix("\n"))
 
 
 def _import_safety():

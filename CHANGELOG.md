@@ -21,6 +21,9 @@ shadow knowledge bases for any codebase.
   helpers, and cleanup receives the resolved root explicitly.
 
 ### Fixed
+- **Dream setup and cleanup safeguards** — preserve repository-path whitespace
+  and retain unarchived branch commits or dirty registered worktrees during
+  reconciliation cleanup.
 - **Reconciliation path containment** — validate untrusted manifest destinations
   and filesystem aliases before writing discoveries, cross-references, or
   archives. Unsafe paths fail explicitly, including during dry runs, rather

@@ -1019,6 +1019,11 @@ artifacts, remote state, descendants, and coherent retention. A broad run can
 reconcile pending coherent branches from an earlier session; the current run's
 mode is never permission to delete those branches.
 
+Cleanup also retains branches whose local or remote-tracking tips are not covered
+by the indexed `tip_commit`, and never force-removes a registered worktree.
+Preserve follow-up work and commit/push its updated reconciliation before retrying;
+repair missing or invalid tips only after verifying the archived experiment.
+
 Never use an inline deletion loop or manually duplicate these checks. A retained
 branch is not failed cleanup: coherent branches and their canonical index
 ancestors remain available until explicit curation. `SHADOWFROG_KEEP_BRANCHES`
