@@ -11,5 +11,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      # CodeQL stages share versioned configuration and must move together.
+      codeql:
+        patterns:
+          - "github/codeql-action/*"
     cooldown:
       default-days: 7
