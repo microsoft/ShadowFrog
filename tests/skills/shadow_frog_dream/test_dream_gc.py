@@ -284,7 +284,7 @@ def test_nested_scan_failure_does_not_hide_siblings(
     safe = orphan("safe")
     original = os.scandir
     def scan(path):
-        if Path(path) == denied.parent:
+        if not isinstance(path, int) and Path(path) == denied.parent:
             raise PermissionError("scan denied")
         return original(path)
     monkeypatch.setattr(dream_gc.os, "scandir", scan)
