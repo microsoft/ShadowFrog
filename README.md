@@ -83,6 +83,60 @@ This creates symbol-organized templates in `.shadow/`. Choose how to store it:
 If you chose committed storage, commit and push `.shadow/` after initialization.
 For installed paths and optional components, see [Installation options](#installation-options).
 
+### Optional Astred symbol extraction
+
+Regex remains the default; baseline installation still needs only Git and
+Python. Opt into **Astred for Python declarations** when you have access to
+its internal Azure Artifacts feed. Other languages explicitly retain their
+existing regex extractors. Astred runs as a separate CLI process; ShadowFrog
+does not vendor its repository, binaries, or Python bindings.
+
+Install the .NET SDK/runtime required by your selected Astred release and the
+[Azure Artifacts Credential Provider](https://github.com/microsoft/artifacts-credprovider).
+Use your organization's approved developer sign-in and **feed-reader** access.
+GitHub organization membership and `GITHUB_TOKEN` do not grant feed access.
+Example PowerShell setup, outside the target repository:
+
+```powershell
+$AstredVersion = '<approved exact published package version>'
+$AstredDir = Join-Path $env:LOCALAPPDATA "ShadowFrog\astred\$AstredVersion"
+dotnet tool install Astred.Tools --version $AstredVersion --tool-path $AstredDir --interactive --add-source https://pkgs.dev.azure.com/FoSSE/_packaging/FoSSE/nuget/v3/index.json
+$env:SHADOWFROG_ASTRED_COMMAND = Join-Path $AstredDir 'astred.exe'
+
+# New shadow only:
+python .github\skills\shadow-frog-init\shadow-init.py --symbol-backend astred
+# Existing shadow: read-only preview, NOT --reset:
+python .github\skills\shadow-frog-init\shadow-init.py --preview-migration --symbol-backend astred
+```
+
+Choose and pin an approved published package version; do not install an
+unqualified latest release. The adapter was exercised with Astred 2.14.30
+(a local `2.14.30-preview.0` source build), using `treeerr -- bljson` and
+exporting `bljson` 2.14.0;
+availability of that exact package in the private feed is not asserted.
+Linux/macOS can configure their installed executable with the same environment
+variable or `--astred-command`. Configure it in every process that performs
+updates; machine paths and credentials never go into `.shadow` state.
+
+Init and update share a versioned, cached JSON inventory. Existing knowledge
+is never automatically migrated: review scope-name changes, preserve discoveries
+and unresolved historical sections, and update references before adopting new
+backend metadata. See the [backend and migration reference](skills/shadow-frog-init/SKILL.md#optional-astred-backend).
+Missing tools, reported AST errors, and export failures stop extraction rather
+than silently changing the backend. Astred uses Tree-sitter recovery, not a
+Python compiler: recovered constructs without error nodes can still be exported.
+
+Ordinary tests use synthetic exports and need no ADO credentials. A trusted
+integration job may install its pinned tool and set
+`SHADOWFROG_ASTRED_TEST_COMMAND` before running
+`python -m pytest tests/skills/shadow_frog_init/test_astred.py`.
+For GitHub Actions, use [Entra workload identity federation](https://learn.microsoft.com/en-us/azure/devops/artifacts/quickstarts/github-actions?view=azure-devops)
+with the application identity explicitly added to ADO and granted feed-read
+permission. Restrict federation to trusted repository/branch/environment
+execution; do not expose package credentials or internal artifacts to
+untrusted pull-request jobs. No credentials or organization-specific CI
+identity are installed by ShadowFrog.
+
 ---
 
 ## Everyday Workflow
