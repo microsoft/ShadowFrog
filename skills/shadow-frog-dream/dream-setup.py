@@ -142,34 +142,26 @@ def _parse_args(argv):
 def _maybe_auto_gc(repo_root, worktree_base, worktree_root=None):
     """Periodic, throttled, best-effort orphan sweep. NEVER breaks setup.
 
-    Prefers a `dream-gc.py` sibling if present, else falls back to the bash
-    `dream-gc.sh`. Runs wherever a usable interpreter/shell exists, else a clean
-    no-op. All GC output is routed to stderr so stdout stays pure JSON.
+    Runs the adjacent Python sweeper with the current interpreter.
+    All GC output is routed to stderr so stdout stays pure JSON.
     """
     if os.environ.get("DREAM_GC_AUTO", "1") == "0":
         return
 
     interval_raw = os.environ.get("DREAM_GC_INTERVAL_MIN", "60")
     age_raw = os.environ.get("DREAM_GC_AGE_MIN", "60")
-    if not SAFE_INT_RE.match(interval_raw) or not SAFE_INT_RE.match(age_raw):
+    if not SAFE_INT_RE.fullmatch(interval_raw) or not SAFE_INT_RE.fullmatch(age_raw):
         _err("WARN: DREAM_GC_INTERVAL_MIN / DREAM_GC_AGE_MIN must be "
              "non-negative integers — skipping auto-GC")
         return
     interval_min = int(interval_raw)
 
     gc_py = os.path.join(SCRIPT_DIR, "dream-gc.py")
-    gc_sh = os.path.join(SCRIPT_DIR, "dream-gc.sh")
-    if os.path.isfile(gc_py):
-        gc_cmd = [sys.executable, gc_py, "--repo-root", repo_root,
-                  "--quiet", "--min-age-min", age_raw]
-    elif os.path.isfile(gc_sh):
-        if os.name == "nt":
-            _err("WARN: auto-GC skipped on Windows until dream-gc.py is available")
-            return
-        gc_cmd = ["bash", gc_sh, "--repo-root", repo_root,
-                  "--quiet", "--min-age-min", age_raw]
-    else:
+    if not os.path.isfile(gc_py):
+        _err(f"WARN: auto-GC helper not found: {gc_py}")
         return
+    gc_cmd = [sys.executable, gc_py, "--repo-root", repo_root,
+              "--quiet", "--min-age-min", age_raw]
 
     tombstone = os.path.join(worktree_base, ".last-gc")
     should_run = False
@@ -205,8 +197,8 @@ def _maybe_auto_gc(repo_root, worktree_base, worktree_root=None):
             _touch(tombstone)
         else:
             _err(f"WARN: auto-GC exited with code {r.returncode}; will retry later")
-    except Exception:  # noqa: BLE001 — auto-GC must never break setup
-        pass
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as exc:
+        _err(f"WARN: auto-GC could not complete: {exc}; will retry later")
 
 
 def _preclean_worktree(repo_root, worktree_dir, gate_base):

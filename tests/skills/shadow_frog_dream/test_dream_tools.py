@@ -43,6 +43,22 @@ def git(repo, *args):
     ).stdout.strip()
 
 
+def without_bash_env(tmp_path):
+    env = os.environ.copy()
+    if os.name == "nt":
+        env["PATH"] = os.pathsep.join(
+            item for item in env["PATH"].split(os.pathsep)
+            if not (Path(item) / "bash.exe").is_file()
+        )
+    else:
+        tools = tmp_path / "native"
+        tools.mkdir()
+        (tools / "git").symlink_to(shutil.which("git"))
+        env["PATH"] = str(tools)
+    assert shutil.which("bash", path=env["PATH"]) is None
+    return env
+
+
 def test_pin_creates_complete_external_snapshot(tmp_git_repo, tmp_path):
     output = tmp_path / "tools caf\u00e9"
     packet = pin(tmp_git_repo, output)
@@ -88,13 +104,21 @@ def test_pin_from_each_installed_layout(tmp_git_repo, tmp_path, agent_dir):
     git(tmp_git_repo, "commit", "-q", "-m", "installed tooling")
     git(tmp_git_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     worktree_root = tmp_path / "worktrees"
-    env = os.environ.copy()
-    env.update(DREAM_GC_AUTO="0", DREAM_WORKTREE_BASE=str(worktree_root))
+    env = without_bash_env(tmp_path)
+    env.update(
+        DREAM_GC_AUTO="1", DREAM_GC_AGE_MIN="0", DREAM_GC_INTERVAL_MIN="0",
+        DREAM_WORKTREE_BASE=str(worktree_root),
+    )
+    orphan = worktree_root / "orphan-ns" / "dream-orphan"
+    orphan.mkdir(parents=True)
+    (orphan / ".git").write_text(f"gitdir: {tmp_path / 'absent'}\n", encoding="utf-8")
+    sibling = worktree_root / "other-ns" / "dream-live"
+    git(tmp_git_repo, "worktree", "add", "-q", "-b", "sibling", str(sibling))
     setup = subprocess.run(
         [
             packet["commands"]["validate"][0], packet["helper_paths"]["dream-setup.py"],
             "--repo-root", str(tmp_git_repo), "--slug", "pinned-setup",
-            "--namespace", "pin-test", "--dry-run",
+            "--namespace", "pin-test",
         ],
         env=env, capture_output=True, text=True, encoding="utf-8",
     )
@@ -102,14 +126,59 @@ def test_pin_from_each_installed_layout(tmp_git_repo, tmp_path, agent_dir):
     context = json.loads(setup.stdout)
     assert context["dream_ns"] == "pin-test"
     assert Path(context["worktree_root"]) == worktree_root.resolve()
+    assert not orphan.exists()
+    assert sibling.is_dir()
     result = invoke(
         packet, "reconcile", "--dry-run", "--namespace", context["dream_ns"],
         "--worktree-base", context["worktree_root"], cwd=tmp_path,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Namespace: pin-test" in result.stdout
-    for helper in ("_dream_namespace.py", "_worktree_paths.py"):
+    for helper in (
+        "_dream_namespace.py", "_worktree_paths.py", "_worktree_safety.py",
+        "_worktree_cleanup.py", "dream-cleanup.py", "dream-gc.py",
+    ):
         assert Path(packet["helper_paths"][helper]).is_file()
+    source = installed.parent
+    expected = {
+        path.name for path in source.iterdir()
+        if path.name == "SKILL.md" or path.suffix in (".py", ".sh")
+    }
+    assert set(packet["helper_paths"]) == expected
+    metadata = json.loads(Path(packet["manifest"]).read_text(encoding="utf-8"))
+    assert all(f"shadow-frog-dream/{name}" in metadata["files"] for name in expected)
+    before = git(tmp_git_repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+    cleanup = subprocess.run(
+        [
+            packet["commands"]["validate"][0], packet["helper_paths"]["dream-cleanup.py"],
+            context["worktree_dir"], "--repo-root", str(tmp_git_repo),
+        ],
+        env={**env, "DREAM_WORKTREE_BASE": context["worktree_root"]},
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert not Path(context["worktree_dir"]).exists()
+    second = worktree_root / "pin-test" / "dream-second"
+    git(tmp_git_repo, "worktree", "add", "-q", str(second), context["branch_name"])
+    gc = subprocess.run(
+        [
+            packet["commands"]["validate"][0], packet["helper_paths"]["dream-gc.py"],
+            "--task-complete", "--namespace", "pin-test", "--min-age-min", "0",
+            "--repo-root", str(tmp_git_repo),
+        ],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert gc.returncode == 0, gc.stderr
+    assert not second.exists()
+    assert sibling.is_dir()
+    assert before == git(tmp_git_repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+    inventory = git(tmp_git_repo, "worktree", "list", "--porcelain", "-z")
+    registered = {
+        Path(field[len("worktree "):]).resolve()
+        for field in inventory.split("\0") if field.startswith("worktree ")
+    }
+    assert second.resolve() not in registered
+    assert Path(context["worktree_dir"]).resolve() not in registered
 
 
 def test_pin_refuses_existing_or_in_repository_output(tmp_git_repo, tmp_path):
@@ -192,6 +261,22 @@ def test_snapshot_validates_artifacts_not_historical_helpers(tmp_git_repo, tmp_p
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"Repo: {repo.resolve()}" in result.stdout
     assert "Namespace: p" in result.stdout
+    root = tmp_path / "cleanup-worktrees"
+    candidate = root / "p" / "dream-lifecycle"
+    git(repo, "worktree", "add", "-q", "-b", "dream/p/lifecycle", str(candidate), parent)
+    env = without_bash_env(tmp_path)
+    env["DREAM_WORKTREE_BASE"] = str(root)
+    cleanup = subprocess.run(
+        [
+            packet["commands"]["validate"][0], packet["helper_paths"]["dream-cleanup.py"],
+            str(candidate), "--repo-root", str(repo),
+        ],
+        env=env, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert cleanup.returncode == 0, cleanup.stderr
+    assert not candidate.exists()
+    assert not installed_pin.exists()
+    assert git(repo, "show-ref", "--verify", "refs/heads/dream/p/lifecycle")
 
 
 @pytest.mark.parametrize("target", ["shadow-frog/_coherence.py", "tooling.json"])
@@ -240,18 +325,7 @@ def test_dispatch_preserves_helper_error_status(tmp_git_repo, tmp_path):
 
 
 def test_pin_and_python_dispatch_need_no_bash(tmp_git_repo, tmp_path):
-    env = os.environ.copy()
-    if os.name == "nt":
-        env["PATH"] = os.pathsep.join(
-            item for item in env["PATH"].split(os.pathsep)
-            if not (Path(item) / "bash.exe").is_file()
-        )
-    else:
-        tools = tmp_path / "native"
-        tools.mkdir()
-        (tools / "git").symlink_to(shutil.which("git"))
-        env["PATH"] = str(tools)
-    assert shutil.which("bash", path=env["PATH"]) is None
+    env = without_bash_env(tmp_path)
     packet = pin(tmp_git_repo, tmp_path / "bundle", env=env)
     result = invoke(packet, "coverage", "--help", env=env)
     assert result.returncode == 0, result.stderr

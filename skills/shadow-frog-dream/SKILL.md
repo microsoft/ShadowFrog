@@ -16,8 +16,8 @@ scripts:
   - dream-validate.py
   - dream-reconcile.py
   - dream-setup.py
-  - dream-cleanup.sh
-  - dream-gc.sh
+  - dream-cleanup.py
+  - dream-gc.py
 ---
 
 # ShadowFrog Dream
@@ -251,15 +251,16 @@ Re-pin on a different host rather than reusing host-specific interpreter paths.
 | `dream-validate.py` | Validates artifacts before push (hard gate) | **Phase 5** — before `git push` |
 | `dream-reconcile.py` | Merges dream branches into main's `.shadow/` | **Phase 6** — after all experiments done |
 | `dream-coverage.py` | Computes exploration coverage map | **Phase 2** — task planning for diversity |
-| `dream-cleanup.sh` | Safely removes ONE dream worktree (with safety gate) | **After push** — replaces the old inline cleanup snippet |
-| `dream-gc.sh` | Sweeps orphan dream worktrees from `$DREAM_WORKTREE_BASE` | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` for end-of-session sweep of registered-but-stale dirs. On Windows, automatic sweeping remains disabled until `dream-gc.py` replaces the POSIX-only helper. |
+| `dream-cleanup.py` | Removes ONE completed worktree after safety and ownership checks | **After successful push** |
+| `dream-gc.py` | Sweeps orphan worktrees from `$DREAM_WORKTREE_BASE` on every OS | **Auto** — triggered by `dream-setup.py` (per-namespace throttle, default 1× / hour) in orphan-only mode; also `--task-complete --namespace "$DREAM_NS" --min-age-min 0` after the namespace's work has finished successfully. |
 
-The shared `shadow-frog/_coherence.py`, `_dream_namespace.py`, and
-`_worktree_paths.py` are captured with the Dream tools.
+The shared `shadow-frog/_coherence.py`, `_dream_namespace.py`,
+`_worktree_paths.py`, `_worktree_safety.py`, and `_worktree_cleanup.py`
+are captured with the Dream tools.
 Never rediscover these Python helpers relative to `WORKTREE_DIR`. All scripts
 support `--help`. Setup returns JSON only. Consume it through the host's native
-JSON tools, not shell exports. The remaining cleanup/GC shell scripts keep their
-safety gates; use their Python ports when available.
+JSON tools, not shell exports. Cleanup and GC use the captured Python
+interpreter and their absolute `helper_paths` entries.
 
 In shell recipes, `PYTHON_BIN` is the captured interpreter (the first element
 of `commands.validate`) and `SKILL_DIR` is the pinned `skill_dir`. Pass these
@@ -565,7 +566,7 @@ Check the exit code before consuming JSON. Keep the returned `repo_root`,
 `worktree_dir`, `worktree_root`, `worktree_base`, `base_commit`, `run_prefix`,
 and `slug` in the agent's task state. Uppercase names in later recipes refer
 to these values. Forward the canonical `worktree_root` to reconciliation
-as `--worktree-base` and to shell cleanup/GC as `DREAM_WORKTREE_BASE`.
+as `--worktree-base` and to cleanup/GC as `DREAM_WORKTREE_BASE`.
 
 **If `dream-setup.py` fails or is not found:** Apply the Script Failure
 Recovery rule (diagnose the pinned script and retry safely). Common causes:
@@ -879,16 +880,23 @@ the orchestrator discovers pushed branches from the remote.
 
 ```bash
 DREAM_WORKTREE_BASE="$WORKTREE_ROOT" \
-    bash "$SKILL_DIR/dream-cleanup.sh" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
+    "$PYTHON_BIN" "$SKILL_DIR/dream-cleanup.py" "$WORKTREE_DIR" --repo-root "$REPO_ROOT"
 ```
 
-`dream-cleanup.sh` does the equivalent of `git worktree remove --force`
-followed by `git worktree prune`, with a safety-gated `rm -rf` fallback if
-worktree removal silently fails. The fallback only accepts paths matching
-`<worktree_root>/<ns>/dream-<slug>`
-exactly; any other path is refused.
+For native execution, use
+`[commands.validate[0], helper_paths["dream-cleanup.py"], worktree_dir, "--repo-root", repo_root]`
+and set the subprocess environment's `DREAM_WORKTREE_BASE` to `worktree_root`.
+Check the exit code before reporting cleanup complete.
 
-Remove as you go. If push failed, keep the worktree.
+`dream-cleanup.py` uses `git worktree remove --force` for an owned worktree,
+followed by best-effort prune. Raw recursive removal is reserved for a
+positively identified orphan under `<worktree_root>/<ns>/dream-<slug>`.
+Locks, uncertain ownership, malformed metadata, links, and Git refusals
+preserve the target and report an error instead of falling back.
+
+Remove as you go only after successful push and after saving any later
+changes. The helper does not verify publication. If push failed or cleanup
+was refused, keep the worktree for recovery.
 
 ### Mid-Session Diversity Check
 
@@ -1052,18 +1060,23 @@ exits non-zero — fix the cause and re-run.
 ### End-of-Session Cleanup
 
 Before the summary, sweep leftover worktrees from the mid-batch leak
-(dreams that pushed but weren't `dream-cleanup.sh`'d before the loop
+(dreams that pushed but weren't cleaned before the loop
 exited). Only run this once the agent has asserted no more dreams are
 starting **in this namespace**:
 
 ```bash
-DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
+DREAM_WORKTREE_BASE="$WORKTREE_ROOT" "$PYTHON_BIN" "$SKILL_DIR/dream-gc.py" \
     --task-complete --namespace "$DREAM_NS" \
     --repo-root "$REPO_ROOT" --min-age-min 0
 ```
 
 See "Worktree Pruning" below for `--namespace` rationale, `--min-age-min`
 semantics, and the other three cleanup paths.
+
+The native equivalent is
+`[commands.validate[0], helper_paths["dream-gc.py"], "--task-complete", "--namespace", dream_ns, "--repo-root", repo_root, "--min-age-min", "0"]`,
+with `DREAM_WORKTREE_BASE=worktree_root` in the subprocess environment.
+Keep the pinned packet and setup context authoritative on resumed runs.
 
 ### Summary
 
@@ -1109,11 +1122,13 @@ Dream worktrees live OUTSIDE the repo at
 `${DREAM_WORKTREE_BASE:-<system-temp>/shadowfrog-dreams}/<ns>/dream-<slug>/`. There
 are four places they get cleaned up:
 
-1. **`dream-cleanup.sh`** — called by the agent after each `git push` (see
+1. **`dream-cleanup.py`** — called by the agent after each successful `git push` (see
    "Worktree Cleanup" earlier in this skill). Removes ONE worktree.
-2. **`dream-reconcile.py --cleanup-branches`** — after deleting a merged
-   branch, also `rm -rf`s its worktree directory. No extra command needed.
-3. **`dream-gc.sh` (auto-triggered)** — `dream-setup.py` invokes this
+2. **`dream-reconcile.py --cleanup-branches`** — attempts non-forced
+   worktree removal before deleting an archived branch. Failed registered
+   removal or indeterminate ownership retains the branch; dirty worktrees
+   are preserved. Do not bypass this with forced cleanup.
+3. **`dream-gc.py` (auto-triggered)** — `dream-setup.py` invokes this
    sweeper at the start of each new dream, throttled by a per-namespace
    `.last-gc` tombstone to run at most once per `DREAM_GC_INTERVAL_MIN`
    minutes (default 60). Catches orphaned worktrees.
@@ -1123,13 +1138,14 @@ are four places they get cleaned up:
      - `DREAM_GC_INTERVAL_MIN` — how often the trigger fires (default 60)
      - `DREAM_GC_AGE_MIN` — min worktree age to sweep (default 60)
 
-4. **`dream-gc.sh --task-complete --namespace "$DREAM_NS"`** —
+4. **`dream-gc.py --task-complete --namespace "$DREAM_NS"`** —
    end-of-session sweep, run by the agent when it stops dreaming (dream
    count reached, or genuinely blocked). Unlike the auto-trigger, this
    mode ALSO removes `stale-registered` worktrees (valid `.git` pointer
-   but no `dream-cleanup.sh` ever ran on them — the mid-batch
-   `task_complete` leak). The agent's assertion "I'm done dreaming
-   **in this namespace**" is what makes this safe.
+   but no `dream-cleanup.py` ever ran on them — the mid-batch
+   `task_complete` leak). Run only after asserting that all work
+   **in this namespace** has finished and its changes are saved/pushed.
+   Do not sweep failed pushes or work retained for recovery.
 
    **Required:** `--namespace` (or `DREAM_NAMESPACE` env). The script
    refuses with exit 2 if neither is given — that prevents a multi-repo
@@ -1145,7 +1161,7 @@ are four places they get cleaned up:
 
    ```bash
    # At the end of the dream loop, before the final summary:
-   DREAM_WORKTREE_BASE="$WORKTREE_ROOT" bash "$SKILL_DIR/dream-gc.sh" \
+   DREAM_WORKTREE_BASE="$WORKTREE_ROOT" "$PYTHON_BIN" "$SKILL_DIR/dream-gc.py" \
        --task-complete \
        --namespace "$DREAM_NS" \
        --repo-root "$REPO_ROOT" \

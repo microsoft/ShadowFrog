@@ -11,6 +11,7 @@ bypasses the argument parser.
 import importlib.util
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,116 @@ def dream_validate(repo_root):
 @pytest.fixture(scope="session")
 def dream_tools(repo_root):
     return _load_script(repo_root / "skills/shadow-frog-dream/dream-tools.py")
+
+
+@pytest.fixture
+def dream_cleanup(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-dream/dream-cleanup.py")
+
+
+@pytest.fixture
+def worktree_cleanup(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-dream/_worktree_cleanup.py")
+
+
+@pytest.fixture
+def dream_gc(repo_root):
+    return _load_script(repo_root / "skills/shadow-frog-dream/dream-gc.py")
+
+
+@pytest.fixture
+def lifecycle_env(tmp_path):
+    env = os.environ.copy()
+    for key in (
+        "DREAM_NAMESPACE", "DREAM_WORKTREE_BASE", "DREAM_GC_AUTO",
+        "DREAM_GC_INTERVAL_MIN", "DREAM_GC_AGE_MIN", "REPO_ROOT",
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+    ):
+        env.pop(key, None)
+    env.update(
+        HOME=str(tmp_path), GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_SYSTEM=os.devnull,
+    )
+    return env
+
+
+@pytest.fixture
+def lifecycle_git(lifecycle_env):
+    def run(repo, *args):
+        return subprocess.run(
+            ["git", "-C", str(repo), *map(str, args)],
+            env=lifecycle_env, check=True, capture_output=True, timeout=30,
+        ).stdout
+    return run
+
+
+@pytest.fixture
+def lifecycle_repo(tmp_path, lifecycle_git):
+    repo = tmp_path / "source repo caf\u00e9"
+    lifecycle_git(tmp_path, "init", "-q", "-b", "main", repo)
+    lifecycle_git(repo, "config", "user.email", "test@shadowfrog.invalid")
+    lifecycle_git(repo, "config", "user.name", "Test")
+    lifecycle_git(repo, "config", "commit.gpgsign", "false")
+    (repo / "file.txt").write_text("initial\n", encoding="utf-8")
+    lifecycle_git(repo, "add", "-A")
+    lifecycle_git(repo, "commit", "-q", "-m", "initial")
+    return repo
+
+
+@pytest.fixture
+def seed_protected_files():
+    def seed(target):
+        tracked = target / "file.txt"
+        if tracked.is_file():
+            tracked.write_bytes(tracked.read_bytes() + b"uncommitted tracked edit\n")
+        nested = target / "protected" / "nested"
+        nested.mkdir(parents=True)
+        (nested / "empty").mkdir()
+        (nested / "payload.bin").write_bytes(b"\x00\xff\x80\r\nprotected\x00")
+        (target / "protected" / "caf\u00e9.txt").write_bytes("untracked caf\u00e9\n".encode("utf-8"))
+    return seed
+
+
+@pytest.fixture
+def preservation_snapshot(lifecycle_git):
+    """Observe protected files and Git state without using lifecycle implementation code."""
+    def snapshot(target, *, repos=()):
+        target = Path(os.path.abspath(target))
+        tree = {}
+
+        def visit(path):
+            info = path.lstat()
+            name = path.relative_to(target).as_posix()
+            if stat.S_ISLNK(info.st_mode) or (
+                getattr(info, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            ):
+                tree[name] = ("link", os.readlink(path))
+            elif stat.S_ISDIR(info.st_mode):
+                tree[name] = ("directory",)
+                for child in sorted(path.iterdir()):
+                    visit(child)
+            elif stat.S_ISREG(info.st_mode):
+                tree[name] = ("file", path.read_bytes())
+            else:
+                pytest.fail(f"unexpected protected entry type: {path}")
+
+        visit(target)
+        git_state = {}
+        for repo in dict.fromkeys(repos):
+            refs = lifecycle_git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+            registrations = {}
+            for record in lifecycle_git(repo, "worktree", "list", "--porcelain", "-z").split(b"\0\0"):
+                if not record:
+                    continue
+                fields = record.split(b"\0")
+                assert fields[0].startswith(b"worktree "), record
+                path = Path(os.path.abspath(os.fsdecode(fields[0][len(b"worktree "):])))
+                if path == target or target in path.parents:
+                    registrations[str(path)] = tuple(fields[1:])
+            git_state[str(repo)] = {"branches": refs, "registrations": registrations}
+        return {"tree": tree, "git": git_state}
+    return snapshot
 
 
 @pytest.fixture(scope="session")

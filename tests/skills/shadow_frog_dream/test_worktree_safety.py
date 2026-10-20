@@ -251,7 +251,7 @@ class TestShape:
 
 
 # ===========================================================================
-# CLI exit codes (used by dream-cleanup.sh and dream-gc.sh)
+# Standalone safety CLI exit codes
 # ===========================================================================
 
 class TestCLI:

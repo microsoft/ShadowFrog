@@ -1,9 +1,7 @@
 """Single source of truth for the "is it safe to rm -rf this dream worktree?" gate.
 
-Imported by `dream-reconcile.py` and invoked as a subprocess by
-`dream-cleanup.sh` + `dream-gc.sh`. Both bash callers pass the candidate
-path + the configured base via argv (NOT via string interpolation), so the
-caller can never inject Python source through this module.
+Imported by the Python dream lifecycle helpers. Callers pass the candidate
+and configured root directly to `safe_worktree_path` before removal.
 
 A path is considered safe to remove ONLY when ALL of these hold:
 
@@ -23,7 +21,7 @@ like a dream worktree created by `dream-setup.py`. That means we will NEVER
 `rm -rf` a path the user happens to point us at — only paths that match the
 namespace's own creation contract.
 
-CLI invocation (used by the bash scripts):
+Standalone diagnostic CLI:
     python3 _worktree_safety.py <worktree-dir> <base> [<ns>]
     exit codes:
       0 → safe AND the path currently exists (caller should rm)
