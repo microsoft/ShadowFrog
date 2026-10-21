@@ -83,6 +83,7 @@ class TestInstallProject:
             skill_dir = target / ".github" / "skills" / skill
             assert skill_dir.is_dir(), f"Missing skill dir: {skill}"
             assert (skill_dir / "SKILL.md").is_file(), f"Missing SKILL.md in {skill}"
+        assert (target / ".github/skills/shadow-frog-init/_astred.py").is_file()
 
     def test_project_install_creates_hooks(self, tmp_path):
         target = tmp_path / "myproject"

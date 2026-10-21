@@ -3,7 +3,7 @@
 shadow-init.py — Initialize a .shadow/ knowledge base for any codebase.
 
 Part of the ShadowFrog skills suite. Discovers source files via git,
-extracts symbols with language-aware regex, and creates per-file shadow
+extracts symbols with regex or an optional Astred backend, and creates per-file shadow
 markdown stubs plus scaffolding (_index.md, _prefs.md, state.json, etc.).
 
 Usage:
@@ -22,9 +22,12 @@ import shutil
 import subprocess
 import sys
 import traceback
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _astred
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -230,18 +233,19 @@ def _walk_files(repo_root):
     return result
 
 
-def _load_shadowignore(shadow_dir):
+def _load_shadowignore(shadow_dir, content=None):
     """Load .shadowignore and return a matcher function.
 
     Uses pathspec if available, falls back to fnmatch.
     Returns a callable(rel_path) -> bool (True = ignored).
     """
     ignore_file = shadow_dir / ".shadowignore"
-    if not ignore_file.exists():
+    if content is None and not ignore_file.exists():
         return lambda _: False
 
     try:
-        lines = ignore_file.read_text(encoding="utf-8").splitlines()
+        lines = (content if content is not None else
+                 ignore_file.read_text(encoding="utf-8")).splitlines()
     except Exception as e:
         warn(f"Could not read .shadowignore: {e}")
         return lambda _: False
@@ -293,7 +297,7 @@ def _load_shadowignore(shadow_dir):
     return _match
 
 
-def discover_files(repo_root, shadow_dir):
+def discover_files(repo_root, shadow_dir, ignore_content=None):
     """Return sorted list of relative paths to source files.
 
     Tries git ls-files first. Falls back to filesystem walk if git is
@@ -321,7 +325,7 @@ def discover_files(repo_root, shadow_dir):
         filtered.append(f)
 
     # Apply .shadowignore
-    is_ignored = _load_shadowignore(shadow_dir)
+    is_ignored = _load_shadowignore(shadow_dir, ignore_content)
     result = []
     for f in filtered:
         try:
@@ -388,7 +392,7 @@ class Symbol:
     def __init__(self, name, kind, parent=None):
         self.name = name          # e.g. "UserAuth" or "validate"
         self.kind = kind          # "class", "function", "method", "interface", etc.
-        self.parent = parent      # parent class name or None
+        self.parent = parent      # fully qualified lexical parent or None
 
     @property
     def display_name(self):
@@ -399,23 +403,9 @@ class Symbol:
     @property
     def heading_text(self):
         """Text for the markdown heading (backtick-wrapped)."""
-        if self.kind == "class":
-            return f"class {self.name}"
-        if self.kind == "interface":
-            return f"interface {self.name}"
-        if self.kind == "enum":
-            return f"enum {self.name}"
-        if self.kind == "trait":
-            return f"trait {self.name}"
-        if self.kind == "struct":
-            return f"struct {self.name}"
-        if self.kind == "protocol":
-            return f"protocol {self.name}"
-        if self.kind == "module":
-            return f"module {self.name}"
-        if self.parent:
-            return f"{self.parent}.{self.name}"
-        return self.name
+        if self.is_container:
+            return f"{self.kind} {self.display_name}"
+        return self.display_name
 
     @property
     def is_container(self):
@@ -972,6 +962,192 @@ def extract_symbols(source, language, rel_path="<unknown>"):
         return []
 
 
+def _read_json_object(path):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {path}.")
+    return value
+
+
+def configured_backend(root):
+    state_path = root / ".shadow" / "_meta" / "state.json"
+    metadata = (_read_json_object(state_path).get("symbol_backend", {"name": "regex"})
+                if state_path.exists() else {"name": "regex"})
+    if not isinstance(metadata, dict) or metadata.get("name") not in {"regex", "astred"}:
+        raise ValueError(f"Invalid symbol_backend in {state_path}.")
+    return metadata
+
+
+def _inventory_symbol(record):
+    if (
+        not isinstance(record, dict)
+        or not isinstance(record.get("name"), str) or not record["name"]
+        or not isinstance(record.get("kind"), str)
+        or (record.get("parent") is not None and not isinstance(record["parent"], str))
+    ):
+        raise ValueError("Invalid symbol record in extraction inventory.")
+    symbol = Symbol(record["name"], record["kind"], record.get("parent"))
+    if record.get("qualified_name") != symbol.display_name:
+        raise ValueError("Inconsistent qualified name in extraction inventory.")
+    return symbol
+
+
+def extract_inventory(repo_root, symbol_backend=None, astred_command="astred",
+                      astred_timeout=180, preview=False, ignore_content=None):
+    """Shared, read-only inventory for init, incremental updates and migration review."""
+    root = Path(repo_root).resolve()
+    shadow_dir = root / ".shadow"
+    configured = configured_backend(root)
+    backend = symbol_backend or configured["name"]
+    if backend not in {"regex", "astred"}:
+        raise ValueError(f"Unknown symbol backend: {backend}.")
+    if backend != configured["name"] and shadow_dir.exists() and not preview:
+        raise ValueError("Changing symbol backends requires --preview-migration first.")
+    paths = discover_files(str(root), shadow_dir, ignore_content)
+    hashes = {path: _astred.source_hash(root / path) for path in paths}
+    python_paths = [path for path in paths if detect_language(path) == "Python"]
+    python_symbols = {}
+    metadata = {"name": backend}
+    if backend == "astred":
+        expected = configured if configured["name"] == "astred" and not preview else None
+        cache_path = shadow_dir / "_meta" / "symbols.json"
+        if expected and cache_path.exists():
+            cache = _read_json_object(cache_path)
+            if cache.get("schema_version") != 1 or not isinstance(cache.get("files"), list):
+                raise ValueError(f"Invalid symbol cache {cache_path}; remove only this cache and retry.")
+            cache_metadata = cache.get("symbol_backend", {})
+            if not isinstance(cache_metadata, dict) or cache_metadata.get("name") not in {"regex", "astred"}:
+                raise ValueError(f"Invalid backend metadata in symbol cache {cache_path}.")
+            if (
+                cache_metadata.get("name") == configured["name"]
+                and all(cache_metadata.get(key) == configured.get(key) for key in _astred.IDENTITY_KEYS)
+                and cache_metadata.get("normalizer_version") == _astred.NORMALIZER_VERSION
+            ):
+                for entry in cache["files"]:
+                    if not isinstance(entry, dict):
+                        raise ValueError(f"Invalid file entry in {cache_path}.")
+                    path = entry.get("path")
+                    if (
+                        path in python_paths and entry.get("backend") == "astred"
+                        and entry.get("source_sha256") == hashes[path]
+                    ):
+                        if path in python_symbols or not isinstance(entry.get("symbols"), list):
+                            raise ValueError(f"Invalid or duplicate cached Python file: {path}.")
+                        for record in entry["symbols"]:
+                            _inventory_symbol(record)
+                            if (
+                                record["kind"] not in {"class", "function", "method", "constant"}
+                                or any(type(record.get(key)) is not int or record[key] < 1
+                                       for key in ("line", "column"))
+                            ):
+                                raise ValueError(f"Invalid cached Astred declaration in {path}.")
+                        python_symbols[path] = entry["symbols"]
+                metadata = dict(cache_metadata)
+            else:
+                warn("Symbol cache backend/version differs from configuration; re-extracting Python.")
+        pending = [path for path in python_paths if path not in python_symbols]
+        if pending or metadata == {"name": "astred"}:
+            extracted, metadata = _astred.extract(
+                root, pending, command=astred_command, timeout=astred_timeout,
+                expected_metadata=expected, on_warning=warn,
+            )
+            python_symbols.update(extracted)
+        fallback_languages = sorted({detect_language(path) for path in paths if path not in python_paths})
+        metadata["fallback_languages"] = fallback_languages
+        if fallback_languages:
+            warn("Astred supports Python in this integration; using regex for: "
+                 + ", ".join(fallback_languages))
+
+    records = []
+    for path in paths:
+        language = detect_language(path)
+        if backend == "astred" and language == "Python":
+            symbols = python_symbols[path]
+        else:
+            source = (root / path).read_text(encoding="utf-8", errors="replace")
+            symbols = [
+                {"name": symbol.name, "kind": symbol.kind, "parent": symbol.parent,
+                 "qualified_name": symbol.display_name}
+                for symbol in extract_symbols(source, language, path)
+            ]
+        for record in symbols:
+            record["heading"] = _inventory_symbol(record).heading_text
+        if _astred.source_hash(root / path) != hashes[path]:
+            raise ValueError(f"Source changed during symbol extraction: {path}. Retry.")
+        records.append({
+            "path": path, "language": language,
+            "backend": "astred" if backend == "astred" and language == "Python" else "regex",
+            "source_sha256": hashes[path], "symbols": symbols,
+        })
+    return {"schema_version": 1, "symbol_backend": metadata, "files": records}
+
+
+def preview_migration(repo_root, inventory):
+    """Propose address changes without moving/deleting any existing knowledge."""
+    shadow_dir = Path(repo_root).resolve() / ".shadow"
+    if not shadow_dir.is_dir():
+        raise ValueError("--preview-migration requires an existing .shadow/.")
+    previous = {}
+    for path in sorted(shadow_dir.rglob("*.md")):
+        relative = path.relative_to(shadow_dir)
+        if relative.parts[0] in {"_meta", "_cross", "_dreams", "_index.md", "_prefs.md"}:
+            continue
+        content = path.read_text(encoding="utf-8")
+        source_path = relative.as_posix()[:-3]
+        if not content.startswith(f"# Shadow: {source_path}\n"):
+            raise ValueError(f"Unexpected shadow header in {path}; review it before migration.")
+        headings = []
+        fence = None
+        for line in content.splitlines():
+            stripped = line.strip()
+            if fence is not None:
+                if re.fullmatch(re.escape(fence[0]) + "{" + str(len(fence)) + ",}", stripped):
+                    fence = None
+                continue
+            opening = re.match(r"`{3,}|~{3,}", stripped)
+            if opening:
+                fence = opening.group(0)
+                continue
+            heading = re.fullmatch(r"#{2,3}\s+`([^`]+)`\s*", line)
+            if heading:
+                headings.append(heading.group(1))
+        previous[source_path] = Counter(
+            re.sub(r"^(?:class|interface|enum|trait|struct|protocol|module)\s+", "", heading)
+            for heading in headings
+        )
+    proposed = {entry["path"]: Counter(record["qualified_name"] for record in entry["symbols"])
+                for entry in inventory["files"]}
+    changes = []
+    for path in sorted(previous.keys() | proposed.keys()):
+        old, new = previous.get(path, Counter()), proposed.get(path, Counter())
+        removed, added = old - new, new - old
+        if not removed and not added and path in previous and path in proposed:
+            continue
+        scope_changes, ambiguous = [], []
+        leaves = {name.rsplit(".", 1)[-1] for name in removed}
+        for leaf in sorted(leaves):
+            old_names = [name for name in removed if name.rsplit(".", 1)[-1] == leaf]
+            new_names = [name for name in added if name.rsplit(".", 1)[-1] == leaf]
+            if not new_names:
+                continue
+            if len(old_names) == len(new_names) == 1 and removed[old_names[0]] == added[new_names[0]] == 1:
+                scope_changes.append({"from": old_names[0], "to": new_names[0]})
+                del removed[old_names[0]]
+                del added[new_names[0]]
+            else:
+                ambiguous.append({"existing": list(Counter({name: removed[name] for name in old_names}).elements()),
+                                  "proposed": list(Counter({name: added[name] for name in new_names}).elements())})
+        changes.append({
+            "path": path, "scope_change_candidates": scope_changes,
+            "retained_unmatched": sorted(removed.elements()), "added": sorted(added.elements()),
+            "ambiguous": ambiguous, "source_missing": path not in proposed,
+        })
+    return {"applied": False, "review_required": True, "files": changes}
+
+
 # ---------------------------------------------------------------------------
 # Shadow file generation
 # ---------------------------------------------------------------------------
@@ -1026,7 +1202,7 @@ def build_shadow_content(rel_path, language, line_count, last_modified, symbols)
                         # Collect child symbols belonging to this container
                         children = []
                         j = i + 1
-                        while j < len(symbols) and symbols[j].parent == sym.name:
+                        while j < len(symbols) and symbols[j].parent == sym.display_name:
                             children.append(symbols[j])
                             j += 1
                         if not children:
@@ -1204,7 +1380,8 @@ def build_index(file_records, total_symbols, total_discoveries=0, cross_cutting=
 # Main logic
 # ---------------------------------------------------------------------------
 
-def init_shadow(repo_root, reset=False, dry_run=False):
+def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
+                astred_command="astred", astred_timeout=180):
     """Initialize the .shadow/ knowledge base.
 
     Returns True on success (even with non-fatal warnings), False on fatal errors.
@@ -1212,15 +1389,25 @@ def init_shadow(repo_root, reset=False, dry_run=False):
     """
     root = Path(repo_root).resolve()
     shadow_dir = root / ".shadow"
+    inventory = None
+
+    if shadow_dir.exists() and not reset:
+        error(f".shadow/ already exists at {shadow_dir}. "
+              "Use --preview-migration to review a backend change without deleting knowledge, "
+              "or --reset to delete and recreate.")
+        return False
+    if symbol_backend == "astred":
+        try:
+            inventory = extract_inventory(
+                root, symbol_backend, astred_command, astred_timeout,
+                preview=True, ignore_content=SHADOWIGNORE_CONTENT,
+            )
+        except (_astred.AstredError, ValueError, OSError) as exc:
+            error(str(exc))
+            return False
 
     # Handle existing shadow
     if shadow_dir.exists():
-        if not reset:
-            error(
-                f".shadow/ already exists at {shadow_dir}. "
-                "Use --reset to delete and recreate, or remove it manually."
-            )
-            return False
         if dry_run:
             print(f"[dry-run] Would delete {shadow_dir}")
         else:
@@ -1290,7 +1477,8 @@ def init_shadow(repo_root, reset=False, dry_run=False):
 
     # Discover files
     try:
-        source_files = discover_files(str(root), shadow_dir)
+        source_files = ([entry["path"] for entry in inventory["files"]] if inventory is not None
+                        else discover_files(str(root), shadow_dir))
     except Exception as e:
         error(f"File discovery crashed: {type(e).__name__}: {e}. "
               "Is this a valid git repository?")
@@ -1309,6 +1497,7 @@ def init_shadow(repo_root, reset=False, dry_run=False):
     total_symbols = 0
     language_counts = defaultdict(int)
     skipped_files = []
+    inventory_files = {entry["path"]: entry for entry in inventory["files"]} if inventory else {}
 
     for rel_path in source_files:
         try:
@@ -1330,7 +1519,13 @@ def init_shadow(repo_root, reset=False, dry_run=False):
                 continue
 
             line_count = count_lines(source)
-            symbols = extract_symbols(source, language, rel_path)
+            if inventory is not None:
+                if _astred.source_hash(abs_path) != inventory_files[rel_path]["source_sha256"]:
+                    error(f"Source changed since extraction: {rel_path}. Retry initialization.")
+                    return False
+                symbols = [_inventory_symbol(record) for record in inventory_files[rel_path]["symbols"]]
+            else:
+                symbols = extract_symbols(source, language, rel_path)
             total_symbols += len(symbols)
 
             last_modified = get_last_modified(rel_path, str(root))
@@ -1402,6 +1597,8 @@ def init_shadow(repo_root, reset=False, dry_run=False):
                  "total_files": len(file_records), "total_symbols": total_symbols,
                  "total_discoveries": 0, "dream_cycles_completed": 0}
     state_path = shadow_dir / "_meta" / "state.json"
+    if inventory is not None:
+        state["symbol_backend"] = inventory["symbol_backend"]
     if dry_run:
         print(f"[dry-run] Would create {state_path.relative_to(root)}")
         print(f"[dry-run] state.json: {json.dumps(state, indent=2)}")
@@ -1411,8 +1608,18 @@ def init_shadow(repo_root, reset=False, dry_run=False):
                 json.dumps(state, indent=2) + "\n", encoding="utf-8",
             )
         except Exception as e:
+            if inventory is not None:
+                error(f"Failed to persist Astred backend metadata: {e}")
+                return False
             warn(f"Failed to write state.json: {e}. "
                  "The shadow is usable but state tracking will be incomplete.")
+        if inventory is not None:
+            try:
+                (shadow_dir / "_meta" / "symbols.json").write_text(
+                    json.dumps(inventory, indent=2) + "\n", encoding="utf-8",
+                )
+            except OSError as exc:
+                warn(f"Could not write symbol cache; future updates will re-extract: {exc}")
 
     # --- Summary ---
     total_files = len(file_records)
@@ -1432,6 +1639,9 @@ def init_shadow(repo_root, reset=False, dry_run=False):
     print(f"  Files:     {total_files}")
     print(f"  Symbols:   {total_symbols}")
     print(f"  Languages: {lang_summary or 'none'}")
+    if inventory is not None:
+        print(f"  Backend:   Astred {inventory['symbol_backend']['astred_version']} "
+              "(Python; regex for other languages)")
 
     if skipped_files:
         print(f"  Skipped:   {len(skipped_files)} files (see warnings above)")
@@ -1473,8 +1683,22 @@ def main():
         action="store_true",
         help="Show what would be created without writing",
     )
+    parser.add_argument("--symbol-backend", choices=("regex", "astred"), default=None,
+                        help="Symbol backend (default: state.json setting, otherwise regex)")
+    parser.add_argument("--astred-command", default=os.environ.get("SHADOWFROG_ASTRED_COMMAND", "astred"),
+                        help="Astred executable path (or SHADOWFROG_ASTRED_COMMAND)")
+    parser.add_argument("--astred-timeout", type=int, default=180,
+                        help="Astred batch timeout in seconds (default: 180)")
+    parser.add_argument("--symbols-only", action="store_true",
+                        help="Print the shared symbol inventory as JSON; do not write .shadow/")
+    parser.add_argument("--preview-migration", action="store_true",
+                        help="Print JSON inventory and address-change candidates; never rewrite knowledge")
 
     args = parser.parse_args()
+    if args.astred_timeout <= 0:
+        parser.error("--astred-timeout must be positive")
+    if args.reset and (args.symbols_only or args.preview_migration):
+        parser.error("--reset cannot be combined with --symbols-only or --preview-migration")
 
     try:
         # Determine repo root
@@ -1491,9 +1715,28 @@ def main():
             error(f"Root directory does not exist: {repo_root}")
             sys.exit(1)
 
-        success = init_shadow(repo_root, reset=args.reset, dry_run=args.dry_run)
+        if args.symbols_only or args.preview_migration:
+            if args.preview_migration and not (Path(repo_root) / ".shadow").is_dir():
+                raise ValueError("--preview-migration requires an existing .shadow/.")
+            inventory = extract_inventory(
+                repo_root, args.symbol_backend, args.astred_command, args.astred_timeout,
+                preview=args.preview_migration,
+                ignore_content=SHADOWIGNORE_CONTENT if not (Path(repo_root) / ".shadow").exists() else None,
+            )
+            if args.preview_migration:
+                inventory["migration"] = preview_migration(repo_root, inventory)
+            print(json.dumps(inventory, indent=2))
+            sys.exit(0)
+        backend = args.symbol_backend or configured_backend(Path(repo_root))["name"]
+        success = init_shadow(
+            repo_root, reset=args.reset, dry_run=args.dry_run, symbol_backend=backend,
+            astred_command=args.astred_command, astred_timeout=args.astred_timeout,
+        )
         sys.exit(0 if success else 1)
 
+    except (_astred.AstredError, ValueError, OSError) as exc:
+        error(str(exc))
+        sys.exit(1)
     except KeyboardInterrupt:
         error("Interrupted by user.")
         sys.exit(130)

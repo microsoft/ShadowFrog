@@ -41,6 +41,34 @@ Categorize: modified, added, deleted, renamed.
 
 ## Phase 2: Update Per-File Shadows (Symbol-Level)
 
+Use the **same extraction interface as init**, rather than inventing a separate
+symbol scanner. From the project root:
+
+```powershell
+python .github\skills\shadow-frog-init\shadow-init.py --symbols-only
+# Claude Code: use .claude\skills\shadow-frog-init\shadow-init.py instead.
+```
+
+This prints JSON without changing `.shadow/`. It inherits the optional
+`symbol_backend` configuration from `_meta/state.json` (absent means regex).
+For Astred, configure the machine-local executable using
+`SHADOWFROG_ASTRED_COMMAND` or `--astred-command`; do not store its path in
+shared metadata. Unchanged Python files reuse `_meta/symbols.json`; changed
+files are batched through the pinned Astred backend. Non-Python languages
+explicitly use regex. **Stop on extraction failure**; a failed inventory does
+not mean that all symbols disappeared. Use each record's `qualified_name` for
+`file::symbol` references and `heading` for Markdown headings.
+
+When adopting Astred or upgrading its release/normalizer, first run
+`--preview-migration --symbol-backend astred` with the intended executable.
+Treat all affected shadow files as changed, even without a source diff.
+Review scope-change candidates; do not assume same-leaf names prove identity.
+Preserve unmatched/ambiguous sections and their discoveries as history until
+resolved. Apply only confirmed mappings, updating `Also involves:` and `_cross/`
+`**Refs**:` consistently, without changing trust metadata or citation scores.
+Never use `--reset` to migrate. This is a reviewed agent workflow, not an
+automatic knowledge-rewriting command.
+
 For each changed file, update its shadow at the symbol level:
 
 | Symbol change | Action |
@@ -164,6 +192,13 @@ Repair any violations before proceeding.
 ## Phase 8: Update Metadata
 
 Preserve `dream_cycles_completed` from the existing state — only `dream-reconcile.py` increments it.
+Also preserve optional `symbol_backend` metadata. After a successful update,
+save the validated extraction inventory (without its optional `migration`
+section) to `_meta/symbols.json`; refresh `fallback_languages` from that report.
+For a reviewed backend/version migration,
+adopt the report's `symbol_backend` only after all affected headings and
+references are reconciled. Never publish new backend metadata or replace a
+good cache after a failed extraction or incomplete migration.
 
 ```json
 {

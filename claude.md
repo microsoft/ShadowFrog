@@ -173,6 +173,13 @@ Examples:
 and `_dreams/`). Cross-cutting discoveries are tracked separately via
 `ls .shadow/_cross/*.md | wc -l`.
 
+An optional `symbol_backend` object records `name` (`regex` or `astred`).
+Absence means regex. Astred additionally records `normalizer_version`,
+`astred_version`, `astred_release`, and `fallback_languages`. Preserve this
+metadata during updates; change it only after reviewing a backend migration.
+`_meta/symbols.json` is a source-hash/backend-version extraction cache, not
+discovery storage. Executable paths and credentials are machine-local.
+
 ### Dream Reports (`_dreams/`)
 
 Dream experiment reports are archived in `_dreams/` for compounding knowledge

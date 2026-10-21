@@ -12,7 +12,8 @@ scripts:
 # ShadowFrog Init
 
 Creates `.shadow/` directory with symbol-organized shadow files for every
-source file. Run once per repo. If `.shadow/` exists, ask user to reset or skip.
+source file. Run once per repo. For existing knowledge, use update or a
+read-only backend migration preview; never reset merely to change extractors.
 
 ## Primary: Python Helper Script
 
@@ -42,6 +43,11 @@ python3 .github/skills/shadow-frog-init/shadow-init.py --root "$(pwd)"
 | `--root DIR` | Repository root (default: auto-detect via git) |
 | `--reset` | Delete existing .shadow/ and recreate |
 | `--dry-run` | Show what would be created without writing |
+| `--symbol-backend regex\|astred` | Regex by default; existing shadows inherit `state.json` configuration |
+| `--astred-command PATH` | Astred executable; also configurable with `SHADOWFROG_ASTRED_COMMAND` |
+| `--astred-timeout SECONDS` | Positive batch timeout; default 180 |
+| `--symbols-only` | Print the shared extraction inventory as JSON; do not write `.shadow/` |
+| `--preview-migration` | Print inventory plus proposed address changes; do not write `.shadow/` |
 
 ### What it does
 
@@ -53,10 +59,88 @@ per-file shadows plus `_index.md`, `_prefs.md`, `_meta/state.json`, and
 After creating `.shadow/`, complete [Post-init steps](#post-init-steps).
 The helper does not choose the version-control mode.
 
+### Optional Astred backend
+
+Astred is an **optional Python declaration backend**, not an LLM analysis
+replacement or a required ShadowFrog dependency. Install a pinned, approved
+`Astred.Tools` release separately from the authenticated internal feed; see
+[setup and authentication](../../README.md#optional-astred-symbol-extraction).
+Do not copy Astred source or binaries into the skills package.
+
+For a **new** shadow, after configuring the executable:
+
+```powershell
+python .github\skills\shadow-frog-init\shadow-init.py --symbol-backend astred
+```
+
+This batches Python files through Astred's `treeerr -- bljson` command chain:
+the AST error check must succeed before the shared graph is exported as bljson v2.
+Checking export error blocks alone is insufficient because the AST can contain
+errors absent from the graph. This is not Python compiler validation:
+Tree-sitter may recover missing tokens without producing an error node (for
+example, `def broken(:` can still export `broken`). Review source changes and
+migration candidates rather than treating an inventory as proof of valid syntax.
+The inventory includes named
+classes, functions/methods (with full lexical scope), and direct module-level
+uppercase assignment targets, including tuple unpacking. Parameters, local
+variables, anonymous functions, references, docstring examples, and discard
+targets such as `_` are not symbol addresses. Repeated declarations are retained;
+they do not acquire artificial graph-ID suffixes.
+
+Other languages continue using the existing regex extractors, explicitly
+reported on stderr and in `symbol_backend.fallback_languages`. Python failures
+**do not** silently fall back to regex. Missing tools, timeouts, incompatible or
+malformed exports, graph errors, incomplete file coverage, and source changes
+fail extraction. Astred preflight completes before init creates or resets a
+shadow. Temporary graphs are deleted; error-report uploads are disabled.
+
+Astred initialization records this optional metadata in `_meta/state.json`:
+
+```json
+"symbol_backend": {
+  "name": "astred",
+  "normalizer_version": 1,
+  "astred_version": "<reported version>",
+  "astred_release": "<reported release including build identity>",
+  "fallback_languages": ["<non-Python languages present>"]
+}
+```
+
+The machine-local executable path and credentials are **not** persisted.
+`_meta/symbols.json` caches the validated inventory, keyed by source SHA-256,
+backend release, and normalizer version. Updates reuse unchanged Python files
+and batch only cache misses. A full cache hit does not invoke Astred; on a miss,
+the installed tool's reported release must match the recorded metadata.
+Corrupt caches fail visibly; remove only `_meta/symbols.json` to regenerate,
+not the knowledge tree.
+
+### Preview an existing shadow without losing discoveries
+
+```powershell
+python .github\skills\shadow-frog-init\shadow-init.py --preview-migration --symbol-backend astred
+```
+
+The JSON contains the new inventory and `migration.files`: scope-change
+**candidates**, added addresses, `retained_unmatched` existing sections,
+ambiguous matches, and orphaned files. Unique leaf-name matches are suggestions,
+not proof of a rename. This command bypasses the old cache/version pin so it can
+also preview a tool or normalizer upgrade. It never changes headings, discoveries,
+trust metadata, citation scores, cross-references, cache, or state.
+
+Review and apply confirmed changes through
+[/shadow-frog-update](../shadow-frog-update/SKILL.md), including every affected
+shadow even if its source file is unchanged. Keep unmatched/ambiguous discoveries
+and historical anchors until resolved; do not delete them because the new
+extractor no longer emits a heading. There is deliberately no automatic
+migration/apply command in this first integration. `--reset` deletes knowledge
+and is **not** a migration mechanism.
+
 ## Fallback: Manual Init
 
 If the Python script fails (wrong Python version, missing file, etc.),
 follow these steps manually, then complete [Post-init steps](#post-init-steps).
+An explicitly selected Astred backend must be repaired or deliberately changed
+after migration review; do not use this fallback to conceal extraction failure.
 
 ### 1. Check preconditions
 

@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,25 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(POWERSHELL is None, reason="PowerShell is not installed"),
 ]
+
+
+@pytest.mark.parametrize("agent,directory", [("copilot", ".github"), ("claude", ".claude")])
+def test_installed_init_includes_optional_astred_adapter(tmp_path, agent, directory):
+    result = subprocess.run(
+        [POWERSHELL, "-NoProfile", "-File", str(INSTALL_SCRIPT),
+         "-Project", str(tmp_path), "-Agent", agent, "-NoHooks", "-NoContext"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    skill = tmp_path / directory / "skills/shadow-frog-init"
+    assert (skill / "_astred.py").is_file()
+    result = subprocess.run(
+        [sys.executable, str(skill / "shadow-init.py"), "--root", str(tmp_path), "--symbols-only"],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["symbol_backend"] == {"name": "regex"}
+    assert not (tmp_path / ".shadow").exists()
 
 
 def test_utf8_reads_ignore_narrow_default_encoding(tmp_path):
