@@ -91,32 +91,67 @@ its internal Azure Artifacts feed. Other languages explicitly retain their
 existing regex extractors. Astred runs as a separate CLI process; ShadowFrog
 does not vendor its repository, binaries, or Python bindings.
 
-Install the .NET SDK/runtime required by your selected Astred release and the
-[Azure Artifacts Credential Provider](https://github.com/microsoft/artifacts-credprovider).
-Use your organization's approved developer sign-in and **feed-reader** access.
-GitHub organization membership and `GITHUB_TOKEN` do not grant feed access.
-Example PowerShell setup, outside the target repository:
+**Run the one-time setup script from your ShadowFrog checkout before selecting
+the Astred backend:**
 
 ```powershell
-$AstredVersion = '<approved exact published package version>'
-$AstredDir = Join-Path $env:LOCALAPPDATA "ShadowFrog\astred\$AstredVersion"
-dotnet tool install Astred.Tools --version $AstredVersion --tool-path $AstredDir --interactive --add-source https://pkgs.dev.azure.com/FoSSE/_packaging/FoSSE/nuget/v3/index.json
-$env:SHADOWFROG_ASTRED_COMMAND = Join-Path $AstredDir 'astred.exe'
+python install-astred.py
+```
 
+Cloning ShadowFrog does not run setup or install Astred automatically.
+Run setup explicitly on each developer machine; for team or CI setup, select
+an approved exact version with `--version <published-version>`.
+
+On Linux, use `python3 install-astred.py`. Setup installs the **latest stable
+Astred.Tools release** from the authenticated feed by default. To select an
+exact version instead, use `--version <published-version>`.
+
+The script checks for the .NET 10 SDK and installs it if missing: using
+`winget` on Windows or a per-user SDK on Linux, without `sudo` or shell scripts.
+Linux SDK downloads use Microsoft's release metadata and are SHA-512 verified;
+the host still needs .NET's native dependencies (such as ICU and OpenSSL).
+Setup also installs the
+[Azure Artifacts Credential Provider](https://github.com/microsoft/artifacts-credprovider)
+if needed. Astred is installed in a separate per-user directory for each
+latest-release setup; explicit versions use reusable version-specific directories.
+On macOS, install the .NET 10 SDK first.
+Windows SDK installation may request elevation; Astred itself is installed per user.
+Complete interactive sign-in when prompted; use your organization's approved
+developer identity with **feed-reader** access.
+GitHub organization membership and `GITHUB_TOKEN` do not grant feed access.
+Setup verifies Python symbol extraction before saving the executable path.
+It does not initialize, reset, or migrate any `.shadow/`.
+
+ShadowFrog automatically discovers the saved path in
+`%LOCALAPPDATA%\ShadowFrog\astred.json` on Windows or
+`${XDG_CONFIG_HOME:-~/.config}/ShadowFrog/astred.json` on Linux/macOS.
+No PATH edits, shell exports, or environment-variable setup are needed.
+Explicit `--astred-command` overrides `SHADOWFROG_ASTRED_COMMAND`, which
+overrides the saved configuration; absent all three, `astred` is found on PATH.
+Rerunning setup without `--version` installs the latest stable release again;
+previous installations remain intact. Explicit versions reuse the installed
+release and verify it again. Configuration changes only after verification;
+an incompatible release does not replace the previous working configuration.
+After an upgrade, preview migrations for existing shadows before updating their
+backend metadata. The saved SDK location lets ShadowFrog run a per-user Linux
+installation without environment-variable setup.
+
+After installing this branch's ShadowFrog skills into your target repository,
+run there (use `.claude` instead of `.github` for Claude installations):
+
+```powershell
 # New shadow only:
 python .github\skills\shadow-frog-init\shadow-init.py --symbol-backend astred
 # Existing shadow: read-only preview, NOT --reset:
 python .github\skills\shadow-frog-init\shadow-init.py --preview-migration --symbol-backend astred
 ```
 
-Choose and pin an approved published package version; do not install an
-unqualified latest release. The adapter was exercised with Astred 2.14.30
+Use `--version` when reproducible setup is required. The adapter was exercised with Astred 2.14.30
 (a local `2.14.30-preview.0` source build), using `treeerr -- bljson` and
 exporting `bljson` 2.14.0;
 availability of that exact package in the private feed is not asserted.
-Linux/macOS can configure their installed executable with the same environment
-variable or `--astred-command`. Configure it in every process that performs
-updates; machine paths and credentials never go into `.shadow` state.
+Manual installations can still use `SHADOWFROG_ASTRED_COMMAND` or
+`--astred-command`. Machine paths and credentials never go into `.shadow` state.
 
 Init and update share a versioned, cached JSON inventory. Existing knowledge
 is never automatically migrated: review scope-name changes, preserve discoveries

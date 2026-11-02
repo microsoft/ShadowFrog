@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import tempfile
@@ -15,6 +16,50 @@ IDENTITY_KEYS = ("astred_version", "astred_release", "normalizer_version")
 
 class AstredError(RuntimeError):
     """An extraction failed; callers must not treat it as an empty inventory."""
+
+
+def tool_config_path():
+    if os.name == "nt":
+        directory = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        directory = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return directory / "ShadowFrog" / "astred.json"
+
+
+def tool_configuration():
+    config = tool_config_path()
+    if not config.exists():
+        return {}
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("command"), str) or not data["command"]:
+            raise ValueError("expected a nonempty command string")
+        if not Path(data["command"]).is_absolute():
+            raise ValueError("expected an absolute executable path")
+        if "dotnet_root" in data and (
+            not isinstance(data["dotnet_root"], str) or not data["dotnet_root"]
+            or not Path(data["dotnet_root"]).is_absolute()
+        ):
+            raise ValueError("expected an absolute dotnet_root path")
+        return data
+    except (OSError, ValueError) as exc:
+        raise AstredError(f"Cannot read Astred setup configuration {config}: {exc}. Rerun install-astred.py.") from exc
+
+
+def resolve_command(command=None):
+    return (str(command) if command else os.environ.get("SHADOWFROG_ASTRED_COMMAND")
+            or tool_configuration().get("command", "astred"))
+
+
+def runtime_environment(dotnet_root, env=None):
+    result = dict(os.environ if env is None else env)
+    result["DOTNET_ROOT"] = str(dotnet_root)
+    architecture = {"x86_64": "X64", "amd64": "X64", "aarch64": "ARM64",
+                    "arm64": "ARM64", "armv7l": "ARM", "i386": "X86",
+                    "i686": "X86", "x86": "X86"}.get(platform.machine().lower())
+    if architecture:
+        result[f"DOTNET_ROOT_{architecture}"] = str(dotnet_root)
+    return result
 
 
 def source_hash(path):
@@ -147,11 +192,16 @@ def normalize_export(data, root, paths):
         raise AstredError(f"Malformed Astred export: {exc}") from exc
 
 
-def extract(root, paths, command="astred", timeout=180, expected_metadata=None,
-            on_warning=None):
+def extract(root, paths, command=None, timeout=180, expected_metadata=None,
+            on_warning=None, env=None):
     """Run one Python batch. Never write to the source tree or report errors remotely."""
     root = Path(root).resolve()
     try:
+        if command is None and not os.environ.get("SHADOWFROG_ASTRED_COMMAND") and env is None:
+            config = tool_configuration()
+            command = config.get("command")
+            if config.get("dotnet_root"):
+                env = runtime_environment(config["dotnet_root"])
         hashes = {path: source_hash(root / path) for path in paths}
         with tempfile.TemporaryDirectory(prefix="shadowfrog-astred-") as directory:
             temp = Path(directory)
@@ -162,10 +212,10 @@ def extract(root, paths, command="astred", timeout=180, expected_metadata=None,
                 ]}],
             }), encoding="utf-8")
             process = subprocess.run(
-                [str(command), "-nc", "-noerrorreport", f"-repo:{root}",
+                [resolve_command(command), "-nc", "-noerrorreport", f"-repo:{root}",
                  f"-project:{project}", "treeerr", "--", "bljson", f"-file:{output}"],
                 cwd=temp, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=timeout,
+                errors="replace", timeout=timeout, env=env,
             )
             diagnostics = "\n".join((process.stdout, process.stderr)).strip()
             if process.returncode:
@@ -192,6 +242,6 @@ def extract(root, paths, command="astred", timeout=180, expected_metadata=None,
         raise AstredError(f"Astred timed out after {timeout}s. No symbols were accepted.") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise AstredError(
-            f"Cannot run/read Astred: {exc}. Install the authenticated Astred.Tools "
-            "package and set --astred-command to its executable."
+            f"Cannot run/read Astred: {exc}. Run install-astred.py "
+            "from the ShadowFrog checkout, or set --astred-command to an installed executable."
         ) from exc

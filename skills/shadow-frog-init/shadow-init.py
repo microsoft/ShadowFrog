@@ -995,7 +995,7 @@ def _inventory_symbol(record):
     return symbol
 
 
-def extract_inventory(repo_root, symbol_backend=None, astred_command="astred",
+def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
                       astred_timeout=180, preview=False, ignore_content=None):
     """Shared, read-only inventory for init, incremental updates and migration review."""
     root = Path(repo_root).resolve()
@@ -1381,7 +1381,7 @@ def build_index(file_records, total_symbols, total_discoveries=0, cross_cutting=
 # ---------------------------------------------------------------------------
 
 def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
-                astred_command="astred", astred_timeout=180):
+                astred_command=None, astred_timeout=180):
     """Initialize the .shadow/ knowledge base.
 
     Returns True on success (even with non-fatal warnings), False on fatal errors.
@@ -1685,8 +1685,8 @@ def main():
     )
     parser.add_argument("--symbol-backend", choices=("regex", "astred"), default=None,
                         help="Symbol backend (default: state.json setting, otherwise regex)")
-    parser.add_argument("--astred-command", default=os.environ.get("SHADOWFROG_ASTRED_COMMAND", "astred"),
-                        help="Astred executable path (or SHADOWFROG_ASTRED_COMMAND)")
+    parser.add_argument("--astred-command", default=None,
+                        help="Astred executable path (otherwise environment, setup configuration, or PATH)")
     parser.add_argument("--astred-timeout", type=int, default=180,
                         help="Astred batch timeout in seconds (default: 180)")
     parser.add_argument("--symbols-only", action="store_true",

@@ -44,7 +44,7 @@ python3 .github/skills/shadow-frog-init/shadow-init.py --root "$(pwd)"
 | `--reset` | Delete existing .shadow/ and recreate |
 | `--dry-run` | Show what would be created without writing |
 | `--symbol-backend regex\|astred` | Regex by default; existing shadows inherit `state.json` configuration |
-| `--astred-command PATH` | Astred executable; also configurable with `SHADOWFROG_ASTRED_COMMAND` |
+| `--astred-command PATH` | Override the executable; otherwise use `SHADOWFROG_ASTRED_COMMAND`, setup configuration, or PATH |
 | `--astred-timeout SECONDS` | Positive batch timeout; default 180 |
 | `--symbols-only` | Print the shared extraction inventory as JSON; do not write `.shadow/` |
 | `--preview-migration` | Print inventory plus proposed address changes; do not write `.shadow/` |
@@ -62,8 +62,10 @@ The helper does not choose the version-control mode.
 ### Optional Astred backend
 
 Astred is an **optional Python declaration backend**, not an LLM analysis
-replacement or a required ShadowFrog dependency. Install a pinned, approved
-`Astred.Tools` release separately from the authenticated internal feed; see
+replacement or a required ShadowFrog dependency. Install the optional
+`Astred.Tools` release using `python install-astred.py` (Linux: `python3`)
+from the ShadowFrog checkout; setup defaults to the latest stable release,
+with optional `--version <exact-version>` for reproducibility. See
 [setup and authentication](../../README.md#optional-astred-symbol-extraction).
 Do not copy Astred source or binaries into the skills package.
 
@@ -106,7 +108,10 @@ Astred initialization records this optional metadata in `_meta/state.json`:
 }
 ```
 
-The machine-local executable path and credentials are **not** persisted.
+The machine-local executable path and credentials are **not** persisted in `.shadow`.
+The setup script saves the executable path in per-user configuration outside
+the repository, automatically discovered unless overridden by the environment
+or `--astred-command`.
 `_meta/symbols.json` caches the validated inventory, keyed by source SHA-256,
 backend release, and normalizer version. Updates reuse unchanged Python files
 and batch only cache misses. A full cache hit does not invoke Astred; on a miss,

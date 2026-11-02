@@ -51,9 +51,11 @@ python .github\skills\shadow-frog-init\shadow-init.py --symbols-only
 
 This prints JSON without changing `.shadow/`. It inherits the optional
 `symbol_backend` configuration from `_meta/state.json` (absent means regex).
-For Astred, configure the machine-local executable using
-`SHADOWFROG_ASTRED_COMMAND` or `--astred-command`; do not store its path in
-shared metadata. Unchanged Python files reuse `_meta/symbols.json`; changed
+For Astred, run `python install-astred.py` (Linux: `python3`) from the
+ShadowFrog checkout once; setup defaults to latest stable, with optional
+`--version <exact-version>`. The executable is discovered from per-user setup
+configuration. `SHADOWFROG_ASTRED_COMMAND` or `--astred-command` override it;
+do not store its path in shared metadata. Unchanged Python files reuse `_meta/symbols.json`; changed
 files are batched through the pinned Astred backend. Non-Python languages
 explicitly use regex. **Stop on extraction failure**; a failed inventory does
 not mean that all symbols disappeared. Use each record's `qualified_name` for

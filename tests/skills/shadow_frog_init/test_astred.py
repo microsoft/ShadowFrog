@@ -213,6 +213,31 @@ def test_batch_process_contract_and_version_pin(shadow_init, source_repo, monkey
                        "tool path with spaces", 17, {**METADATA, "astred_release": "another-release"})
 
 
+def test_saved_sdk_is_used_without_shell_environment_setup(shadow_init, source_repo, monkeypatch, tmp_path):
+    module = shadow_init._astred
+    config = tmp_path / "astred.json"
+    executable, sdk = str(tmp_path / "astred"), str(tmp_path / "private sdk")
+    config.write_text(json.dumps({"command": executable, "dotnet_root": sdk}), encoding="utf-8")
+    monkeypatch.setattr(module, "tool_config_path", lambda: config)
+    monkeypatch.delenv("SHADOWFROG_ASTRED_COMMAND", raising=False)
+    monkeypatch.setenv("DOTNET_ROOT", "wrong-root")
+    monkeypatch.setenv("DOTNET_ROOT_X64", "wrong-architecture-root")
+    monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
+
+    def run(args, **kwargs):
+        assert args[0] == executable
+        assert kwargs["env"]["DOTNET_ROOT"] == sdk
+        assert kwargs["env"]["DOTNET_ROOT_X64"] == sdk
+        output = Path(next(arg[6:] for arg in args if arg.startswith("-file:")))
+        output.write_text(json.dumps(_export(source_repo)), encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    symbols, _ = module.extract(source_repo, ["sample.py"])
+    assert symbols["sample.py"]
+    assert os.environ["DOTNET_ROOT"] == "wrong-root"
+
+
 @pytest.mark.parametrize("failure", ["exit", "timeout", "missing-tool", "missing-output",
                                     "json", "logged-exception", "source-change"])
 def test_process_failures_never_become_empty_success(shadow_init, source_repo, monkeypatch, failure):

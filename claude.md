@@ -179,6 +179,12 @@ Absence means regex. Astred additionally records `normalizer_version`,
 metadata during updates; change it only after reviewing a backend migration.
 `_meta/symbols.json` is a source-hash/backend-version extraction cache, not
 discovery storage. Executable paths and credentials are machine-local.
+`install-astred.py` installs and verifies the latest stable optional CLI
+(`--version <exact-version>` pins it) and saves its executable and SDK location
+in per-user configuration outside the repository. Setup provisions .NET 10
+on Windows and Linux when needed.
+Executable resolution is explicit argument, environment variable, setup
+configuration, then PATH; regex installations do not require this setup.
 
 ### Dream Reports (`_dreams/`)
 
