@@ -175,10 +175,15 @@ and `_dreams/`). Cross-cutting discoveries are tracked separately via
 
 An optional `symbol_backend` object records `name` (`regex` or `astred`).
 Absence means regex. Astred additionally records `normalizer_version`,
-`astred_version`, `astred_release`, and `fallback_languages`. Preserve this
+`astred_version`, `astred_release`, and `fallback_languages`. For C/C++ it also
+records a repository-relative `project` and `project_sha256`. Preserve this
 metadata during updates; change it only after reviewing a backend migration.
 `_meta/symbols.json` is a source-hash/backend-version extraction cache, not
-discovery storage. Executable paths and credentials are machine-local.
+discovery storage. Python cache hits are reused; native projects are always
+reparsed to account for header dependencies. C/C++ requires a build-derived
+Astred project retaining includes, defines, and forced headers; setup does not
+infer OS compiler configuration. Project changes require migration review.
+Executable paths and credentials are machine-local.
 `install-astred.py` installs and verifies the latest stable optional CLI
 (`--version <exact-version>` pins it) and saves its executable and SDK location
 in per-user configuration outside the repository. Setup provisions .NET 10

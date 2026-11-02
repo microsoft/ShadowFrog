@@ -150,7 +150,7 @@ SOURCE_EXTENSIONS = {
     # Ruby
     ".rb",
     # C / C++
-    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx",
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".inl", ".ipp",
     # C#
     ".cs",
     # PHP
@@ -356,6 +356,7 @@ EXTENSION_TO_LANG = {
     ".c": "C", ".h": "C",
     ".cpp": "C++", ".hpp": "C++", ".cc": "C++",
     ".hh": "C++", ".cxx": "C++", ".hxx": "C++",
+    ".inl": "C++", ".ipp": "C++",
     ".cs": "C#",
     ".php": "PHP",
     ".sh": "Shell", ".bash": "Shell", ".zsh": "Shell",
@@ -410,7 +411,7 @@ class Symbol:
     @property
     def is_container(self):
         return self.kind in ("class", "interface", "enum", "trait",
-                             "struct", "protocol", "module")
+                             "struct", "union", "namespace", "protocol", "module")
 
 
 # --- Per-language regex extractors ---
@@ -996,7 +997,8 @@ def _inventory_symbol(record):
 
 
 def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
-                      astred_timeout=180, preview=False, ignore_content=None):
+                      astred_timeout=180, preview=False, ignore_content=None,
+                      astred_project=None):
     """Shared, read-only inventory for init, incremental updates and migration review."""
     root = Path(repo_root).resolve()
     shadow_dir = root / ".shadow"
@@ -1004,12 +1006,16 @@ def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
     backend = symbol_backend or configured["name"]
     if backend not in {"regex", "astred"}:
         raise ValueError(f"Unknown symbol backend: {backend}.")
+    if astred_project is not None and backend != "astred":
+        raise ValueError("--astred-project requires the Astred symbol backend.")
     if backend != configured["name"] and shadow_dir.exists() and not preview:
         raise ValueError("Changing symbol backends requires --preview-migration first.")
     paths = discover_files(str(root), shadow_dir, ignore_content)
     hashes = {path: _astred.source_hash(root / path) for path in paths}
     python_paths = [path for path in paths if detect_language(path) == "Python"]
-    python_symbols = {}
+    native_paths = [path for path in paths if _astred.is_native(path)]
+    astred_paths = set(python_paths + native_paths)
+    astred_symbols = {}
     metadata = {"name": backend}
     if backend == "astred":
         expected = configured if configured["name"] == "astred" and not preview else None
@@ -1034,7 +1040,7 @@ def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
                         path in python_paths and entry.get("backend") == "astred"
                         and entry.get("source_sha256") == hashes[path]
                     ):
-                        if path in python_symbols or not isinstance(entry.get("symbols"), list):
+                        if path in astred_symbols or not isinstance(entry.get("symbols"), list):
                             raise ValueError(f"Invalid or duplicate cached Python file: {path}.")
                         for record in entry["symbols"]:
                             _inventory_symbol(record)
@@ -1044,28 +1050,30 @@ def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
                                        for key in ("line", "column"))
                             ):
                                 raise ValueError(f"Invalid cached Astred declaration in {path}.")
-                        python_symbols[path] = entry["symbols"]
+                        astred_symbols[path] = entry["symbols"]
                 metadata = dict(cache_metadata)
             else:
                 warn("Symbol cache backend/version differs from configuration; re-extracting Python.")
-        pending = [path for path in python_paths if path not in python_symbols]
+        # Native declarations depend on headers and compile settings, not just their source hash.
+        pending = [path for path in python_paths if path not in astred_symbols] + native_paths
         if pending or metadata == {"name": "astred"}:
             extracted, metadata = _astred.extract(
                 root, pending, command=astred_command, timeout=astred_timeout,
                 expected_metadata=expected, on_warning=warn,
+                project_file=astred_project or configured.get("project"),
             )
-            python_symbols.update(extracted)
-        fallback_languages = sorted({detect_language(path) for path in paths if path not in python_paths})
+            astred_symbols.update(extracted)
+        fallback_languages = sorted({detect_language(path) for path in paths if path not in astred_paths})
         metadata["fallback_languages"] = fallback_languages
         if fallback_languages:
-            warn("Astred supports Python in this integration; using regex for: "
+            warn("Astred supports Python and C/C++ in this integration; using regex for: "
                  + ", ".join(fallback_languages))
 
     records = []
     for path in paths:
         language = detect_language(path)
-        if backend == "astred" and language == "Python":
-            symbols = python_symbols[path]
+        if backend == "astred" and path in astred_paths:
+            symbols = astred_symbols[path]
         else:
             source = (root / path).read_text(encoding="utf-8", errors="replace")
             symbols = [
@@ -1079,7 +1087,7 @@ def extract_inventory(repo_root, symbol_backend=None, astred_command=None,
             raise ValueError(f"Source changed during symbol extraction: {path}. Retry.")
         records.append({
             "path": path, "language": language,
-            "backend": "astred" if backend == "astred" and language == "Python" else "regex",
+            "backend": "astred" if backend == "astred" and path in astred_paths else "regex",
             "source_sha256": hashes[path], "symbols": symbols,
         })
     return {"schema_version": 1, "symbol_backend": metadata, "files": records}
@@ -1115,7 +1123,7 @@ def preview_migration(repo_root, inventory):
             if heading:
                 headings.append(heading.group(1))
         previous[source_path] = Counter(
-            re.sub(r"^(?:class|interface|enum|trait|struct|protocol|module)\s+", "", heading)
+            re.sub(r"^(?:class|interface|enum|trait|struct|union|namespace|protocol|module)\s+", "", heading)
             for heading in headings
         )
     proposed = {entry["path"]: Counter(record["qualified_name"] for record in entry["symbols"])
@@ -1381,7 +1389,7 @@ def build_index(file_records, total_symbols, total_discoveries=0, cross_cutting=
 # ---------------------------------------------------------------------------
 
 def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
-                astred_command=None, astred_timeout=180):
+                astred_command=None, astred_timeout=180, astred_project=None):
     """Initialize the .shadow/ knowledge base.
 
     Returns True on success (even with non-fatal warnings), False on fatal errors.
@@ -1390,6 +1398,9 @@ def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
     root = Path(repo_root).resolve()
     shadow_dir = root / ".shadow"
     inventory = None
+    if astred_project is not None and symbol_backend != "astred":
+        error("--astred-project requires the Astred symbol backend.")
+        return False
 
     if shadow_dir.exists() and not reset:
         error(f".shadow/ already exists at {shadow_dir}. "
@@ -1400,7 +1411,7 @@ def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
         try:
             inventory = extract_inventory(
                 root, symbol_backend, astred_command, astred_timeout,
-                preview=True, ignore_content=SHADOWIGNORE_CONTENT,
+                preview=True, ignore_content=SHADOWIGNORE_CONTENT, astred_project=astred_project,
             )
         except (_astred.AstredError, ValueError, OSError) as exc:
             error(str(exc))
@@ -1641,7 +1652,7 @@ def init_shadow(repo_root, reset=False, dry_run=False, symbol_backend="regex",
     print(f"  Languages: {lang_summary or 'none'}")
     if inventory is not None:
         print(f"  Backend:   Astred {inventory['symbol_backend']['astred_version']} "
-              "(Python; regex for other languages)")
+              "(Python and C/C++; regex for other languages)")
 
     if skipped_files:
         print(f"  Skipped:   {len(skipped_files)} files (see warnings above)")
@@ -1689,6 +1700,8 @@ def main():
                         help="Astred executable path (otherwise environment, setup configuration, or PATH)")
     parser.add_argument("--astred-timeout", type=int, default=180,
                         help="Astred batch timeout in seconds (default: 180)")
+    parser.add_argument("--astred-project", default=None,
+                        help="Build-derived C/C++ project inside --root (default: recorded project or .astred.project.json)")
     parser.add_argument("--symbols-only", action="store_true",
                         help="Print the shared symbol inventory as JSON; do not write .shadow/")
     parser.add_argument("--preview-migration", action="store_true",
@@ -1722,6 +1735,7 @@ def main():
                 repo_root, args.symbol_backend, args.astred_command, args.astred_timeout,
                 preview=args.preview_migration,
                 ignore_content=SHADOWIGNORE_CONTENT if not (Path(repo_root) / ".shadow").exists() else None,
+                astred_project=args.astred_project,
             )
             if args.preview_migration:
                 inventory["migration"] = preview_migration(repo_root, inventory)
@@ -1731,6 +1745,7 @@ def main():
         success = init_shadow(
             repo_root, reset=args.reset, dry_run=args.dry_run, symbol_backend=backend,
             astred_command=args.astred_command, astred_timeout=args.astred_timeout,
+            astred_project=args.astred_project,
         )
         sys.exit(0 if success else 1)
 

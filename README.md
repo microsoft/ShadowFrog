@@ -86,7 +86,7 @@ For installed paths and optional components, see [Installation options](#install
 ### Optional Astred symbol extraction
 
 Regex remains the default; baseline installation still needs only Git and
-Python. Opt into **Astred for Python declarations** when you have access to
+Python. Opt into **Astred for Python and C/C++ declarations** when you have access to
 its internal Azure Artifacts feed. Other languages explicitly retain their
 existing regex extractors. Astred runs as a separate CLI process; ShadowFrog
 does not vendor its repository, binaries, or Python bindings.
@@ -119,7 +119,8 @@ Windows SDK installation may request elevation; Astred itself is installed per u
 Complete interactive sign-in when prompted; use your organization's approved
 developer identity with **feed-reader** access.
 GitHub organization membership and `GITHUB_TOKEN` do not grant feed access.
-Setup verifies Python symbol extraction before saving the executable path.
+Setup verifies Python, C, and build-configured C++ symbol extraction before saving
+the executable path.
 It does not initialize, reset, or migrate any `.shadow/`.
 
 ShadowFrog automatically discovers the saved path in
@@ -146,12 +147,51 @@ python .github\skills\shadow-frog-init\shadow-init.py --symbol-backend astred
 python .github\skills\shadow-frog-init\shadow-init.py --preview-migration --symbol-backend astred
 ```
 
-Use `--version` when reproducible setup is required. The adapter was exercised with Astred 2.14.30
-(a local `2.14.30-preview.0` source build), using `treeerr -- bljson` and
-exporting `bljson` 2.14.0;
-availability of that exact package in the private feed is not asserted.
+Use `--version` when reproducible setup is required. The adapter was exercised with
+the published Astred.Tools **2.14.34** package, using `treeerr -- bljson`
+and exporting `bljson` 2.14.0.
 Manual installations can still use `SHADOWFROG_ASTRED_COMMAND` or
 `--astred-command`. Machine paths and credentials never go into `.shadow` state.
+
+**C/C++ and Windows OS components require a build-derived Astred project.**
+Tool installation does not infer Razzle/compiler configuration. Capture a clean
+component build with Astred TraceBld in the correct build environment, then
+generate `.astred.project.json` with AstProj. For example, on Windows:
+
+```powershell
+# Run in the component's prepared Razzle environment. This rebuilds the component.
+$astred = (Get-Content "$env:LOCALAPPDATA\ShadowFrog\astred.json" | ConvertFrom-Json).command
+& $astred tracebld build -cZ
+& $astred astproj .tracebld
+```
+
+An existing `compile_commands.json` can instead be imported with
+`astred astproj compile_commands.json` using the installed executable.
+See [Astred's project guidance](https://dev.azure.com/FoSSE/Astred/_git/Astred?path=/src/astproj/README.md)
+for platform-specific capture/import options. The setup configuration records
+the executable and SDK locations for direct Astred use; ShadowFrog itself
+loads them automatically.
+
+Use the init command above with `--root <component-root>` and, if needed,
+`--astred-project <relative-project-path>` (default `.astred.project.json`).
+The project must live inside that root and cover every discovered C/C++ file,
+including headers through their translation units. Keep the project's `%REPO%`,
+relative paths, and `.astred.folders.json` mappings consistent with `--root`;
+projects generated for an enlistment root are **not** automatically rebased to
+a component root. Include paths, defines, forced headers, and shared compiler
+settings are passed to Astred unchanged.
+On VFS-backed OS enlistments, use a small, deliberately scoped component;
+do not initialize at the entire OS root or hydrate unrelated code.
+
+Native inventories include namespaces, types, typedefs, macros, and function
+declarations/definitions, including out-of-line methods. Addresses retain
+ShadowFrog's dotted form, such as `device.cpp::Os.Device.Run`.
+Native projects are reparsed on every update so header changes cannot reuse
+stale source-only caches; unchanged Python files still use the cache.
+The relative project path and its SHA-256 are recorded in backend metadata.
+Changing the project file requires a migration preview, just like changing
+the backend release. Real validation used small C/C++ fixtures, not a full
+Windows OS build.
 
 Init and update share a versioned, cached JSON inventory. Existing knowledge
 is never automatically migrated: review scope-name changes, preserve discoveries
@@ -159,7 +199,7 @@ and unresolved historical sections, and update references before adopting new
 backend metadata. See the [backend and migration reference](skills/shadow-frog-init/SKILL.md#optional-astred-backend).
 Missing tools, reported AST errors, and export failures stop extraction rather
 than silently changing the backend. Astred uses Tree-sitter recovery, not a
-Python compiler: recovered constructs without error nodes can still be exported.
+language compiler: recovered constructs without error nodes can still be exported.
 
 Ordinary tests use synthetic exports and need no ADO credentials. A trusted
 integration job may install its pinned tool and set

@@ -46,6 +46,7 @@ python3 .github/skills/shadow-frog-init/shadow-init.py --root "$(pwd)"
 | `--symbol-backend regex\|astred` | Regex by default; existing shadows inherit `state.json` configuration |
 | `--astred-command PATH` | Override the executable; otherwise use `SHADOWFROG_ASTRED_COMMAND`, setup configuration, or PATH |
 | `--astred-timeout SECONDS` | Positive batch timeout; default 180 |
+| `--astred-project PATH` | Build-derived C/C++ project inside `--root`; defaults to recorded project or `.astred.project.json` |
 | `--symbols-only` | Print the shared extraction inventory as JSON; do not write `.shadow/` |
 | `--preview-migration` | Print inventory plus proposed address changes; do not write `.shadow/` |
 
@@ -61,7 +62,7 @@ The helper does not choose the version-control mode.
 
 ### Optional Astred backend
 
-Astred is an **optional Python declaration backend**, not an LLM analysis
+Astred is an **optional Python and C/C++ declaration backend**, not an LLM analysis
 replacement or a required ShadowFrog dependency. Install the optional
 `Astred.Tools` release using `python install-astred.py` (Linux: `python3`)
 from the ShadowFrog checkout; setup defaults to the latest stable release,
@@ -89,8 +90,30 @@ variables, anonymous functions, references, docstring examples, and discard
 targets such as `_` are not symbol addresses. Repeated declarations are retained;
 they do not acquire artificial graph-ID suffixes.
 
+For **C/C++**, first capture a clean component build with Astred TraceBld in
+the correct compiler/Razzle environment and generate `.astred.project.json`
+with AstProj, or import an existing compilation database with AstProj.
+Pass `--astred-project <relative-path>` for a non-default project. It must live
+inside `--root` and cover every discovered native source/header; unreferenced
+headers need an appropriate translation unit or explicit project entry.
+Keep `%REPO%` and folder mappings aligned with `--root`; a project generated
+for an entire enlistment is not automatically rebased for a component.
+The original project is passed unchanged so includes, defines, forced headers,
+and shared compiler settings remain intact. Scope VFS-backed OS work to a small
+component, not the entire enlistment; never discover flags by recursively
+scanning or hydrating the OS tree.
+
+Native symbols include namespaces, classes/structs/unions/enums and forward
+declarations, typedefs, macros, and function declarations/definitions.
+Semantic ownership preserves out-of-line constructors, destructors, methods,
+and operators as dotted addresses such as `device.cpp::Os.Device.Run`.
+Included SDK/dependency files are parsed but do not get shadows unless discovered
+inside the selected root. Identical header interpretations are deduplicated;
+overloads at different source positions remain repeated headings, not
+graph-ID-suffixed addresses.
+
 Other languages continue using the existing regex extractors, explicitly
-reported on stderr and in `symbol_backend.fallback_languages`. Python failures
+reported on stderr and in `symbol_backend.fallback_languages`. Astred failures
 **do not** silently fall back to regex. Missing tools, timeouts, incompatible or
 malformed exports, graph errors, incomplete file coverage, and source changes
 fail extraction. Astred preflight completes before init creates or resets a
@@ -101,10 +124,12 @@ Astred initialization records this optional metadata in `_meta/state.json`:
 ```json
 "symbol_backend": {
   "name": "astred",
-  "normalizer_version": 1,
+  "normalizer_version": 2,
   "astred_version": "<reported version>",
   "astred_release": "<reported release including build identity>",
-  "fallback_languages": ["<non-Python languages present>"]
+  "project": "<repository-relative native project path, when C/C++ is present>",
+  "project_sha256": "<native project SHA-256, when C/C++ is present>",
+  "fallback_languages": ["<languages other than Python and C/C++>"]
 }
 ```
 
@@ -114,8 +139,12 @@ the repository, automatically discovered unless overridden by the environment
 or `--astred-command`.
 `_meta/symbols.json` caches the validated inventory, keyed by source SHA-256,
 backend release, and normalizer version. Updates reuse unchanged Python files
-and batch only cache misses. A full cache hit does not invoke Astred; on a miss,
-the installed tool's reported release must match the recorded metadata.
+and batch only cache misses. A Python-only full cache hit does not invoke Astred.
+Native projects are always reparsed, including their dependencies: a header can
+change declarations in otherwise unchanged source files. Updates inherit the
+recorded project path; changing the project or its contents requires
+`--preview-migration` and reviewed metadata adoption. On extraction, the installed
+tool's reported release must match the recorded metadata.
 Corrupt caches fail visibly; remove only `_meta/symbols.json` to regenerate,
 not the knowledge tree.
 
@@ -129,7 +158,8 @@ The JSON contains the new inventory and `migration.files`: scope-change
 **candidates**, added addresses, `retained_unmatched` existing sections,
 ambiguous matches, and orphaned files. Unique leaf-name matches are suggestions,
 not proof of a rename. This command bypasses the old cache/version pin so it can
-also preview a tool or normalizer upgrade. It never changes headings, discoveries,
+also preview a tool, normalizer, or native project configuration change.
+It never changes headings, discoveries,
 trust metadata, citation scores, cross-references, cache, or state.
 
 Review and apply confirmed changes through

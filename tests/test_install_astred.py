@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,45 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "install-astred.py"
 VERSION = "2.14.30"
+PROBE_SYMBOLS = {
+    "sample.py": [{"qualified_name": "shadowfrog_setup_probe"}],
+    "sample.c": [{"qualified_name": "shadowfrog_c_probe"}],
+    "sample.h": [{"qualified_name": "ShadowFrogSetup"}],
+    "sample.cpp": [{"qualified_name": "ShadowFrogSetup.native_probe"}],
+}
+REAL_ASTRED = os.environ.get("SHADOWFROG_ASTRED_TEST_COMMAND")
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.skipif(not REAL_ASTRED, reason="Set SHADOWFROG_ASTRED_TEST_COMMAND for the real tool")
+def test_real_installer_probe_verifies_python_c_and_cpp(monkeypatch, tmp_path):
+    spec = importlib.util.spec_from_file_location("install_astred", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tool = Path(REAL_ASTRED).resolve()
+    config = tmp_path / "astred.json"
+    monkeypatch.setattr(module._astred, "tool_config_path", lambda: config)
+    monkeypatch.setattr(module, "tempfile", SimpleNamespace(
+        mkdtemp=lambda **kwargs: str(tool.parent),
+        TemporaryDirectory=tempfile.TemporaryDirectory,
+        NamedTemporaryFile=tempfile.NamedTemporaryFile,
+    ))
+
+    def installed(args, env, capture=False):
+        if args[1:] == ["--list-sdks"]:
+            return SimpleNamespace(stdout="10.0.403 [sdk]\n")
+        if args[1:4] == ["tool", "list", "--global"]:
+            return SimpleNamespace(stdout=f"{module.PROVIDER} 1.0.0 provider\n")
+        if args[1:4] == ["tool", "list", "--tool-path"]:
+            return SimpleNamespace(stdout="Astred.Tools 2.14.34 astred\n")
+        pytest.fail(f"Probe verification must not change installed tools: {args}")
+
+    monkeypatch.setattr(module, "run", installed)
+    module.install()
+    saved = json.loads(config.read_text(encoding="utf-8"))
+    assert saved["command"] == str(tool)
+    assert Path(saved["dotnet_root"]).is_dir()
 
 
 @pytest.fixture
@@ -45,10 +85,14 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "run", run)
 
     def extract(root, paths, **kwargs):
-        assert paths == ["sample.py"]
+        assert paths == list(PROBE_SYMBOLS)
         assert "shadowfrog_setup_probe" in (root / paths[0]).read_text(encoding="utf-8")
         assert Path(kwargs["command"]).is_file()
-        return {"sample.py": [{"name": "shadowfrog_setup_probe"}]}, {"astred_release": VERSION}
+        project = json.loads((root / ".astred.project.json").read_text(encoding="utf-8"))
+        assert [unit["language"] for unit in project["units"]] == ["C", "C++"]
+        assert project["units"][1]["defines"] == {"SHADOWFROG_SETUP": "1"}
+        assert '#include "sample.h"' in (root / "sample.cpp").read_text(encoding="utf-8")
+        return PROBE_SYMBOLS, {"astred_release": VERSION}
 
     monkeypatch.setattr(module._astred, "extract", extract)
     return module, config, calls
@@ -90,7 +134,7 @@ def test_rerun_reuses_tools_but_still_probes(setup, monkeypatch):
     calls.clear()
     probes = []
     monkeypatch.setattr(module._astred, "extract", lambda *args, **kwargs: (
-        probes.append(args) or {"sample.py": [{"name": "shadowfrog_setup_probe"}]},
+        probes.append(args) or PROBE_SYMBOLS,
         {"astred_release": VERSION},
     ))
     module.install(VERSION)
@@ -99,7 +143,7 @@ def test_rerun_reuses_tools_but_still_probes(setup, monkeypatch):
     assert config.is_file()
 
 
-@pytest.mark.parametrize("failure", ["install", "probe", "missing-symbol", "wrong-version"])
+@pytest.mark.parametrize("failure", ["install", "probe", "missing-symbol", "native-symbol", "wrong-version"])
 def test_failures_preserve_existing_configuration(setup, monkeypatch, failure):
     module, config, _ = setup
     config.parent.mkdir(parents=True)
@@ -119,9 +163,10 @@ def test_failures_preserve_existing_configuration(setup, monkeypatch, failure):
         def extract(*args, **kwargs):
             raise module._astred.AstredError("incompatible export")
         monkeypatch.setattr(module._astred, "extract", extract)
-    elif failure == "missing-symbol":
+    elif failure in {"missing-symbol", "native-symbol"}:
+        missing = "sample.cpp" if failure == "native-symbol" else "sample.py"
         monkeypatch.setattr(module._astred, "extract", lambda *args, **kwargs: (
-            {"sample.py": []}, {"astred_release": VERSION},
+            {**PROBE_SYMBOLS, missing: []}, {"astred_release": VERSION},
         ))
     with pytest.raises((subprocess.CalledProcessError, module._astred.AstredError)):
         module.install(VERSION)

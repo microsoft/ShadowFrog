@@ -1,4 +1,4 @@
-"""Optional, process-isolated Astred Python declaration backend."""
+"""Optional, process-isolated Astred Python and C/C++ declaration backend."""
 
 import hashlib
 import json
@@ -10,8 +10,19 @@ import tempfile
 import warnings
 from pathlib import Path
 
-NORMALIZER_VERSION = 1
-IDENTITY_KEYS = ("astred_version", "astred_release", "normalizer_version")
+NORMALIZER_VERSION = 2
+IDENTITY_KEYS = ("astred_version", "astred_release", "normalizer_version",
+                 "project", "project_sha256")
+NATIVE_EXTENSIONS = {".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".inl", ".ipp"}
+NATIVE_KINDS = {
+    "Namespace": "namespace", "Class": "class", "ClassDeclaration": "class",
+    "Struct": "struct", "StructDeclaration": "struct",
+    "Union": "union", "UnionDeclaration": "union",
+    "Enum": "enum", "EnumDeclaration": "enum", "Typedef": "typedef",
+    "Function": "function", "FunctionDeclaration": "function", "Macro": "macro",
+}
+NATIVE_SCOPES = {"Namespace", "Class", "Struct", "Union", "Enum", "Function",
+                 "ClassDeclaration", "StructDeclaration", "UnionDeclaration"}
 
 
 class AstredError(RuntimeError):
@@ -70,7 +81,79 @@ def _path_key(path):
     return os.path.normcase(str(Path(path).resolve()))
 
 
-def normalize_export(data, root, paths):
+def is_native(path):
+    return Path(path).suffix.lower() in NATIVE_EXTENSIONS
+
+
+def project_configuration(root, project_file=None):
+    root = Path(root).resolve()
+    project = root / (project_file or ".astred.project.json")
+    try:
+        relative = project.resolve().relative_to(root).as_posix()
+    except ValueError as exc:
+        raise AstredError("--astred-project must be inside --root so its path is portable.") from exc
+    if not project.is_file():
+        raise AstredError(
+            "C/C++ extraction requires a build-derived .astred.project.json. "
+            "Capture a clean component build with Astred TraceBld, run astred astproj, "
+            "then supply --astred-project (or put .astred.project.json in --root)."
+        )
+    return project.resolve(), {"project": relative, "project_sha256": source_hash(project)}
+
+
+def _native_scopes(block, blocks, seen=None):
+    """Prefer semantic ownership for out-of-line methods; never parse debug symbol IDs."""
+    seen = set() if seen is None else set(seen)
+    if block["id"] in seen:
+        raise AstredError("Cycle in Astred native declaration ownership.")
+    seen.add(block["id"])
+    relations = block.get("relatedBlockIdsByRelationType", {})
+    if not isinstance(relations, dict):
+        raise AstredError("Invalid Astred native declaration relationships.")
+    for relation in ("MemberOf", "DeclaredBy"):
+        targets = relations.get(relation, [])
+        if not isinstance(targets, list) or any(type(target) is not int for target in targets):
+            raise AstredError(f"Invalid Astred native {relation} targets.")
+        if targets:
+            candidates = []
+            for target in targets:
+                owner = blocks[str(target)]
+                scopes = _native_scopes(owner, blocks, seen)
+                if relation == "MemberOf" and owner.get("name"):
+                    scopes.append((owner["name"], owner["blocktype"]))
+                candidates.append(scopes)
+            if any(candidate != candidates[0] for candidate in candidates[1:]):
+                raise AstredError(f"Ambiguous Astred native ownership for {block.get('name')}.")
+            return candidates[0]
+    parent = blocks.get(str(block.get("parentId")))
+    if parent is None or parent["blocktype"] == "File":
+        return []
+    scopes = _native_scopes(parent, blocks, seen)
+    if parent["blocktype"] in NATIVE_SCOPES and parent.get("name"):
+        scopes.append((parent["name"], parent["blocktype"]))
+    return scopes
+
+
+def _native_record(block, blocks):
+    kind = NATIVE_KINDS.get(block["blocktype"])
+    if kind is None or not block.get("name"):
+        return None
+    scopes = [] if kind == "macro" else _native_scopes(block, blocks)
+    names = [name for name, _ in scopes] + [block["name"]]
+    if any(not isinstance(name, str) or not name.strip()
+           or any(ord(char) < 32 or char == "`" for char in name) for name in names):
+        raise AstredError("Invalid native declaration name in Astred export.")
+    names = [name.replace("::", ".") for name in names]
+    parent = ".".join(names[:-1]) or None
+    if kind == "function" and scopes and scopes[-1][1] in {
+        "Class", "Struct", "Union", "ClassDeclaration", "StructDeclaration", "UnionDeclaration",
+    }:
+        kind = "method"
+    return {"name": names[-1], "kind": kind, "parent": parent,
+            "qualified_name": ".".join(names)}
+
+
+def normalize_export(data, root, paths, allow_dependencies=False):
     """Normalize bljson v2 declarations, validating graph coverage and ancestry."""
     try:
         if not isinstance(data, dict):
@@ -87,7 +170,7 @@ def normalize_export(data, root, paths):
             raise AstredError("Astred export blocks must be an object.")
         expected = {_path_key(root / path): path for path in paths}
         if len(expected) != len(paths):
-            raise AstredError("Multiple source paths resolve to the same Python file.")
+            raise AstredError("Multiple source paths resolve to the same source file.")
         covered = set()
         for key, block in blocks.items():
             if (
@@ -102,10 +185,10 @@ def normalize_export(data, root, paths):
                 )
             if block["blocktype"] == "File":
                 file_key = _path_key(block["file"])
-                if file_key in covered:
+                if file_key in covered and not (allow_dependencies and is_native(block["file"])):
                     raise AstredError(f"Duplicate Astred file block: {block['file']}.")
                 covered.add(file_key)
-        if covered != set(expected):
+        if not set(expected) <= covered or (not allow_dependencies and covered != set(expected)):
             missing = sorted(expected[key] for key in set(expected) - covered)
             extra = sorted(covered - set(expected))
             raise AstredError(f"Astred file coverage mismatch: missing={missing}, extra={extra}.")
@@ -124,13 +207,19 @@ def normalize_export(data, root, paths):
             visited.update(chain)
 
         result = {path: [] for path in paths}
+        native_records = {path: set() for path in paths if is_native(path)}
         for block in blocks.values():
             block_type = block["blocktype"]
-            if block_type not in {"Class", "Function", "Variable", "Field"}:
+            file_key = _path_key(block["file"]) if "file" in block else None
+            path = expected.get(file_key)
+            if path is None:
+                continue
+            native = is_native(path)
+            if block_type not in (NATIVE_KINDS if native else {"Class", "Function", "Variable", "Field"}):
                 continue
             name = block.get("name")
             if not name:
-                if block_type == "Class":
+                if block_type == "Class" and not native:
                     raise AstredError("Astred class declaration is missing its name.")
                 continue  # Anonymous functions and unnamed graph nodes are not addresses.
             if not isinstance(name, str):
@@ -150,10 +239,22 @@ def normalize_export(data, root, paths):
                 parent_id = parent.get("parentId")
             if not parents or parents[-1]["blocktype"] != "File":
                 raise AstredError(f"Astred declaration {name} has no enclosing file.")
-            file_key = _path_key(block["file"])
             if file_key != _path_key(parents[-1]["file"]):
                 raise AstredError(f"Inconsistent Astred file ancestry for {name}.")
-            path = expected[file_key]
+            if native:
+                record = _native_record(block, blocks)
+                if record is None:
+                    continue
+                row, column = block["begrc"]["Row"], block["begrc"]["Column"]
+                if type(row) is not int or type(column) is not int or min(row, column) < 1:
+                    raise AstredError(f"Invalid Astred source position for {name}.")
+                record.update(line=row, column=column)
+                identity = tuple(record[key] for key in
+                                 ("qualified_name", "kind", "parent", "line", "column"))
+                if identity not in native_records[path]:
+                    native_records[path].add(identity)
+                    result[path].append(record)
+                continue
             scopes = [
                 parent for parent in reversed(parents)
                 if parent["blocktype"] in {"Class", "Function"} and parent.get("name")
@@ -193,8 +294,8 @@ def normalize_export(data, root, paths):
 
 
 def extract(root, paths, command=None, timeout=180, expected_metadata=None,
-            on_warning=None, env=None):
-    """Run one Python batch. Never write to the source tree or report errors remotely."""
+            on_warning=None, env=None, project_file=None):
+    """Run Python and build-configured native batches without modifying the source tree."""
     root = Path(root).resolve()
     try:
         if command is None and not os.environ.get("SHADOWFROG_ASTRED_COMMAND") and env is None:
@@ -203,33 +304,59 @@ def extract(root, paths, command=None, timeout=180, expected_metadata=None,
             if config.get("dotnet_root"):
                 env = runtime_environment(config["dotnet_root"])
         hashes = {path: source_hash(root / path) for path in paths}
+        native_paths = [path for path in paths if is_native(path)]
+        python_paths = [path for path in paths if Path(path).suffix.lower() == ".py"]
+        if len(native_paths) + len(python_paths) != len(paths):
+            raise AstredError("Astred extraction supports only Python and C/C++ source paths.")
+        native_project, project_metadata = (project_configuration(root, project_file)
+                                            if native_paths else (None, {}))
+        if expected_metadata and any(project_metadata.get(key) != expected_metadata.get(key)
+                                     for key in ("project", "project_sha256")):
+            raise AstredError("Astred project changed. Run --preview-migration and review backend metadata.")
+        symbols = {}
+        metadata = None
         with tempfile.TemporaryDirectory(prefix="shadowfrog-astred-") as directory:
             temp = Path(directory)
             project, output = temp / "project.json", temp / "blocks.json"
             project.write_text(json.dumps({
                 "units": [{"language": "Python", "sources": [
-                    str(root / path) for path in paths
+                    str(root / path) for path in python_paths
                 ]}],
             }), encoding="utf-8")
-            process = subprocess.run(
-                [resolve_command(command), "-nc", "-noerrorreport", f"-repo:{root}",
-                 f"-project:{project}", "treeerr", "--", "bljson", f"-file:{output}"],
-                cwd=temp, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=timeout, env=env,
-            )
-            diagnostics = "\n".join((process.stdout, process.stderr)).strip()
-            if process.returncode:
-                raise AstredError(f"Astred exited with {process.returncode}: {diagnostics}")
-            if re.search(r"(?im)^\s*Graph Creation Exceptions\b", diagnostics):
-                raise AstredError(f"Astred reported graph creation exceptions: {diagnostics}")
-            if process.stderr.strip():
-                (on_warning or warnings.warn)(f"Astred diagnostics: {process.stderr.strip()}")
-            symbols, metadata = normalize_export(
-                json.loads(output.read_text(encoding="utf-8-sig")), root, paths,
-            )
+            batches = []
+            if python_paths or not native_paths:
+                batches.append((project, python_paths, False))
+            if native_paths:
+                batches.append((native_project, native_paths, True))
+            for batch_project, batch_paths, native in batches:
+                output.unlink(missing_ok=True)
+                process = subprocess.run(
+                    [resolve_command(command), "-nc", "-noerrorreport", f"-repo:{root}",
+                     f"-project:{batch_project}", "treeerr", "--", "bljson", f"-file:{output}"],
+                    cwd=temp, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=timeout, env=env,
+                )
+                diagnostics = "\n".join((process.stdout, process.stderr)).strip()
+                if process.returncode:
+                    raise AstredError(f"Astred exited with {process.returncode}: {diagnostics}")
+                if re.search(r"(?im)^\s*Graph Creation Exceptions\b", diagnostics):
+                    raise AstredError(f"Astred reported graph creation exceptions: {diagnostics}")
+                if process.stderr.strip():
+                    (on_warning or warnings.warn)(f"Astred diagnostics: {process.stderr.strip()}")
+                extracted, batch_metadata = normalize_export(
+                    json.loads(output.read_text(encoding="utf-8-sig")), root, batch_paths,
+                    allow_dependencies=native,
+                )
+                if metadata is not None and batch_metadata != metadata:
+                    raise AstredError("Astred backend changed between extraction batches.")
+                metadata = batch_metadata
+                symbols.update(extracted)
+        metadata.update(project_metadata)
+        if native_project and source_hash(native_project) != project_metadata["project_sha256"]:
+            raise AstredError("Astred project changed during extraction. Retry.")
         if expected_metadata:
             for key in IDENTITY_KEYS:
-                if metadata[key] != expected_metadata.get(key):
+                if metadata.get(key) != expected_metadata.get(key):
                     raise AstredError(
                         f"Astred backend changed ({key}). Run --preview-migration and "
                         "review symbol/reference changes before updating backend metadata."

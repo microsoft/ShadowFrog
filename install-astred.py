@@ -172,9 +172,25 @@ def install(version=None):
     with tempfile.TemporaryDirectory(prefix="shadowfrog-astred-setup-") as temporary:
         root = Path(temporary)
         (root / "sample.py").write_text("def shadowfrog_setup_probe():\n    pass\n", encoding="utf-8")
-        symbols, metadata = _astred.extract(root, ["sample.py"], command=str(command), env=env)
-        if not any(symbol["name"] == "shadowfrog_setup_probe" for symbol in symbols["sample.py"]):
-            raise _astred.AstredError("Astred's Python extraction probe did not return the expected symbol.")
+        (root / "sample.c").write_text("int shadowfrog_c_probe(void) { return 0; }\n", encoding="utf-8")
+        (root / "sample.h").write_text(
+            "class ShadowFrogSetup { public: int native_probe(); };\n", encoding="utf-8",
+        )
+        (root / "sample.cpp").write_text(
+            '#include "sample.h"\n#if SHADOWFROG_SETUP\n'
+            "int ShadowFrogSetup::native_probe() { return 0; }\n#endif\n", encoding="utf-8",
+        )
+        (root / ".astred.project.json").write_text(json.dumps({"units": [
+            {"language": "C", "sources": [str(root / "sample.c")]},
+            {"language": "C++", "sources": [str(root / "sample.cpp")],
+             "defines": {"SHADOWFROG_SETUP": "1"}},
+        ]}), encoding="utf-8")
+        required = {"sample.py": "shadowfrog_setup_probe", "sample.c": "shadowfrog_c_probe",
+                    "sample.h": "ShadowFrogSetup", "sample.cpp": "ShadowFrogSetup.native_probe"}
+        symbols, metadata = _astred.extract(root, list(required), command=str(command), env=env)
+        for path, name in required.items():
+            if not any(symbol["qualified_name"] == name for symbol in symbols[path]):
+                raise _astred.AstredError(f"Astred's extraction probe did not return {path}::{name}.")
 
     config = _astred.tool_config_path()
     temporary = None

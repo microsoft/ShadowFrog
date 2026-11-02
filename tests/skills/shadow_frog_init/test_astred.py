@@ -12,7 +12,7 @@ import pytest
 
 
 METADATA = {
-    "name": "astred", "normalizer_version": 1,
+    "name": "astred", "normalizer_version": 2,
     "astred_version": "2.14.30", "astred_release": "2.14.30-test+fixture",
 }
 SOURCE = '''"""Example, not declarations:

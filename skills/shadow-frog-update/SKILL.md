@@ -55,15 +55,23 @@ For Astred, run `python install-astred.py` (Linux: `python3`) from the
 ShadowFrog checkout once; setup defaults to latest stable, with optional
 `--version <exact-version>`. The executable is discovered from per-user setup
 configuration. `SHADOWFROG_ASTRED_COMMAND` or `--astred-command` override it;
-do not store its path in shared metadata. Unchanged Python files reuse `_meta/symbols.json`; changed
-files are batched through the pinned Astred backend. Non-Python languages
-explicitly use regex. **Stop on extraction failure**; a failed inventory does
+do not store its path in shared metadata. Unchanged Python files reuse
+`_meta/symbols.json`; changed Python files are batched through the pinned backend.
+C/C++ uses the recorded build-derived Astred project (or `--astred-project`).
+Native projects are always reparsed, even without source diffs, because headers
+can change declarations in unchanged translation units. Keep the configured
+compiler environment, includes, defines, and forced headers available; setup
+alone does not generate an OS build project. Other languages explicitly use
+regex. **Stop on extraction failure**; a failed inventory does
 not mean that all symbols disappeared. Use each record's `qualified_name` for
 `file::symbol` references and `heading` for Markdown headings.
 
-When adopting Astred or upgrading its release/normalizer, first run
+When adopting Astred, upgrading its release/normalizer, or changing the native
+project/compile settings, first run
 `--preview-migration --symbol-backend astred` with the intended executable.
 Treat all affected shadow files as changed, even without a source diff.
+Also compare freshly extracted native symbols for unchanged source files
+after header changes; source hashes alone are insufficient.
 Review scope-change candidates; do not assume same-leaf names prove identity.
 Preserve unmatched/ambiguous sections and their discoveries as history until
 resolved. Apply only confirmed mappings, updating `Also involves:` and `_cross/`
