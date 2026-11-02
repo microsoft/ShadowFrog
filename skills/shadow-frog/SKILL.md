@@ -315,6 +315,12 @@ Cross-cutting discoveries can also have labels — add them to the metadata line
 Links 4 and 5 are bidirectional: if `_cross/db-connection-lifecycle.md` references
 `src/auth.py::fn`, then `src/auth.py.md` must list it in `## Cross-References`, and vice versa.
 
+Symbol addresses include full lexical scope when available: for example,
+`src/auth.py::factory.Local` or `src/auth.py::Outer.method.inner`.
+Container headings keep the kind prefix (`class Outer.Inner`), but
+references omit it (`src/auth.py::Outer.Inner`). Nesting beyond one level
+still uses `###`, not deeper Markdown heading levels.
+
 ## Seven Invariants
 
 1. Every included source file has exactly one shadow at `.shadow/<path>.md`
