@@ -4,9 +4,7 @@ Exercises: --help, happy-path worktree+branch creation, RUN_PREFIX detection,
 namespace override, slug validation, the .shadow/ gitignore guard, dry-run,
 and the throttled best-effort auto-GC.
 
-Cross-platform: invokes the Python entry point directly (no bash). The two
-auto-GC tests that assert an orphan is actually *swept* still need the bash
-`dream-gc.sh`, so they are skipped on Windows until `dream-gc.py` exists.
+Cross-platform: invokes the setup and auto-GC Python entry points directly.
 POSIX filename regressions also skip Windows; other tests run on all OSes.
 """
 import json
@@ -93,7 +91,8 @@ def _plant_orphan(base: Path, ns: str, name: str = "dream-orphan") -> Path:
     """Plant an orphan worktree (broken .git pointer, ancient mtime)."""
     d = base / ns / name
     d.mkdir(parents=True)
-    (d / ".git").write_text("gitdir: /nonexistent/path\n", encoding="utf-8")
+    missing_gitdir = base.parent / "missing-gitdir" / ns / name
+    (d / ".git").write_text(f"gitdir: {missing_gitdir.resolve()}\n", encoding="utf-8")
     (d / "leftover.txt").write_text("orphaned\n", encoding="utf-8")
     ancient = 946684800
     os.utime(d, (ancient, ancient))
@@ -717,10 +716,7 @@ class TestDreamSetupDryRun:
 # ===========================================================================
 # Auto-GC throttle (Bug A fix from bug-cleanup-gaps.md)
 #
-# These four exercise dream-setup's OWN throttle/opt-out logic, which never
-# invokes the GC sweeper — so they run on every OS. The two tests that assert
-# an orphan is actually swept need bash `dream-gc.sh` and are skipped on
-# Windows until a cross-platform `dream-gc.py` exists.
+# Throttle, failure, and actual-sweep cases run on every OS.
 # ===========================================================================
 
 @pytest.mark.slow
@@ -834,13 +830,13 @@ class TestDreamSetupAutoGCThrottle:
         dream_setup = _load_dream_setup_module()
         script_dir = tmp_path / "skill"
         script_dir.mkdir()
-        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        (script_dir / "dream-gc.py").write_text("", encoding="utf-8")
         worktree_base = tmp_path / "worktrees" / "repo"
         worktree_base.mkdir(parents=True)
         tombstone = worktree_base / ".last-gc"
 
         def fail_to_launch(*args, **kwargs):
-            raise FileNotFoundError("bash")
+            raise FileNotFoundError("python")
 
         monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
         monkeypatch.setattr(dream_setup.subprocess, "run", fail_to_launch)
@@ -855,13 +851,12 @@ class TestDreamSetupAutoGCThrottle:
         dream_setup = _load_dream_setup_module()
         script_dir = tmp_path / "skill"
         script_dir.mkdir()
-        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        (script_dir / "dream-gc.py").write_text("", encoding="utf-8")
         worktree_base = tmp_path / "worktrees" / "repo"
         worktree_base.mkdir(parents=True)
         tombstone = worktree_base / ".last-gc"
 
         monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
-        monkeypatch.setattr(dream_setup.os, "name", "posix")
         monkeypatch.setattr(
             dream_setup.subprocess,
             "run",
@@ -875,39 +870,35 @@ class TestDreamSetupAutoGCThrottle:
         assert not tombstone.exists()
         assert "auto-GC exited with code 1" in capsys.readouterr().err
 
-    def test_auto_gc_does_not_launch_bash_fallback_on_windows(
+    def test_auto_gc_uses_native_python_and_propagates_root(
         self, tmp_path, monkeypatch, capsys
     ):
         dream_setup = _load_dream_setup_module()
         script_dir = tmp_path / "skill"
         script_dir.mkdir()
-        (script_dir / "dream-gc.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        gc_script = script_dir / "dream-gc.py"
+        gc_script.write_text("", encoding="utf-8")
         worktree_base = tmp_path / "worktrees" / "repo"
         worktree_base.mkdir(parents=True)
 
         monkeypatch.setattr(dream_setup, "SCRIPT_DIR", str(script_dir))
-        monkeypatch.setattr(dream_setup.os, "name", "nt")
-        monkeypatch.setattr(
-            dream_setup.subprocess,
-            "run",
-            lambda *args, **kwargs: pytest.fail("Bash GC must not run on Windows"),
-        )
-
-        dream_setup._maybe_auto_gc(str(tmp_path), str(worktree_base))
-
-        assert not (worktree_base / ".last-gc").exists()
-        assert "auto-GC skipped on Windows" in capsys.readouterr().err
+        def run(args, **kwargs):
+            assert args[:2] == [sys.executable, str(gc_script)]
+            assert kwargs["env"]["DREAM_WORKTREE_BASE"] == str(worktree_base.parent)
+            assert kwargs["timeout"] == 120
+            assert kwargs["cwd"] == str(tmp_path)
+            return subprocess.CompletedProcess(args, 0, "gc output\n", "gc warning\n")
+        monkeypatch.setattr(dream_setup.subprocess, "run", run)
+        dream_setup._maybe_auto_gc(str(tmp_path), str(worktree_base), str(worktree_base.parent))
+        assert (worktree_base / ".last-gc").exists()
+        captured = capsys.readouterr()
+        assert not captured.out
+        assert "gc output" in captured.err and "gc warning" in captured.err
 
 @pytest.mark.slow
 @pytest.mark.integration
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="dream-gc.sh sweep uses POSIX path/realpath semantics",
-)
 class TestDreamSetupAutoGCSweep:
-    """These assert the orphan is actually *removed*, which needs the bash
-    `dream-gc.sh` sweeper. Skipped on Windows until a cross-platform
-    `dream-gc.py` exists."""
+    """The real Python sweeper must remove orphans on every OS."""
 
     def test_auto_gc_runs_when_no_tombstone(self, tmp_path):
         """First invocation sweeps orphans (no tombstone yet)."""
@@ -958,3 +949,39 @@ class TestDreamSetupAutoGCSweep:
         assert not other_orphan.exists(), (
             f"Auto-GC sweeps the whole base\nstderr: {result.stderr}"
         )
+
+
+@pytest.mark.parametrize("failure", [
+    FileNotFoundError("python"), subprocess.TimeoutExpired("gc", 120),
+])
+def test_auto_gc_launch_errors_warn_without_tombstone(tmp_path, monkeypatch, capsys, failure):
+    module = _load_dream_setup_module()
+    script_dir = tmp_path / "skill"
+    script_dir.mkdir()
+    (script_dir / "dream-gc.py").write_text("", encoding="utf-8")
+    base = tmp_path / "worktrees"
+    base.mkdir()
+    monkeypatch.setattr(module, "SCRIPT_DIR", str(script_dir))
+    def fail(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(module.subprocess, "run", fail)
+    module._maybe_auto_gc(str(tmp_path), str(base))
+    assert not (base / ".last-gc").exists()
+    assert "will retry later" in capsys.readouterr().err
+
+
+def test_auto_gc_missing_helper_warns(tmp_path, monkeypatch, capsys):
+    module = _load_dream_setup_module()
+    monkeypatch.setattr(module, "SCRIPT_DIR", str(tmp_path))
+    module._maybe_auto_gc(str(tmp_path), str(tmp_path))
+    assert "helper not found" in capsys.readouterr().err
+    assert not (tmp_path / ".last-gc").exists()
+
+
+@pytest.mark.parametrize("variable", ["DREAM_GC_INTERVAL_MIN", "DREAM_GC_AGE_MIN"])
+def test_auto_gc_rejects_newline_in_numeric_env(tmp_path, monkeypatch, capsys, variable):
+    module = _load_dream_setup_module()
+    monkeypatch.setenv(variable, "60\n")
+    module._maybe_auto_gc(str(tmp_path), str(tmp_path))
+    assert "non-negative integers" in capsys.readouterr().err
+    assert not (tmp_path / ".last-gc").exists()

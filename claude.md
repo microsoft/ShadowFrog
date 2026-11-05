@@ -24,11 +24,12 @@ ShadowFrog/
       dream-validate.py          Pre-push artifact validation
       dream-reconcile.py         Merge dream branches into main's shadow
       dream-coverage.py          Exploration coverage map
-      dream-cleanup.sh           Safe per-worktree cleanup (replaces inline snippet)
-      dream-gc.sh                Orphan-worktree sweep (defense-in-depth)
+      dream-cleanup.py           Native post-push worktree cleanup
+      dream-gc.py                Native orphan and completed-namespace sweep
       _dream_namespace.py        Shared setup/reconcile namespace resolution
       _worktree_paths.py         Shared worktree-root and path identity helpers
       _worktree_safety.py        Shared safety gate for rm-rf paths
+      _worktree_cleanup.py       Shared native metadata and ownership checks
     shadow-frog-nap/             Implementation-free feature-task ideation
       SKILL.md                   Bounded ideation, evidence, and task export instructions
       nap.py                     Portable record validator, parent context, and exporter

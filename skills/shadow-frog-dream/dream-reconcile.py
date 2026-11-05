@@ -62,7 +62,7 @@ finally:
     sys.dont_write_bytecode = _bytecode
 
 # Shared safety gate for `rm -rf <worktree>`. Lives next to this script so
-# bash callers (dream-cleanup.sh, dream-gc.sh) and this module share ONE
+# native cleanup helpers and this module share ONE
 # source of truth for the "is this path safe to remove?" rules. Imported
 # lazily inside _gc_worktree_after_merge() — top-level `from .` would fail
 # when this script is run directly (no package context).

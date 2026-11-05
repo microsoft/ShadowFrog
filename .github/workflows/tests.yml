@@ -28,6 +28,27 @@ jobs:
           python skills/shadow-frog-dream/dream-tools.py --help
           python skills/shadow-frog-dream/dream-validate.py --help
           python skills/shadow-frog-dream/dream-reconcile.py --help
+          python skills/shadow-frog-dream/dream-cleanup.py --help
+          python skills/shadow-frog-dream/dream-gc.py --help
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          with tempfile.TemporaryDirectory(prefix="shadowfrog-lifecycle-") as directory:
+              base = Path(directory) / "absent"
+              env = dict(os.environ, DREAM_WORKTREE_BASE=str(base))
+              subprocess.run(
+                  [sys.executable, "skills/shadow-frog-dream/dream-cleanup.py",
+                   str(base / "smoke" / "dream-missing")],
+                  check=True, env=env,
+              )
+              subprocess.run(
+                  [sys.executable, "skills/shadow-frog-dream/dream-gc.py", "--dry-run"],
+                  check=True, env=env,
+              )
+          PY
 
   pytest:
     name: pytest (${{ matrix.os }}, Python 3.12)
